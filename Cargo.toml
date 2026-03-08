@@ -1,0 +1,10 @@
+[package]
+name = "alice-game-engine"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Game loop and ECS — entity-component-system integrated in SDF space"
+repository = "https://github.com/ext-sakamoro/ALICE-GameEngine"
+authors = ["Moroya Sakamoto"]
+
+[dependencies]
