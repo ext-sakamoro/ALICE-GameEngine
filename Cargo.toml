@@ -5,6 +5,6 @@ edition = "2021"
 license = "MIT"
 description = "Game loop and ECS — entity-component-system integrated in SDF space"
 repository = "https://github.com/ext-sakamoro/ALICE-GameEngine"
-authors = ["Moroya Sakamoto"]
+authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
 
 [dependencies]
