@@ -8,9 +8,11 @@ use crate::scene_graph::Aabb3;
 // ---------------------------------------------------------------------------
 
 /// A 3D rigid body with mass, velocity, and angular velocity.
+/// Uses Verlet integration (position-based) for stability.
 #[derive(Debug, Clone)]
 pub struct RigidBody {
     pub position: Vec3,
+    pub prev_position: Vec3,
     pub rotation: Quat,
     pub velocity: Vec3,
     pub angular_velocity: Vec3,
@@ -31,6 +33,7 @@ impl RigidBody {
     pub const fn new(position: Vec3, mass: f32) -> Self {
         Self {
             position,
+            prev_position: position,
             rotation: Quat::IDENTITY,
             velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
@@ -52,6 +55,7 @@ impl RigidBody {
     pub const fn new_static(position: Vec3) -> Self {
         Self {
             position,
+            prev_position: position,
             rotation: Quat::IDENTITY,
             velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
@@ -161,8 +165,11 @@ impl PhysicsWorld {
     }
 
     /// Full physics step with configurable broadphase half-extents.
+    /// Uses Stormer-Verlet integration for position stability.
     pub fn step_with_half_extents(&mut self, dt: f32, half_extents: Vec3) {
-        // 1. Integrate velocities and positions
+        let dt_sq = dt * dt;
+
+        // 1. Verlet integration + force accumulation
         for body in &mut self.bodies {
             if body.is_static || body.sleeping {
                 continue;
@@ -173,22 +180,27 @@ impl PhysicsWorld {
                 self.gravity.z() * body.mass,
             );
             body.force_accumulator = body.force_accumulator + gravity_force;
-
             let accel = body.force_accumulator * body.inv_mass();
-            body.velocity = body.velocity + accel * dt;
+
+            // Stormer-Verlet: x(t+dt) = 2*x(t) - x(t-dt) + a*dt^2
+            let new_pos = body.position * 2.0 - body.prev_position + accel * dt_sq;
 
             // Damping
             let lin_damp = (1.0 - body.linear_damping).max(0.0);
-            body.velocity = body.velocity * lin_damp;
+            let damped_pos = body.position + (new_pos - body.position) * lin_damp;
 
-            // Uniform sphere inertia
+            body.prev_position = body.position;
+            body.position = damped_pos;
+
+            // Derive velocity from position difference (for collision response)
+            body.velocity = (body.position - body.prev_position) * (1.0 / dt);
+
+            // Angular: semi-implicit (Verlet for angular is complex)
             let inv_inertia = body.inv_mass() * 2.5;
             body.angular_velocity =
                 body.angular_velocity + body.torque_accumulator * (inv_inertia * dt);
             let ang_damp = (1.0 - body.angular_damping).max(0.0);
             body.angular_velocity = body.angular_velocity * ang_damp;
-
-            body.position = body.position + body.velocity * dt;
 
             let half_dt = dt * 0.5;
             let w = body.angular_velocity;
@@ -337,6 +349,58 @@ impl Default for PhysicsWorld {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// CCD — Continuous Collision Detection
+// ---------------------------------------------------------------------------
+
+/// SDF-based continuous collision detection. Marches the body along its
+/// velocity vector and tests the SDF at each step.
+#[must_use]
+pub fn sdf_ccd(
+    sdf_eval: &dyn Fn(Vec3) -> f32,
+    start: Vec3,
+    velocity: Vec3,
+    radius: f32,
+    dt: f32,
+    max_steps: u32,
+) -> Option<CcdHit> {
+    let dir = velocity * dt;
+    let total_dist = dir.length();
+    if total_dist < 1e-8 {
+        return None;
+    }
+    let step_size = total_dist / max_steps as f32;
+    let normalized = dir * (1.0 / total_dist);
+
+    let mut t = 0.0_f32;
+    for _ in 0..max_steps {
+        let p = start + normalized * t;
+        let d = sdf_eval(p);
+        if d < radius {
+            return Some(CcdHit {
+                position: p,
+                time_of_impact: t / total_dist,
+                distance: d,
+            });
+        }
+        // Sphere trace: advance by the safe distance
+        t += d.max(step_size);
+        if t > total_dist {
+            return None;
+        }
+    }
+    None
+}
+
+/// CCD hit result.
+#[derive(Debug, Clone, Copy)]
+pub struct CcdHit {
+    pub position: Vec3,
+    /// Fraction [0..1] of the velocity vector where contact occurred.
+    pub time_of_impact: f32,
+    pub distance: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -692,5 +756,58 @@ mod tests {
         world.add_body(RigidBody::new(Vec3::new(100.0, 0.0, 0.0), 1.0));
         let pairs = world.broadphase_sap(Vec3::ONE);
         assert_eq!(pairs.len(), 1);
+    }
+
+    #[test]
+    fn ccd_hits_sphere() {
+        let sdf = |p: Vec3| p.length() - 1.0;
+        let hit = sdf_ccd(
+            &sdf,
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::new(0.0, 0.0, -10.0),
+            0.1,
+            1.0,
+            64,
+        );
+        assert!(hit.is_some());
+        let h = hit.unwrap();
+        assert!(h.time_of_impact > 0.0 && h.time_of_impact < 1.0);
+    }
+
+    #[test]
+    fn ccd_misses() {
+        let sdf = |p: Vec3| p.length() - 1.0;
+        let hit = sdf_ccd(
+            &sdf,
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            0.1,
+            1.0,
+            64,
+        );
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn ccd_zero_velocity() {
+        let sdf = |p: Vec3| p.length() - 1.0;
+        let hit = sdf_ccd(&sdf, Vec3::new(5.0, 0.0, 0.0), Vec3::ZERO, 0.1, 1.0, 32);
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn verlet_integration_stable() {
+        let mut world = PhysicsWorld::new();
+        world.gravity = Vec3::ZERO;
+        let idx = world.add_body(RigidBody::new(Vec3::ZERO, 1.0));
+        world.bodies[idx].linear_damping = 0.0;
+        world.bodies[idx].velocity = Vec3::new(1.0, 0.0, 0.0);
+        // Set prev_position for consistent Verlet start
+        world.bodies[idx].prev_position = Vec3::new(-1.0 / 60.0, 0.0, 0.0);
+        for _ in 0..60 {
+            world.step(1.0 / 60.0);
+        }
+        // Should have moved ~1 unit in 1 second
+        assert!(world.bodies[idx].position.x() > 0.5);
     }
 }

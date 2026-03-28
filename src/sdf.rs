@@ -749,6 +749,105 @@ pub fn marching_cubes(
     SdfMesh { vertices, indices }
 }
 
+/// Parallel Marching Cubes using Rayon. Each Z-slice is processed
+/// independently and results are merged.
+#[must_use]
+pub fn marching_cubes_parallel(
+    node: &SdfNode,
+    min_bound: Vec3,
+    max_bound: Vec3,
+    resolution: u32,
+) -> SdfMesh {
+    use rayon::prelude::*;
+
+    let res = resolution.max(2);
+    let size = max_bound - min_bound;
+    let step = Vec3::new(
+        size.x() / res as f32,
+        size.y() / res as f32,
+        size.z() / res as f32,
+    );
+    let eps = step.x().min(step.y().min(step.z())) * 0.1;
+
+    let slices: Vec<(Vec<MeshVertex>, Vec<u32>)> = (0..res)
+        .into_par_iter()
+        .map(|iz| {
+            let mut verts = Vec::new();
+            let mut idxs = Vec::new();
+            for iy in 0..res {
+                for ix in 0..res {
+                    let x0 = (ix as f32).mul_add(step.x(), min_bound.x());
+                    let y0 = (iy as f32).mul_add(step.y(), min_bound.y());
+                    let z0 = (iz as f32).mul_add(step.z(), min_bound.z());
+                    let corners = [
+                        Vec3::new(x0, y0, z0),
+                        Vec3::new(x0 + step.x(), y0, z0),
+                        Vec3::new(x0 + step.x(), y0 + step.y(), z0),
+                        Vec3::new(x0, y0 + step.y(), z0),
+                        Vec3::new(x0, y0, z0 + step.z()),
+                        Vec3::new(x0 + step.x(), y0, z0 + step.z()),
+                        Vec3::new(x0 + step.x(), y0 + step.y(), z0 + step.z()),
+                        Vec3::new(x0, y0 + step.y(), z0 + step.z()),
+                    ];
+                    let values: [f32; 8] = std::array::from_fn(|i| node.eval(corners[i]));
+                    let mut cube_index = 0u8;
+                    for (i, &v) in values.iter().enumerate() {
+                        if v < 0.0 {
+                            cube_index |= 1 << i;
+                        }
+                    }
+                    let edge_mask = EDGE_TABLE[cube_index as usize];
+                    if edge_mask == 0 {
+                        continue;
+                    }
+                    let mut edge_verts = [Vec3::ZERO; 12];
+                    for (e, &(a, b)) in EDGE_VERTICES.iter().enumerate() {
+                        if edge_mask & (1 << e) != 0 {
+                            let t = values[a] / (values[a] - values[b]);
+                            edge_verts[e] = corners[a].lerp(corners[b], t);
+                        }
+                    }
+                    let tri_row = &TRI_TABLE[cube_index as usize];
+                    let mut i = 0;
+                    while i < 16 && tri_row[i] >= 0 {
+                        let base = verts.len() as u32;
+                        for k in 0..3 {
+                            #[allow(clippy::cast_sign_loss)]
+                            let edge_idx = tri_row[i + k] as usize;
+                            let pos = edge_verts[edge_idx];
+                            let nx = node.eval(Vec3::new(pos.x() + eps, pos.y(), pos.z()))
+                                - node.eval(Vec3::new(pos.x() - eps, pos.y(), pos.z()));
+                            let ny = node.eval(Vec3::new(pos.x(), pos.y() + eps, pos.z()))
+                                - node.eval(Vec3::new(pos.x(), pos.y() - eps, pos.z()));
+                            let nz = node.eval(Vec3::new(pos.x(), pos.y(), pos.z() + eps))
+                                - node.eval(Vec3::new(pos.x(), pos.y(), pos.z() - eps));
+                            verts.push(MeshVertex {
+                                position: pos,
+                                normal: Vec3::new(nx, ny, nz).normalize(),
+                            });
+                        }
+                        idxs.push(base);
+                        idxs.push(base + 1);
+                        idxs.push(base + 2);
+                        i += 3;
+                    }
+                }
+            }
+            (verts, idxs)
+        })
+        .collect();
+
+    // Merge slices
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for (verts, idxs) in slices {
+        let offset = vertices.len() as u32;
+        vertices.extend(verts);
+        indices.extend(idxs.iter().map(|&i| i + offset));
+    }
+    SdfMesh { vertices, indices }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1108,5 +1207,37 @@ mod tests {
             indices: vec![0, 1, 2],
         };
         assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn parallel_mc_sphere() {
+        let node = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let mesh = marching_cubes_parallel(
+            &node,
+            Vec3::new(-2.0, -2.0, -2.0),
+            Vec3::new(2.0, 2.0, 2.0),
+            8,
+        );
+        assert!(mesh.vertex_count() > 0);
+        assert!(mesh.triangle_count() > 0);
+    }
+
+    #[test]
+    fn parallel_mc_matches_serial() {
+        let node = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let serial = marching_cubes(
+            &node,
+            Vec3::new(-2.0, -2.0, -2.0),
+            Vec3::new(2.0, 2.0, 2.0),
+            6,
+        );
+        let parallel = marching_cubes_parallel(
+            &node,
+            Vec3::new(-2.0, -2.0, -2.0),
+            Vec3::new(2.0, 2.0, 2.0),
+            6,
+        );
+        assert_eq!(serial.vertex_count(), parallel.vertex_count());
+        assert_eq!(serial.triangle_count(), parallel.triangle_count());
     }
 }

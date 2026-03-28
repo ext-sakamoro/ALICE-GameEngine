@@ -10,9 +10,37 @@
 
 //! # ALICE-GameEngine
 //!
-//! Hybrid mesh + SDF game engine: 28 modules covering ECS, scene graph,
-//! deferred renderer (wgpu), animation, physics, audio, UI, particles,
-//! navigation, scripting, asset pipeline, collision, 2D, camera, textures.
+//! Hybrid mesh + SDF game engine in Rust. 34 modules, 700+ tests,
+//! wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU).
+//!
+//! ## Quick Start
+//!
+//! ```rust
+//! use alice_game_engine::easy::*;
+//!
+//! let mut game = GameBuilder::new("Demo").build();
+//! game.add_camera();
+//! game.add_cube(0.0, 1.0, -5.0);
+//! game.add_light(0.0, 10.0, 0.0);
+//! game.run_headless(60);
+//! assert!(game.time() > 0.0);
+//! ```
+//!
+//! ## Modules
+//!
+//! | Category | Modules |
+//! |----------|---------|
+//! | Core | [`ecs`], [`scene_graph`], [`math`], [`engine`], [`resource`] |
+//! | Rendering | [`renderer`], [`gpu`], [`gpu_mesh`], [`shader`], [`texture`], [`render_pipeline`], [`lod`] |
+//! | Physics | [`physics3d`], [`collision`] |
+//! | Audio | [`audio`] |
+//! | Animation | [`animation`] |
+//! | Input | [`input`], [`window`], [`camera_controller`] |
+//! | UI | [`ui`] |
+//! | Gameplay | [`ability`], [`scripting`], [`navmesh`], [`particle`] |
+//! | 2D | [`scene2d`] |
+//! | Asset | [`asset`], [`import`] |
+//! | Integration | [`bridge`], [`easy`], [`prelude`], [`query`], [`app`] |
 
 // ---------------------------------------------------------------------------
 // Core modules (always available)

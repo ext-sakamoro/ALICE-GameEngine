@@ -3,7 +3,7 @@
 ## [0.5.0] - 2026-03-28
 
 Initial public release. 31 modules, 17,932 lines, 688 tests.
-Dual licensed: MIT + Commercial. KARIKARI quality standard.
+Dual licensed: MIT + Commercial.
 
 ### Core
 - **ECS** (1,781 lines, 107 tests): Generational arena, sparse-set ComponentStore, World, Scene, spatial hash grid broadphase

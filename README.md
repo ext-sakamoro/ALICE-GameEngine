@@ -608,9 +608,9 @@ cargo run --example spinning_cube --features full
 cargo run --example hello_engine --features full
 ```
 
-## ALICE Quality Standard (KARIKARI)
+## Quality Standard
 
-This crate follows the ALICE-KARIKARI optimization methodology:
+This crate follows the ALICE optimization methodology:
 
 - **Division exorcism** — No `/` in hot paths; use `mul_add` or reciprocal multiply
 - **Branchless** — `mask.blend()` over `if/else` in SIMD paths

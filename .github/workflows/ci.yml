@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Format check
+        run: cargo fmt -- --check
+      - name: Clippy (default features)
+        run: cargo clippy -- -W clippy::all
+      - name: Clippy (full features)
+        run: cargo clippy --features full -- -W clippy::all
+      - name: Test (default features)
+        run: cargo test
+      - name: Test (full features)
+        run: cargo test --features full
+      - name: Doc check
+        run: cargo doc --no-deps --features full
+      - name: Doc-tests
+        run: cargo test --doc --features full
