@@ -2,7 +2,26 @@
 
 Hybrid mesh + SDF game engine in Rust. 31 modules, 688 tests, wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU).
 
-## Quick Start
+## Quick Start (5 lines)
+
+```rust
+use alice_game_engine::easy::*;
+
+let mut game = GameBuilder::new("My Game").build();
+game.add_camera();
+game.add_cube(0.0, 1.0, -5.0);
+game.add_sphere_sdf(3.0, 0.0, 0.0, 1.0);
+game.add_light(0.0, 10.0, 0.0);
+game.run_headless(300);
+```
+
+Or use the prelude for full control:
+
+```rust
+use alice_game_engine::prelude::*;
+```
+
+## Windowed Example
 
 ```bash
 cargo run --example spinning_cube --features full

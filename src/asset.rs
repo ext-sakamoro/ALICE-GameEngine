@@ -122,6 +122,7 @@ pub fn parse_obj(name: &str, obj_text: &str) -> MeshAsset {
 /// # Errors
 ///
 /// Returns `serde_json::Error` if the JSON is malformed.
+#[cfg(feature = "sdf")]
 pub fn load_sdf_json(json: &str) -> Result<crate::sdf::SdfNode, serde_json::Error> {
     serde_json::from_str(json)
 }
@@ -318,6 +319,7 @@ f 1/1/1 2/1/1 3/1/1
         assert!(parse_glb_header(&data).is_none());
     }
 
+    #[cfg(feature = "sdf")]
     #[test]
     fn sdf_json_load() {
         let json = r#"{"Primitive":{"Sphere":{"radius":2.5}}}"#;
@@ -325,6 +327,7 @@ f 1/1/1 2/1/1 3/1/1
         assert!(node.eval(crate::math::Vec3::ZERO) < 0.0);
     }
 
+    #[cfg(feature = "sdf")]
     #[test]
     fn sdf_json_invalid() {
         let result = load_sdf_json("not json");

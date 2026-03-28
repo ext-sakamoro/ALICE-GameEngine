@@ -22,8 +22,10 @@ pub mod ability;
 pub mod animation;
 pub mod app;
 pub mod asset;
+pub mod bridge;
 pub mod camera_controller;
 pub mod collision;
+pub mod easy;
 pub mod ecs;
 pub mod engine;
 pub mod gpu_mesh;
@@ -32,6 +34,7 @@ pub mod input;
 pub mod lod;
 pub mod math;
 pub mod physics3d;
+pub mod prelude;
 pub mod query;
 pub mod render_pipeline;
 pub mod resource;
@@ -51,7 +54,6 @@ pub mod gpu;
 #[cfg(feature = "gpu")]
 pub mod renderer;
 
-#[cfg(feature = "window")]
 pub mod window;
 
 #[cfg(feature = "sdf")]
@@ -76,8 +78,10 @@ pub mod navmesh;
 pub use ability::{Ability, AbilitySystem, AttributeSet, GameplayEffect};
 pub use animation::{AnimationClip, AnimationPlayer, Keyframe, StateMachine, Track};
 pub use app::{AppCallbacks, HeadlessRunner};
+pub use bridge::{AudioSampleProvider, CollisionProvider, Plugin, PluginRegistry, SdfEvaluator};
 pub use camera_controller::{FpsCamera, OrbitCamera};
 pub use collision::{gjk, ConvexHull, ConvexSphere, GjkResult};
+pub use easy::{Game, GameBuilder};
 pub use ecs::{
     Collider, CollisionPair, ComponentStore, EntityId, EntityManager, GameEngineError, GameTime,
     Input, PhysicsSystem, Scene, Sprite, Transform, Velocity, World, AABB,
