@@ -117,7 +117,10 @@ fn main() {
 | `ui` | Retained-mode UI widget system |
 | `particles` | Particle emitter system |
 | `navmesh` | Navigation mesh + A* + crowd |
-| `full` | All features |
+| `ffi` | C/C++/C# FFI bindings |
+| `python` | Python (PyO3) bindings |
+| `godot` | Godot GDExtension bindings |
+| `full` | All runtime features (excludes ffi/python/godot) |
 
 ## Key Design Decisions
 
@@ -141,6 +144,18 @@ cargo run --example spinning_cube --features full
 cargo run --example hello_engine --features full
 ```
 
+## ALICE Quality Standard (KARIKARI)
+
+This crate follows the ALICE-KARIKARI optimization methodology:
+
+- **Division exorcism** — No `/` in hot paths; use `mul_add` or reciprocal multiply
+- **Branchless** — `mask.blend()` over `if/else` in SIMD paths
+- **FMA** — `a.mul_add(b, c)` over `a * b + c`
+- **SoA layout** — Struct-of-arrays over array-of-structs for cache efficiency
+- **Sweep-and-prune** — O(n log n) broadphase, never O(n^2)
+- **Test density** — 20+ tests per KLOC (current: 38.4/KLOC)
+- **Release profile** — `lto = "fat"`, `codegen-units = 1`, `opt-level = 3`
+
 ## Quality
 
 ```bash
@@ -152,4 +167,9 @@ cargo doc --no-deps --features full  # 0 warnings
 
 ## License
 
-MIT
+Dual licensed under **MIT** and **Commercial**.
+
+- **MIT** — Free for open source and commercial use under $100K/year with attribution. See [LICENSE](LICENSE).
+- **Commercial** — Required for proprietary SaaS or high-revenue products. See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL).
+
+Contact: sakamoro@alicelaw.net

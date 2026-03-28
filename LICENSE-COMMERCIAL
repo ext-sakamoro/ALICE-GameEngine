@@ -1,0 +1,37 @@
+ALICE-GameEngine Commercial License
+
+Copyright (c) 2026 Moroya Sakamoto <sakamoro@alicelaw.net>
+
+This software is dual-licensed under the MIT License and this Commercial License.
+
+COMMERCIAL LICENSE TERMS
+
+1. GRANT OF LICENSE
+   Moroya Sakamoto ("Licensor") grants the licensee a non-exclusive,
+   non-transferable license to use, modify, and distribute
+   ALICE-GameEngine in commercial products, subject to the terms below.
+
+2. COMMERCIAL USE
+   A Commercial License is REQUIRED if you:
+   (a) Use ALICE-GameEngine in a product or service sold for revenue
+       exceeding USD $100,000 per year;
+   (b) Distribute ALICE-GameEngine as part of a proprietary SaaS platform;
+   (c) Remove or modify the MIT License attribution notices.
+
+   The MIT License permits free commercial use for products earning
+   below this threshold with proper attribution.
+
+3. LICENSE FEE
+   Contact sakamoro@alicelaw.net for commercial licensing terms and pricing.
+
+4. SUPPORT
+   Commercial licensees receive priority support and access to
+   private development branches.
+
+5. WARRANTY DISCLAIMER
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+6. GOVERNING LAW
+   This license is governed by the laws of Japan.
+
+For inquiries: sakamoro@alicelaw.net
