@@ -1,6 +1,8 @@
 # ALICE-GameEngine
 
-Hybrid mesh + SDF game engine in Rust. 31 modules, 688 tests, wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU).
+Hybrid mesh + SDF game engine in Rust. 36 modules, 738 tests, wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU).
+
+[日本語ドキュメント](README.ja.md)
 
 ## Quick Start (5 lines)
 
@@ -538,15 +540,15 @@ let fired = timers.update(0.6); // → ["tick"]
 
 | Module | Lines | Tests | Description |
 |--------|------:|------:|-------------|
-| ecs | 1,781 | 107 | Generational arena ECS, spatial hash grid broadphase |
+| ecs | 1,872 | 107 | SoA sparse-set ECS, spatial hash grid broadphase |
 | scene_graph | 1,277 | 43 | Mesh+SDF hybrid node tree, AABB3, frustum culling, reparenting |
-| sdf | 1,112 | 37 | 7 primitives, 6 boolean ops, Marching Cubes (256 tables), sphere trace, SDF collider |
+| sdf | 1,243 | 39 | 7 primitives, 6 boolean ops, Marching Cubes (256 tables), Rayon parallel MC, sphere trace, SDF collider |
 | audio | 975 | 39 | Bus effects (ping-pong), HRTF, PCM playback, spatial panning, WAV export |
 | ui | 951 | 30 | Retained-mode widgets, vertical+horizontal layout, focus management, theme |
+| physics3d | 815 | 36 | Verlet integration, sweep-and-prune broadphase, impulse solver, SDF CCD, damping, sleeping |
 | math | 776 | 30 | Vec2/3/4, Mat4, Quat, Color, perspective+orthographic projection |
 | renderer | 773 | 25 | Deferred GBuffer, RenderGraph (Kahn topo sort), DebugRenderer |
 | app | 715 | 13 | `run_windowed()` (winit+wgpu), `HeadlessRunner`, WAV export |
-| physics3d | 696 | 32 | RigidBody, sweep-and-prune broadphase, impulse solver, damping, sleeping |
 | navmesh | 654 | 21 | NavMesh, A* pathfinding, SDF avoidance, crowd separation (RVO) |
 | animation | 650 | 32 | Keyframe (Linear/Step/Cubic), Track, Clip, Player, StateMachine |
 | input | 587 | 16 | Keyboard/Mouse/Gamepad, ActionMap, axis binding, just_pressed |
@@ -558,17 +560,21 @@ let fired = timers.update(0.6); // → ["tick"]
 | particle | 432 | 16 | CPU emitter, multi-shape (Point/Sphere/Box/Cone), gravity |
 | import | 409 | 17 | Unity YAML scene parser, UE5 .uasset header parser, format detection |
 | texture | 400 | 18 | TextureAsset, mipmap, checkerboard, GpuTextureDesc, SamplerDesc |
+| fix128 | 353 | 19 | 128-bit fixed-point (i128, 40 frac bits), Fix128Vec3, long-duration precision |
 | render_pipeline | 354 | 13 | FrameData extraction, MvpUniforms, MaterialUniforms, PipelineState |
 | engine | 354 | 11 | Game loop, System trait, fixed timestep, interpolation alpha |
+| asset | 336 | 13 | OBJ parser, glTF header, SDF JSON loader, asset type detection |
 | collision | 333 | 10 | GJK convex intersection, SDF-mesh hybrid narrowphase |
-| asset | 333 | 13 | OBJ parser, glTF header, SDF JSON loader, asset type detection |
 | camera_controller | 322 | 19 | FPS camera (WASD+mouse), Orbit camera (rotate/zoom/pan) |
 | resource | 309 | 12 | Async resource manager, ref counting, load state |
+| bridge | 306 | 8 | ALICE-xxx integration traits (SDF, Physics, Audio, Mesh, Shader, UI), Plugin system |
+| easy | 295 | 9 | GameBuilder + Game high-level API (5-line game setup) |
 | query | 293 | 11 | Typed ECS queries (query2/3), filter, SystemScheduler |
 | gpu_mesh | 280 | 9 | GpuMeshDesc, VertexLayout, DrawCommand/DrawQueue |
+| simd_eval | 268 | 8 | SIMD 8-wide SDF evaluation (wide f32x8), Vec3x8, batch eval |
 | lod | 264 | 13 | LOD group selection, screen coverage, batch culling |
 | window | 263 | 15 | WindowConfig, key mapping, FrameTimer |
-| **Total** | **17,932** | **688** | |
+| **Total** | **19,560** | **738** | |
 
 ## Feature Flags
 
@@ -596,7 +602,13 @@ let fired = timers.update(0.6); // → ["tick"]
 
 **wgpu over OpenGL** — Targets Vulkan, Metal, DX12, and WebGPU instead of legacy OpenGL. Future-proof for WASM.
 
-**Self-contained physics** — No Rapier dependency. Impulse solver with damping, sleeping, angular velocity, and collision events.
+**Self-contained physics** — No Rapier dependency. Verlet integration, impulse solver, SDF CCD, damping, sleeping.
+
+**SIMD 8-wide** — `wide::f32x8` for batch SDF evaluation. Rayon parallel Marching Cubes.
+
+**Fix128 precision** — 128-bit fixed-point for long-duration simulation without floating-point drift.
+
+**Division exorcism** — All hot-path divisions replaced with `.recip()` reciprocal multiply.
 
 ## Examples
 
@@ -617,13 +629,15 @@ This crate follows the ALICE optimization methodology:
 - **FMA** — `a.mul_add(b, c)` over `a * b + c`
 - **SoA layout** — Struct-of-arrays over array-of-structs for cache efficiency
 - **Sweep-and-prune** — O(n log n) broadphase, never O(n^2)
-- **Test density** — 20+ tests per KLOC (current: 38.4/KLOC)
+- **SIMD 8-wide** — `wide::f32x8` batch SDF evaluation, Rayon parallel MC
+- **Fix128** — 128-bit fixed-point for long-duration position accumulation
+- **Test density** — 20+ tests per KLOC (current: 37.7/KLOC)
 - **Release profile** — `lto = "fat"`, `codegen-units = 1`, `opt-level = 3`
 
 ## Quality
 
 ```bash
-cargo test --features full        # 688 tests, 0 failures
+cargo test --features full        # 738 tests + 3 doc-tests, 0 failures
 cargo clippy --features full -- -W clippy::all  # 0 warnings
 cargo fmt -- --check              # 0 diffs
 cargo doc --no-deps --features full  # 0 warnings
