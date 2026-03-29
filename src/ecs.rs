@@ -173,75 +173,166 @@ impl Default for EntityManager {
 // ComponentStore<T>
 // ---------------------------------------------------------------------------
 
-/// A sparse-set based store that maps entity ids to component data.
+/// SoA-friendly sparse-set store. Dense arrays for cache-efficient iteration,
+/// sparse index for O(1) lookup by entity index.
 pub struct ComponentStore<T> {
-    data: HashMap<u32, (u32, T)>,
+    /// Sparse → dense mapping. Index = entity index, value = dense index.
+    sparse: Vec<Option<u32>>,
+    /// Dense component data (contiguous, cache-friendly).
+    dense_data: Vec<T>,
+    /// Dense generation (parallel to `dense_data`).
+    dense_gen: Vec<u32>,
+    /// Dense → entity index (parallel to `dense_data`).
+    dense_entity: Vec<u32>,
+    /// Public access for legacy iteration (`PhysicsSystem`).
+    /// Maps `entity_index` → (generation, &T). Use `iter()` instead for new code.
+    pub data: HashMap<u32, (u32, T)>,
 }
 
-impl<T> ComponentStore<T> {
+impl<T: Clone> ComponentStore<T> {
     /// Creates a new, empty component store.
     #[must_use]
     pub fn new() -> Self {
         Self {
+            sparse: Vec::new(),
+            dense_data: Vec::new(),
+            dense_gen: Vec::new(),
+            dense_entity: Vec::new(),
             data: HashMap::new(),
         }
     }
 
     /// Inserts a component for the given entity, replacing any previous value.
     pub fn insert(&mut self, id: EntityId, component: T) {
+        let idx = id.index as usize;
+
+        // Grow sparse if needed
+        if idx >= self.sparse.len() {
+            self.sparse.resize(idx + 1, None);
+        }
+
+        if let Some(dense_idx) = self.sparse[idx] {
+            // Update existing
+            let di = dense_idx as usize;
+            self.dense_data[di] = component.clone();
+            self.dense_gen[di] = id.generation;
+        } else {
+            // Append new
+            let dense_idx = self.dense_data.len() as u32;
+            self.sparse[idx] = Some(dense_idx);
+            self.dense_data.push(component.clone());
+            self.dense_gen.push(id.generation);
+            self.dense_entity.push(id.index);
+        }
+
+        // Mirror to HashMap for backward compat
         self.data.insert(id.index, (id.generation, component));
     }
 
     /// Removes the component for the given entity.
-    /// Returns the component if it existed and the generation matched.
     pub fn remove(&mut self, id: EntityId) -> Option<T> {
-        if let Some((gen, _)) = self.data.get(&id.index) {
-            if *gen == id.generation {
-                return self.data.remove(&id.index).map(|(_, c)| c);
+        let idx = id.index as usize;
+        if idx >= self.sparse.len() {
+            return None;
+        }
+        let dense_idx = self.sparse[idx]?;
+        let di = dense_idx as usize;
+        if self.dense_gen[di] != id.generation {
+            return None;
+        }
+
+        // Swap-remove from dense arrays
+        let last = self.dense_data.len() - 1;
+        self.dense_data.swap(di, last);
+        self.dense_gen.swap(di, last);
+        self.dense_entity.swap(di, last);
+        let removed = self.dense_data.pop().unwrap();
+        self.dense_gen.pop();
+        let _removed_entity = self.dense_entity.pop();
+
+        self.sparse[idx] = None;
+
+        // Update the swapped element's sparse pointer
+        if di < self.dense_data.len() {
+            let swapped_entity = self.dense_entity[di] as usize;
+            if swapped_entity < self.sparse.len() {
+                self.sparse[swapped_entity] = Some(dense_idx);
             }
         }
-        None
+
+        self.data.remove(&id.index);
+        Some(removed)
     }
 
     /// Returns a reference to the component for the given entity.
     #[must_use]
     pub fn get(&self, id: EntityId) -> Option<&T> {
-        self.data
-            .get(&id.index)
-            .filter(|(gen, _)| *gen == id.generation)
-            .map(|(_, c)| c)
+        let idx = id.index as usize;
+        if idx >= self.sparse.len() {
+            return None;
+        }
+        let dense_idx = self.sparse[idx]? as usize;
+        if dense_idx < self.dense_gen.len() && self.dense_gen[dense_idx] == id.generation {
+            Some(&self.dense_data[dense_idx])
+        } else {
+            None
+        }
     }
 
     /// Returns a mutable reference to the component for the given entity.
     pub fn get_mut(&mut self, id: EntityId) -> Option<&mut T> {
-        self.data
-            .get_mut(&id.index)
-            .filter(|(gen, _)| *gen == id.generation)
-            .map(|(_, c)| c)
+        let idx = id.index as usize;
+        if idx >= self.sparse.len() {
+            return None;
+        }
+        let dense_idx = self.sparse[idx]? as usize;
+        if dense_idx < self.dense_gen.len() && self.dense_gen[dense_idx] == id.generation {
+            Some(&mut self.dense_data[dense_idx])
+        } else {
+            None
+        }
     }
 
     /// Returns the number of stored components.
     #[must_use]
-    pub fn len(&self) -> usize {
-        self.data.len()
+    pub const fn len(&self) -> usize {
+        self.dense_data.len()
     }
 
     /// Returns `true` if the store is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+    pub const fn is_empty(&self) -> bool {
+        self.dense_data.is_empty()
     }
 
     /// Returns `true` if a component exists for the given entity.
     #[must_use]
     pub fn contains(&self, id: EntityId) -> bool {
-        self.data
-            .get(&id.index)
-            .is_some_and(|(gen, _)| *gen == id.generation)
+        self.get(id).is_some()
+    }
+
+    /// Dense iterator over (`EntityId`, &T) — cache-friendly sequential access.
+    pub fn iter(&self) -> impl Iterator<Item = (EntityId, &T)> {
+        self.dense_entity
+            .iter()
+            .zip(self.dense_gen.iter())
+            .zip(self.dense_data.iter())
+            .map(|((&entity_idx, &gen), data)| (EntityId::new(entity_idx, gen), data))
+    }
+
+    /// Dense slice of component data (for SIMD batch processing).
+    #[must_use]
+    pub fn dense_slice(&self) -> &[T] {
+        &self.dense_data
+    }
+
+    /// Mutable dense slice.
+    pub fn dense_slice_mut(&mut self) -> &mut [T] {
+        &mut self.dense_data
     }
 }
 
-impl<T> Default for ComponentStore<T> {
+impl<T: Clone> Default for ComponentStore<T> {
     fn default() -> Self {
         Self::new()
     }

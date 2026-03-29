@@ -11,7 +11,7 @@ use crate::ecs::{ComponentStore, EntityId};
 
 /// Iterates entities that have both components A and B.
 #[must_use]
-pub fn query2<'a, A, B>(
+pub fn query2<'a, A: Clone, B: Clone>(
     store_a: &'a ComponentStore<A>,
     store_b: &'a ComponentStore<B>,
     entities: &[EntityId],
@@ -28,7 +28,7 @@ pub fn query2<'a, A, B>(
 
 /// Iterates entities that have components A, B, and C.
 #[must_use]
-pub fn query3<'a, A, B, C>(
+pub fn query3<'a, A: Clone, B: Clone, C: Clone>(
     store_a: &'a ComponentStore<A>,
     store_b: &'a ComponentStore<B>,
     store_c: &'a ComponentStore<C>,
@@ -47,7 +47,7 @@ pub fn query3<'a, A, B, C>(
 
 /// Counts entities matching component A.
 #[must_use]
-pub fn count_with<A>(store: &ComponentStore<A>, entities: &[EntityId]) -> usize {
+pub fn count_with<A: Clone>(store: &ComponentStore<A>, entities: &[EntityId]) -> usize {
     entities
         .iter()
         .filter(|&&id| store.get(id).is_some())
@@ -56,7 +56,7 @@ pub fn count_with<A>(store: &ComponentStore<A>, entities: &[EntityId]) -> usize 
 
 /// Returns entity IDs that have component A.
 #[must_use]
-pub fn filter_with<A>(store: &ComponentStore<A>, entities: &[EntityId]) -> Vec<EntityId> {
+pub fn filter_with<A: Clone>(store: &ComponentStore<A>, entities: &[EntityId]) -> Vec<EntityId> {
     entities
         .iter()
         .filter(|&&id| store.get(id).is_some())
@@ -66,7 +66,7 @@ pub fn filter_with<A>(store: &ComponentStore<A>, entities: &[EntityId]) -> Vec<E
 
 /// Returns entity IDs that do NOT have component A.
 #[must_use]
-pub fn filter_without<A>(store: &ComponentStore<A>, entities: &[EntityId]) -> Vec<EntityId> {
+pub fn filter_without<A: Clone>(store: &ComponentStore<A>, entities: &[EntityId]) -> Vec<EntityId> {
     entities
         .iter()
         .filter(|&&id| store.get(id).is_none())

@@ -84,7 +84,8 @@ impl RigidBody {
         if self.is_static || self.mass <= 0.0 {
             0.0
         } else {
-            1.0 / self.mass
+            // Reciprocal multiply (division exorcism)
+            self.mass.recip()
         }
     }
 
@@ -193,7 +194,7 @@ impl PhysicsWorld {
             body.position = damped_pos;
 
             // Derive velocity from position difference (for collision response)
-            body.velocity = (body.position - body.prev_position) * (1.0 / dt);
+            body.velocity = (body.position - body.prev_position) * dt.recip();
 
             // Angular: semi-implicit (Verlet for angular is complex)
             let inv_inertia = body.inv_mass() * 2.5;
@@ -232,7 +233,7 @@ impl PhysicsWorld {
             let dist = diff.length();
             let min_dist = half_extents.x() * 2.0;
             if dist < min_dist && dist > 1e-8 {
-                let normal = diff * (1.0 / dist);
+                let normal = diff * dist.recip();
                 let penetration = min_dist - dist;
                 self.contacts.push(Contact3D {
                     body_a: *a,
@@ -306,7 +307,7 @@ impl PhysicsWorld {
         }
 
         // Separate bodies
-        let correction = contact.normal * (contact.penetration / inv_mass_sum);
+        let correction = contact.normal * (contact.penetration * inv_mass_sum.recip());
         self.bodies[contact.body_a].position =
             self.bodies[contact.body_a].position + correction * inv_mass_a;
         self.bodies[contact.body_b].position =
@@ -323,7 +324,7 @@ impl PhysicsWorld {
         let e = self.bodies[contact.body_a]
             .restitution
             .min(self.bodies[contact.body_b].restitution);
-        let j = -(1.0 + e) * vel_along_normal / inv_mass_sum;
+        let j = -(1.0 + e) * vel_along_normal * inv_mass_sum.recip();
         let impulse = contact.normal * j;
 
         self.bodies[contact.body_a].velocity =
@@ -371,8 +372,9 @@ pub fn sdf_ccd(
     if total_dist < 1e-8 {
         return None;
     }
-    let step_size = total_dist / max_steps as f32;
-    let normalized = dir * (1.0 / total_dist);
+    let inv_total = total_dist.recip();
+    let step_size = total_dist * (max_steps as f32).recip();
+    let normalized = dir * inv_total;
 
     let mut t = 0.0_f32;
     for _ in 0..max_steps {
@@ -381,7 +383,7 @@ pub fn sdf_ccd(
         if d < radius {
             return Some(CcdHit {
                 position: p,
-                time_of_impact: t / total_dist,
+                time_of_impact: t * inv_total,
                 distance: d,
             });
         }

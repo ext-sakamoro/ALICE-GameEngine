@@ -56,6 +56,7 @@ pub mod collision;
 pub mod easy;
 pub mod ecs;
 pub mod engine;
+pub mod fix128;
 pub mod gpu_mesh;
 pub mod import;
 pub mod input;
@@ -70,6 +71,7 @@ pub mod scene2d;
 pub mod scene_graph;
 pub mod scripting;
 pub mod shader;
+pub mod simd_eval;
 pub mod texture;
 
 // ---------------------------------------------------------------------------
@@ -115,6 +117,7 @@ pub use ecs::{
     Input, PhysicsSystem, Scene, Sprite, Transform, Velocity, World, AABB,
 };
 pub use engine::{Engine, EngineConfig, EngineContext, System};
+pub use fix128::{Fix128, Fix128Vec3};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
 pub use import::{detect_format, ProjectFormat};
 pub use input::{ActionMap, InputState, Key, MouseButton};
@@ -126,4 +129,5 @@ pub use scene2d::{Scene2D, Sprite2D, TileMap};
 pub use scene_graph::{Node, NodeId, NodeKind, SceneGraph};
 pub use scripting::{Event, EventBus, Timer, TimerManager};
 pub use shader::{ShaderCache, ShaderSource, ShaderStage};
+pub use simd_eval::{eval_sphere_batch, Vec3x8};
 pub use texture::{GpuTextureDesc, TextureAsset};

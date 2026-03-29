@@ -156,7 +156,7 @@ fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
     if k < 1e-6 {
         return a.min(b);
     }
-    let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
+    let h = (0.5 * (b - a)).mul_add(k.recip(), 0.5).clamp(0.0, 1.0);
     (k * h).mul_add(-(1.0 - h), b.mul_add(1.0 - h, a * h))
 }
 
@@ -203,9 +203,9 @@ impl SdfNode {
                 let local = p - *translation;
                 let rotated = Vec3::from(q.mul_vec3(local.into()));
                 let scaled = Vec3::new(
-                    rotated.x() / scale.x().max(1e-10),
-                    rotated.y() / scale.y().max(1e-10),
-                    rotated.z() / scale.z().max(1e-10),
+                    rotated.x() * scale.x().max(1e-10).recip(),
+                    rotated.y() * scale.y().max(1e-10).recip(),
+                    rotated.z() * scale.z().max(1e-10).recip(),
                 );
                 child.eval(scaled) * scale.x().min(scale.y().min(scale.z()))
             }
