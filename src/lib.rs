@@ -5,7 +5,8 @@
     clippy::cast_precision_loss,
     clippy::struct_excessive_bools,
     clippy::missing_panics_doc,
-    clippy::too_long_first_doc_paragraph
+    clippy::too_long_first_doc_paragraph,
+    clippy::result_unit_err
 )]
 
 //! # ALICE-GameEngine
@@ -72,9 +73,11 @@ pub mod resource;
 pub mod scene2d;
 pub mod scene_graph;
 pub mod scripting;
+pub mod sdf_assets;
 pub mod shader;
 pub mod simd_eval;
 pub mod texture;
+pub mod verse;
 
 // ---------------------------------------------------------------------------
 // Feature-gated modules
@@ -132,6 +135,10 @@ pub use render_pipeline::{FrameData, MaterialUniforms, MvpUniforms, RenderStats}
 pub use scene2d::{Scene2D, Sprite2D, TileMap};
 pub use scene_graph::{Node, NodeId, NodeKind, SceneGraph};
 pub use scripting::{Event, EventBus, Timer, TimerManager};
+pub use sdf_assets::{load_asdf, AsdfFile};
 pub use shader::{ShaderCache, ShaderSource, ShaderStage};
 pub use simd_eval::{eval_sphere_batch, Vec3x8};
 pub use texture::{GpuTextureDesc, TextureAsset};
+pub use verse::{
+    Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
+};

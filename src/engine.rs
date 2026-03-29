@@ -72,6 +72,7 @@ pub struct EngineContext {
     pub resources: ResourceManager,
     pub time: GameTime,
     pub plugins: crate::bridge::PluginRegistry,
+    pub coroutines: crate::verse::TickExecutor,
 
     /// External SDF evaluator (e.g. ALICE-SDF `CompiledSdf`).
     pub sdf_evaluator: Option<Box<dyn crate::bridge::SdfEvaluator>>,
@@ -94,6 +95,7 @@ impl EngineContext {
             resources: ResourceManager::new(),
             time: GameTime::new(),
             plugins: crate::bridge::PluginRegistry::new(),
+            coroutines: crate::verse::TickExecutor::new(),
             sdf_evaluator: None,
             collision_provider: None,
 
@@ -182,8 +184,9 @@ impl Engine {
         // Variable update
         system.update(&mut self.context, dt);
 
-        // Update plugins
+        // Update plugins and coroutines
         self.context.plugins.update(dt);
+        self.context.coroutines.tick();
 
         // Update scene transforms
         self.context.scene.update_world_matrices();
