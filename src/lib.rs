@@ -59,6 +59,7 @@ pub mod ecs;
 pub mod engine;
 pub mod fix128;
 pub mod gpu_mesh;
+pub mod image_decode;
 pub mod import;
 pub mod input;
 pub mod joint;
@@ -74,12 +75,14 @@ pub mod render_pipeline;
 pub mod resource;
 pub mod scene2d;
 pub mod scene_graph;
+pub mod scene_io;
 pub mod scripting;
 pub mod sdf_assets;
 pub mod shader;
 pub mod simd_eval;
 pub mod skeleton;
 pub mod sky;
+pub mod text;
 pub mod texture;
 pub mod verse;
 
@@ -128,6 +131,7 @@ pub use ecs::{
 pub use engine::{Engine, EngineConfig, EngineContext, System};
 pub use fix128::{Fix128, Fix128Vec3};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
+pub use image_decode::{decode_bmp, DecodedImage, ImageDecoder};
 pub use import::{detect_format, ProjectFormat};
 pub use input::{ActionMap, InputState, Key, MouseButton};
 pub use joint::{solve_joints, Joint, JointKind, RagdollDef};
@@ -140,11 +144,13 @@ pub use physics3d::{Contact3D, PhysicsWorld, RigidBody};
 pub use render_pipeline::{FrameData, MaterialUniforms, MvpUniforms, RenderStats};
 pub use scene2d::{Scene2D, Sprite2D, TileMap};
 pub use scene_graph::{Node, NodeId, NodeKind, SceneGraph};
+pub use scene_io::{load_scene, save_scene, scene_from_json, scene_to_json};
 pub use scripting::{Event, EventBus, Timer, TimerManager};
 pub use sdf_assets::{load_asdf, AsdfFile};
 pub use shader::{ShaderCache, ShaderSource, ShaderStage};
 pub use simd_eval::{eval_sphere_batch, Vec3x8};
 pub use skeleton::{Bone, BoneTrack, SkeletalAnimation, Skeleton, SkinData};
+pub use text::{BitmapFont, TextLayout};
 pub use texture::{GpuTextureDesc, TextureAsset};
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,

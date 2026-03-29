@@ -152,16 +152,93 @@ pub trait NetworkTransport: Send + Sync {
 // Skeleton Bridge — for external animation systems
 // ---------------------------------------------------------------------------
 
-/// Trait for external skeletal animation providers.
+/// Trait for external skeletal animation providers (e.g. ALICE-Animation).
 pub trait SkeletonProvider: Send + Sync {
-    /// Returns bone count.
     fn bone_count(&self) -> usize;
-
-    /// Returns skinning matrices (`bone_count` × mat4x4 as f32 slice).
     fn skin_matrices(&self) -> &[f32];
-
-    /// Applies an animation at the given time.
     fn apply_animation(&mut self, name: &str, time: f32);
+}
+
+// ---------------------------------------------------------------------------
+// Animation Bridge — for ALICE-Animation
+// ---------------------------------------------------------------------------
+
+/// Trait for external animation systems (e.g. ALICE-Animation).
+pub trait AnimationProvider: Send + Sync {
+    /// Lists available animation clip names.
+    fn clip_names(&self) -> Vec<String>;
+    /// Evaluates a clip at time t, returns (`track_name`, value) pairs.
+    fn evaluate(&self, clip_name: &str, time: f32) -> Vec<(String, f32)>;
+    /// Returns clip duration.
+    fn clip_duration(&self, clip_name: &str) -> f32;
+}
+
+// ---------------------------------------------------------------------------
+// Protocol Bridge — for ALICE-Streaming-Protocol
+// ---------------------------------------------------------------------------
+
+/// Trait for streaming protocol backends (e.g. ALICE-Streaming-Protocol).
+pub trait StreamingProtocol: Send + Sync {
+    /// Sends a scene delta to a remote peer.
+    ///
+    /// # Errors
+    /// Returns error on send failure.
+    fn send_delta(&mut self, delta: &[u8]) -> Result<(), String>;
+    /// Receives pending deltas.
+    fn recv_deltas(&mut self) -> Vec<Vec<u8>>;
+    /// Returns current bandwidth usage in bytes/sec.
+    fn bandwidth_bytes_per_sec(&self) -> u64;
+}
+
+// ---------------------------------------------------------------------------
+// Font Bridge — for ALICE-Font
+// ---------------------------------------------------------------------------
+
+/// Trait for SDF font glyph providers (e.g. ALICE-Font).
+pub trait SdfFontProvider: Send + Sync {
+    /// Returns SDF glyph data for a character.
+    fn glyph_sdf(&self, char_code: u32, font_size: f32) -> Option<GlyphSdf>;
+    /// Returns line height for the given font size.
+    fn line_height(&self, font_size: f32) -> f32;
+}
+
+/// SDF glyph data from ALICE-Font.
+#[derive(Debug, Clone)]
+pub struct GlyphSdf {
+    pub width: u32,
+    pub height: u32,
+    pub bearing_x: f32,
+    pub bearing_y: f32,
+    pub advance: f32,
+    pub sdf_data: Vec<u8>,
+}
+
+// ---------------------------------------------------------------------------
+// Text Bridge — for ALICE-Text
+// ---------------------------------------------------------------------------
+
+/// Trait for text processing (e.g. ALICE-Text compression/encoding).
+pub trait TextProcessor: Send + Sync {
+    /// Compresses text.
+    fn compress(&self, input: &str) -> Vec<u8>;
+    /// Decompresses text.
+    ///
+    /// # Errors
+    /// Returns error on decode failure.
+    fn decompress(&self, data: &[u8]) -> Result<String, String>;
+}
+
+// ---------------------------------------------------------------------------
+// Image Decoder Bridge — for external PNG/JPG
+// ---------------------------------------------------------------------------
+
+/// Trait for image decoding (implement with `image` crate).
+pub trait ImageDecoderBridge: Send + Sync {
+    /// Decodes image bytes to RGBA8.
+    ///
+    /// # Errors
+    /// Returns error on decode failure.
+    fn decode_rgba8(&self, data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>;
 }
 
 // ---------------------------------------------------------------------------
