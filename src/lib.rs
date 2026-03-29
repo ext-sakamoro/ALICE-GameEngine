@@ -76,6 +76,7 @@ pub mod scripting;
 pub mod sdf_assets;
 pub mod shader;
 pub mod simd_eval;
+pub mod sky;
 pub mod texture;
 pub mod verse;
 
