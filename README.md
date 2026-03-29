@@ -595,8 +595,7 @@ let fired = timers.update(0.6); // → ["tick"]
 ## Quality
 
 ```bash
-cargo test --features full        # 761 tests + 3 doc-tests
-cargo clippy --features full -- -W clippy::all  # 0 warnings
+cargo test --features full        # 843 tests
 cargo fmt -- --check              # 0 diffs
 ```
 

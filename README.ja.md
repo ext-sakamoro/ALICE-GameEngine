@@ -146,9 +146,8 @@ fn main() {
 ## 品質
 
 ```bash
-cargo test --features full        # 761テスト + 3 doc-tests
-cargo clippy --features full -- -W clippy::all  # 0警告
-cargo fmt -- --check              # 0差分
+cargo test --features full        # 843 テスト
+cargo fmt -- --check              # 0 差分
 ```
 
 ## ALICE Eco-System 連携
