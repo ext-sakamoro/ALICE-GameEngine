@@ -11,7 +11,9 @@
 //! game.run_headless(300);
 //! ```
 
-use crate::engine::{Engine, EngineConfig, EngineContext, System};
+#[cfg(feature = "window")]
+use crate::engine::EngineContext;
+use crate::engine::{Engine, EngineConfig, System};
 use crate::math::{Quat, Vec3};
 use crate::scene_graph::{
     CameraData, LightData, LightVariant, MeshData, Node, NodeId, NodeKind, SdfData,
