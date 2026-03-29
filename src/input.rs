@@ -1,4 +1,14 @@
 //! Extended input system: keyboard, mouse, gamepad, and action mapping.
+//!
+//! ```rust
+//! use alice_game_engine::input::*;
+//!
+//! let mut input = InputState::new();
+//! let mut actions = ActionMap::new();
+//! actions.bind_action("jump", InputSource::Key(Key::Space));
+//! input.key_press(Key::Space);
+//! assert!(actions.is_action_just_pressed("jump", &input));
+//! ```
 
 use crate::math::Vec2;
 use serde::{Deserialize, Serialize};

@@ -3,6 +3,15 @@
 //! Automatic mesh/SDF quality switching based on screen-space size.
 //! SDF nodes can reduce evaluation complexity at distance.
 
+//!
+//! ```rust
+//! use alice_game_engine::lod::*;
+//! let group = LodGroup::new(vec![
+//!     LodLevel { min_screen_coverage: 0.3, mesh_id: 0, sdf_resolution: 64 },
+//!     LodLevel { min_screen_coverage: 0.01, mesh_id: 1, sdf_resolution: 16 },
+//! ]);
+//! assert_eq!(group.select(0.5), 0);
+//! ```
 use crate::math::Vec3;
 use serde::{Deserialize, Serialize};
 

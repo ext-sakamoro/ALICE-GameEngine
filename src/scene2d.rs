@@ -3,6 +3,13 @@
 //! Provides a lightweight 2D layer (like Fyrox's dim2) that can coexist
 //! with the 3D scene graph.
 
+//!
+//! ```rust
+//! use alice_game_engine::scene2d::*;
+//! let mut tm = TileMap::new(8, 8, 32.0);
+//! tm.set(3, 4, TileDef { id: 1, solid: true });
+//! assert!(tm.is_solid(3, 4));
+//! ```
 use crate::math::{Color, Vec2};
 use serde::{Deserialize, Serialize};
 

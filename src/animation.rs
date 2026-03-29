@@ -1,5 +1,14 @@
 //! Keyframe animation system with blending and state machine.
 //!
+//! ```rust
+//! use alice_game_engine::animation::*;
+//!
+//! let mut track = Track::new("x");
+//! track.add_keyframe(Keyframe::new(0.0, 0.0));
+//! track.add_keyframe(Keyframe::new(1.0, 10.0));
+//! assert!((track.evaluate(0.5) - 5.0).abs() < 0.1);
+//! ```
+//!
 //! Supports Linear, Step, and `CubicBezier` interpolation across named
 //! tracks. An `AnimationPlayer` drives playback, and `StateMachine`
 //! manages transitions between clips (Idle→Walk→Run).

@@ -1,6 +1,15 @@
 //! Gameplay Ability System (UE5 GAS inspired).
 //!
 //! Abilities, effects, attribute modifiers, and cooldowns.
+//!
+//! ```rust
+//! use alice_game_engine::ability::*;
+//!
+//! let mut attrs = AttributeSet::new();
+//! attrs.add(Attribute::new("hp", 100.0, 0.0, 100.0));
+//! attrs.modify("hp", -30.0);
+//! assert!((attrs.value("hp") - 70.0).abs() < 0.1);
+//! ```
 //! Designed after UE5's GAS but with Rust enum dispatch.
 
 use serde::{Deserialize, Serialize};

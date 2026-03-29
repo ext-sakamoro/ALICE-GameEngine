@@ -3,6 +3,13 @@
 //! Provides a decoupled event-driven communication layer (publish/subscribe)
 //! plus frame-based and real-time timers for scheduled callbacks.
 
+//!
+//! ```rust
+//! use alice_game_engine::scripting::*;
+//! let mut bus = EventBus::new();
+//! bus.publish(Event::new("test"));
+//! assert_eq!(bus.drain().len(), 1);
+//! ```
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

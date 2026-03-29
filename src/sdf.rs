@@ -6,6 +6,13 @@
 //! - Meshed via marching cubes for physics/rendering
 //! - Used as collision volumes (SDF CCD)
 
+//!
+//! ```rust
+//! use alice_game_engine::sdf::*;
+//! use alice_game_engine::math::Vec3;
+//! let s = SdfPrimitive::Sphere { radius: 1.0 };
+//! assert!(s.eval(Vec3::ZERO) < 0.0);
+//! ```
 use crate::math::Vec3;
 use serde::{Deserialize, Serialize};
 

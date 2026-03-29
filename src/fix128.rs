@@ -7,6 +7,13 @@
 //! Used for physics position accumulation over millions of frames
 //! without floating-point drift.
 
+//!
+//! ```rust
+//! use alice_game_engine::fix128::*;
+//! let a = Fix128::from_f64(1.5);
+//! let b = Fix128::from_f64(2.5);
+//! assert!((((a + b).to_f64()) - 4.0).abs() < 1e-10);
+//! ```
 use std::fmt;
 use std::ops::{Add, Mul, Sub};
 

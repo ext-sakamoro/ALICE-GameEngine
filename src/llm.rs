@@ -4,6 +4,13 @@
 //! (llama.cpp, ONNX Runtime, ALICE-Train ternary models, etc.)
 //! without hard-coding any specific backend.
 
+//!
+//! ```rust
+//! use alice_game_engine::llm::*;
+//! let llm = MockLlm::new("Hello!");
+//! let resp = llm.generate(&LlmRequest::new("Hi")).unwrap();
+//! assert_eq!(resp.text, "Hello!");
+//! ```
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 

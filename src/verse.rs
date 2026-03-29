@@ -3,6 +3,14 @@
 //! Provides structured concurrency, failure contexts, transactions,
 //! reactive variables, and typed events for gameplay scripting.
 
+//!
+//! ```rust
+//! use alice_game_engine::verse::*;
+//! let mut gold = 100_i32;
+//! let ok = Transaction::execute(&mut gold, |g| { *g -= 30; decide(*g >= 0) });
+//! assert!(ok.is_ok());
+//! assert_eq!(gold, 70);
+//! ```
 // ---------------------------------------------------------------------------
 // Failable<T> — Verse <decides> equivalent
 // ---------------------------------------------------------------------------

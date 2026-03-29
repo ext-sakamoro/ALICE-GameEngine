@@ -9,6 +9,12 @@
 //!
 //! Effects use enum dispatch (no trait objects) for zero vtable overhead.
 
+//!
+//! ```rust
+//! use alice_game_engine::audio::*;
+//! let engine = AudioEngine::new();
+//! assert_eq!(engine.buses.len(), 1); // "master" bus
+//! ```
 use crate::math::Vec3;
 use serde::{Deserialize, Serialize};
 

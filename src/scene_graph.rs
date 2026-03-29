@@ -1,5 +1,15 @@
 //! Hierarchical scene graph with typed nodes (mesh, SDF, camera, light).
 //!
+//! ```rust
+//! use alice_game_engine::scene_graph::*;
+//! use alice_game_engine::math::Vec3;
+//!
+//! let mut scene = SceneGraph::new("level");
+//! let cam = scene.add(Node::new("camera", NodeKind::Camera(CameraData::default())));
+//! let cube = scene.add(Node::new("cube", NodeKind::Mesh(MeshData::default())));
+//! assert_eq!(scene.node_count(), 2);
+//! ```
+//!
 //! Fyrox uses a monolithic node tree with downcasting.  ALICE keeps an
 //! enum-typed node to allow static dispatch while still supporting both
 //! mesh and SDF geometry in the same tree.

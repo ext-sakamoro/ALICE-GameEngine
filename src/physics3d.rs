@@ -1,4 +1,14 @@
 //! 3D physics: rigid bodies, forces, broadphase AABB + narrowphase SDF.
+//!
+//! ```rust
+//! use alice_game_engine::physics3d::*;
+//! use alice_game_engine::math::Vec3;
+//!
+//! let mut world = PhysicsWorld::new();
+//! world.add_body(RigidBody::new(Vec3::new(0.0, 10.0, 0.0), 1.0));
+//! world.add_body(RigidBody::new_static(Vec3::ZERO));
+//! world.step(1.0 / 60.0);
+//! ```
 
 use crate::math::{Quat, Vec3};
 use crate::scene_graph::Aabb3;

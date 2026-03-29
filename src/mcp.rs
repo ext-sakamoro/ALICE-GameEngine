@@ -144,6 +144,20 @@ pub fn tool_definitions() -> Vec<McpTool> {
                 "properties": {"frames": {"type": "integer", "default": 1}},
             }),
         },
+        McpTool {
+            name: "scene_find_by_name".to_string(),
+            description: "Find a node by name, returns its ID".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "scene_summary".to_string(),
+            description: "Get scene summary (mesh/sdf/light/camera counts)".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
     ]
 }
 
@@ -175,6 +189,7 @@ impl McpHandler {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn call_tool(
         id: u64,
         name: &str,
@@ -279,6 +294,24 @@ impl McpHandler {
                 }
                 McpResponse::success(id, serde_json::json!({"stepped": frames}))
             }
+            "scene_find_by_name" => {
+                let name_str = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let result = ctx.scene.find_by_name(name_str).map_or_else(
+                    || serde_json::json!({"id": null}),
+                    |nid| serde_json::json!({"id": nid.0}),
+                );
+                McpResponse::success(id, result)
+            }
+            "scene_summary" => McpResponse::success(
+                id,
+                serde_json::json!({
+                    "nodes": ctx.scene.node_count(),
+                    "meshes": ctx.scene.meshes().len(),
+                    "sdfs": ctx.scene.sdf_volumes().len(),
+                    "lights": ctx.scene.lights().len(),
+                    "cameras": ctx.scene.cameras().len(),
+                }),
+            ),
             _ => McpResponse::error(id, -32602, &format!("Unknown tool: {name}")),
         }
     }
