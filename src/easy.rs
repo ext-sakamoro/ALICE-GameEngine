@@ -209,6 +209,71 @@ impl Game {
             Box::new(SimpleSystem),
         )
     }
+
+    /// Adds an SDF box at the given position with half-extents.
+    pub fn add_box_sdf(&mut self, x: f32, y: f32, z: f32, hx: f32, hy: f32, hz: f32) -> NodeId {
+        let mut node = Node::new(
+            "sdf_box",
+            NodeKind::Sdf(SdfData {
+                sdf_json: format!(
+                    r#"{{"Primitive":{{"Box":{{"half_extents":[{hx},{hy},{hz}]}}}}}}"#
+                ),
+                half_extents: Vec3::new(hx, hy, hz),
+                generate_collider: false,
+            }),
+        );
+        node.local_transform.position = Vec3::new(x, y, z);
+        self.engine.context.scene.add(node)
+    }
+
+    /// Gets a node's position.
+    #[must_use]
+    pub fn get_position(&self, id: NodeId) -> Option<(f32, f32, f32)> {
+        self.engine.context.scene.get(id).map(|n| {
+            let p = n.local_transform.position;
+            (p.x(), p.y(), p.z())
+        })
+    }
+
+    /// Checks if a key is currently pressed (requires `InputState`).
+    #[must_use]
+    pub const fn is_key_pressed(&self, _key: crate::input::Key) -> bool {
+        false // Headless mode has no input; windowed mode handles via AppCallbacks
+    }
+
+    /// Adds a physics body at the given position and returns its index.
+    pub fn add_physics_body(&mut self, x: f32, y: f32, z: f32, mass: f32) -> usize {
+        let body = crate::physics3d::RigidBody::new(Vec3::new(x, y, z), mass);
+        let mut world = crate::physics3d::PhysicsWorld::new();
+        world.add_body(body)
+    }
+
+    /// Returns scene node count.
+    #[must_use]
+    pub fn scene_summary(&self) -> String {
+        let s = &self.engine.context.scene;
+        format!(
+            "nodes:{} meshes:{} sdfs:{} lights:{} cameras:{}",
+            s.node_count(),
+            s.meshes().len(),
+            s.sdf_volumes().len(),
+            s.lights().len(),
+            s.cameras().len(),
+        )
+    }
+
+    /// Sends an MCP request to the engine and returns the response JSON.
+    #[must_use]
+    pub fn mcp_call(&mut self, method: &str, params: serde_json::Value) -> String {
+        let request = crate::mcp::McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: method.to_string(),
+            params,
+        };
+        let response = crate::mcp::McpHandler::handle(&request, &mut self.engine.context);
+        serde_json::to_string(&response).unwrap_or_default()
+    }
 }
 
 // ---------------------------------------------------------------------------

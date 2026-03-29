@@ -42,6 +42,10 @@ winit = { version = "0.30", optional = true }
 [dev-dependencies]
 approx = "0.5"
 
+[[bin]]
+name = "mcp_server"
+path = "src/bin/mcp_server.rs"
+
 [[example]]
 name = "hello_engine"
 required-features = ["full"]
@@ -49,6 +53,20 @@ required-features = ["full"]
 [[example]]
 name = "spinning_cube"
 required-features = ["full"]
+
+[[example]]
+name = "pong"
+required-features = ["full"]
+
+[[example]]
+name = "physics_sandbox"
+required-features = ["full"]
+
+[[example]]
+name = "npc_chat"
+
+[[example]]
+name = "mcp_controlled"
 
 [profile.release]
 opt-level = 3
