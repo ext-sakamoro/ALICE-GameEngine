@@ -71,6 +71,12 @@ pub struct EngineContext {
     pub scene: SceneGraph,
     pub resources: ResourceManager,
     pub time: GameTime,
+    pub plugins: crate::bridge::PluginRegistry,
+
+    /// External SDF evaluator (e.g. ALICE-SDF `CompiledSdf`).
+    pub sdf_evaluator: Option<Box<dyn crate::bridge::SdfEvaluator>>,
+    /// External collision provider (e.g. ALICE-Physics).
+    pub collision_provider: Option<Box<dyn crate::bridge::CollisionProvider>>,
 
     #[cfg(feature = "audio")]
     pub audio: AudioEngine,
@@ -87,6 +93,9 @@ impl EngineContext {
             scene: SceneGraph::new("default"),
             resources: ResourceManager::new(),
             time: GameTime::new(),
+            plugins: crate::bridge::PluginRegistry::new(),
+            sdf_evaluator: None,
+            collision_provider: None,
 
             #[cfg(feature = "audio")]
             audio: AudioEngine::new(),
@@ -94,6 +103,22 @@ impl EngineContext {
             #[cfg(feature = "ui")]
             ui: UiContext::new(),
         }
+    }
+
+    /// Injects an external SDF evaluator (e.g. ALICE-SDF).
+    pub fn set_sdf_evaluator(&mut self, evaluator: Box<dyn crate::bridge::SdfEvaluator>) {
+        self.sdf_evaluator = Some(evaluator);
+    }
+
+    /// Injects an external collision provider (e.g. ALICE-Physics).
+    pub fn set_collision_provider(&mut self, provider: Box<dyn crate::bridge::CollisionProvider>) {
+        self.collision_provider = Some(provider);
+    }
+
+    /// Evaluates SDF at a point using the external evaluator (if set) or returns None.
+    #[must_use]
+    pub fn eval_sdf(&self, p: Vec3) -> Option<f32> {
+        self.sdf_evaluator.as_ref().map(|e| e.eval(p))
     }
 }
 
@@ -156,6 +181,9 @@ impl Engine {
 
         // Variable update
         system.update(&mut self.context, dt);
+
+        // Update plugins
+        self.context.plugins.update(dt);
 
         // Update scene transforms
         self.context.scene.update_world_matrices();

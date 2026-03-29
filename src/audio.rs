@@ -268,7 +268,7 @@ impl AudioBus {
 // ---------------------------------------------------------------------------
 
 /// A sound source that can be 2D or 3D (spatial).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AudioSource {
     pub name: String,
     pub bus_name: String,
@@ -285,6 +285,45 @@ pub struct AudioSource {
     /// a constant signal at its volume level (useful for test tones).
     #[serde(skip)]
     pub pcm_buffer: Option<Vec<f32>>,
+    /// External sample provider (e.g. ALICE-Voice decoder).
+    /// Takes priority over `pcm_buffer` when set.
+    #[serde(skip)]
+    pub sample_provider: Option<Box<dyn crate::bridge::AudioSampleProvider>>,
+}
+
+#[allow(clippy::missing_fields_in_debug)]
+impl std::fmt::Debug for AudioSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioSource")
+            .field("name", &self.name)
+            .field("bus_name", &self.bus_name)
+            .field("volume", &self.volume)
+            .field("playing", &self.playing)
+            .field("spatial", &self.spatial)
+            .field("cursor", &self.cursor)
+            .field("has_pcm", &self.pcm_buffer.is_some())
+            .field("has_provider", &self.sample_provider.is_some())
+            .finish()
+    }
+}
+
+impl Clone for AudioSource {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            bus_name: self.bus_name.clone(),
+            volume: self.volume,
+            pitch: self.pitch,
+            looping: self.looping,
+            spatial: self.spatial,
+            position: self.position,
+            max_distance: self.max_distance,
+            playing: self.playing,
+            cursor: self.cursor,
+            pcm_buffer: self.pcm_buffer.clone(),
+            sample_provider: None,
+        }
+    }
 }
 
 impl AudioSource {
@@ -302,6 +341,7 @@ impl AudioSource {
             playing: false,
             cursor: 0,
             pcm_buffer: None,
+            sample_provider: None,
         }
     }
 
@@ -311,10 +351,29 @@ impl AudioSource {
         self.cursor = 0;
     }
 
-    /// Reads `count` mono samples from the PCM buffer (or generates a
-    /// constant signal if no buffer is attached). Advances the cursor.
+    /// Sets an external sample provider (e.g. ALICE-Voice).
+    pub fn set_sample_provider(&mut self, provider: Box<dyn crate::bridge::AudioSampleProvider>) {
+        self.sample_provider = Some(provider);
+    }
+
+    /// Reads `count` mono samples. Priority: `sample_provider` > `pcm_buffer` > constant.
     #[must_use]
     pub fn read_samples(&mut self, count: usize, gain: f32) -> Vec<f32> {
+        // External provider takes priority
+        if let Some(ref mut provider) = self.sample_provider {
+            let mut buf = vec![0.0_f32; count];
+            let read = provider.read_samples(&mut buf);
+            if provider.is_finished() && !self.looping {
+                self.playing = false;
+            } else if provider.is_finished() && self.looping {
+                provider.seek(0.0);
+            }
+            for s in &mut buf[..read] {
+                *s *= gain;
+            }
+            return buf;
+        }
+
         let Some(ref buf) = self.pcm_buffer else {
             return vec![gain; count];
         };

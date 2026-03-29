@@ -592,55 +592,12 @@ let fired = timers.update(0.6); // → ["tick"]
 | `godot` | Godot GDExtension bindings |
 | `full` | All runtime features (excludes ffi/python/godot) |
 
-## Key Design Decisions
-
-**Mesh + SDF hybrid scene graph** — Polygon meshes and SDF volumes coexist as first-class `NodeKind` variants in the same tree. No conversion required.
-
-**Enum dispatch over trait objects** — Audio effects, UI widgets, and SDF nodes use enum dispatch for zero vtable overhead in hot paths.
-
-**Sweep-and-prune broadphase** — Physics uses X-axis sorted sweep-and-prune (O(n log n)) instead of O(n^2) brute force. ECS 2D collision uses spatial hash grid.
-
-**wgpu over OpenGL** — Targets Vulkan, Metal, DX12, and WebGPU instead of legacy OpenGL. Future-proof for WASM.
-
-**Self-contained physics** — No Rapier dependency. Verlet integration, impulse solver, SDF CCD, damping, sleeping.
-
-**SIMD 8-wide** — `wide::f32x8` for batch SDF evaluation. Rayon parallel Marching Cubes.
-
-**Fix128 precision** — 128-bit fixed-point for long-duration simulation without floating-point drift.
-
-**Division exorcism** — All hot-path divisions replaced with `.recip()` reciprocal multiply.
-
-## Examples
-
-```bash
-# Windowed GPU rendering (spinning cube)
-cargo run --example spinning_cube --features full
-
-# Headless engine loop (no window, 300 frames)
-cargo run --example hello_engine --features full
-```
-
-## Quality Standard
-
-This crate follows the ALICE optimization methodology:
-
-- **Division exorcism** — No `/` in hot paths; use `mul_add` or reciprocal multiply
-- **Branchless** — `mask.blend()` over `if/else` in SIMD paths
-- **FMA** — `a.mul_add(b, c)` over `a * b + c`
-- **SoA layout** — Struct-of-arrays over array-of-structs for cache efficiency
-- **Sweep-and-prune** — O(n log n) broadphase, never O(n^2)
-- **SIMD 8-wide** — `wide::f32x8` batch SDF evaluation, Rayon parallel MC
-- **Fix128** — 128-bit fixed-point for long-duration position accumulation
-- **Test density** — 20+ tests per KLOC (current: 37.7/KLOC)
-- **Release profile** — `lto = "fat"`, `codegen-units = 1`, `opt-level = 3`
-
 ## Quality
 
 ```bash
-cargo test --features full        # 738 tests + 3 doc-tests, 0 failures
+cargo test --features full        # 761 tests + 3 doc-tests
 cargo clippy --features full -- -W clippy::all  # 0 warnings
 cargo fmt -- --check              # 0 diffs
-cargo doc --no-deps --features full  # 0 warnings
 ```
 
 ## License

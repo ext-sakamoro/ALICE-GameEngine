@@ -143,31 +143,12 @@ fn main() {
 | `godot` | Godot GDExtensionバインディング |
 | `full` | 全ランタイム機能 (ffi/python/godot を除く) |
 
-## 設計思想
-
-**メッシュ + SDF ハイブリッドシーングラフ** — ポリゴンメッシュとSDF体積が同一ツリー内で `NodeKind` として共存。変換不要。
-
-**enum dispatch** — オーディオエフェクト、UIウィジェット、SDFノードが enum dispatch でゼロ vtable オーバーヘッド。
-
-**Sweep-and-Prune broadphase** — O(n log n)。ECS 2D衝突は空間ハッシュグリッド。
-
-**wgpu** — OpenGL ではなく Vulkan/Metal/DX12/WebGPU。WASM対応可能。
-
-**自前物理** — Rapier 非依存。ベルレ積分、インパルスソルバー、SDF CCD、ダンピング、スリープ。
-
-**SIMD 8-wide** — `wide::f32x8` でバッチSDF評価。Rayon並列Marching Cubes。
-
-**Fix128精度** — 128bit固定小数点で長時間シミュレーションの浮動小数点ドリフトを排除。
-
-**除算追放** — ホットパスの全除算を `.recip()` 逆数乗算に置換。
-
-## 品質基準
+## 品質
 
 ```bash
-cargo test --features full        # 738テスト + 3 doc-tests, 0失敗
+cargo test --features full        # 761テスト + 3 doc-tests
 cargo clippy --features full -- -W clippy::all  # 0警告
 cargo fmt -- --check              # 0差分
-cargo doc --no-deps --features full  # 0警告
 ```
 
 ## ALICE Eco-System 連携
