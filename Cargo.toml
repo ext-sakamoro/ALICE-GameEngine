@@ -21,7 +21,8 @@ navmesh = []
 ffi = []
 python = ["ffi"]
 godot = ["ffi"]
-full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
+alice-shaders = ["alice-shader"]
+full = ["window", "sdf", "audio", "ui", "particles", "navmesh", "alice-shaders"]
 
 [dependencies]
 glam = { version = "0.29", features = ["serde"] }
@@ -30,6 +31,9 @@ serde_json = "1.0"
 log = "0.4"
 rayon = "1.10"
 wide = "0.7"
+
+# ALICE ecosystem (optional)
+alice-shader = { git = "https://github.com/ext-sakamoro/ALICE-Shader.git", optional = true }
 
 # GPU renderer (optional)
 wgpu = { version = "25", optional = true }
