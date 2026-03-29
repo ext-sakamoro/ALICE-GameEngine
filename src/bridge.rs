@@ -130,6 +130,41 @@ pub trait UiRenderer: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// Network Bridge — for ALICE-Sync / external transport
+// ---------------------------------------------------------------------------
+
+/// Trait for network transport backends (ALICE-Sync, tokio, quinn, WebRTC).
+pub trait NetworkTransport: Send + Sync {
+    /// Sends raw bytes to a peer.
+    ///
+    /// # Errors
+    /// Returns error on send failure.
+    fn send_to(&mut self, peer_id: u32, data: &[u8]) -> Result<(), String>;
+
+    /// Receives pending data. Returns (`peer_id`, data) pairs.
+    fn recv(&mut self) -> Vec<(u32, Vec<u8>)>;
+
+    /// Returns connected peer count.
+    fn connected_peers(&self) -> usize;
+}
+
+// ---------------------------------------------------------------------------
+// Skeleton Bridge — for external animation systems
+// ---------------------------------------------------------------------------
+
+/// Trait for external skeletal animation providers.
+pub trait SkeletonProvider: Send + Sync {
+    /// Returns bone count.
+    fn bone_count(&self) -> usize;
+
+    /// Returns skinning matrices (`bone_count` × mat4x4 as f32 slice).
+    fn skin_matrices(&self) -> &[f32];
+
+    /// Applies an animation at the given time.
+    fn apply_animation(&mut self, name: &str, time: f32);
+}
+
+// ---------------------------------------------------------------------------
 // Plugin system
 // ---------------------------------------------------------------------------
 
