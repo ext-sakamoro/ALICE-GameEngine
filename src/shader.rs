@@ -319,6 +319,11 @@ pub fn builtin_shader_cache() -> ShaderCache {
         DEFERRED_LIGHTING_FRAGMENT_WGSL,
         ShaderStage::Fragment,
     ));
+    cache.add(ShaderSource::new(
+        "lut_postprocess",
+        crate::lut_postprocess::LUT_POSTPROCESS_WGSL,
+        ShaderStage::Fragment,
+    ));
     cache
 }
 
@@ -389,7 +394,7 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 5);
+        assert_eq!(cache.count(), 6);
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
         assert!(cache.get("sdf_raymarch").is_some());

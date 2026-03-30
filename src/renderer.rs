@@ -105,6 +105,7 @@ pub enum RenderPass {
     Bloom,
     Hdr,
     Fxaa,
+    LutColorGrade,
     Ui,
     Debug,
     Custom(String),
