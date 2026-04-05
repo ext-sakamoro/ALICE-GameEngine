@@ -138,7 +138,10 @@ pub fn parse_cube_file(content: &str) -> Result<Lut3DData, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if line.starts_with("TITLE") || line.starts_with("DOMAIN_MIN") || line.starts_with("DOMAIN_MAX") {
+        if line.starts_with("TITLE")
+            || line.starts_with("DOMAIN_MIN")
+            || line.starts_with("DOMAIN_MAX")
+        {
             continue;
         }
         if let Some(rest) = line.strip_prefix("LUT_3D_SIZE") {
@@ -453,7 +456,11 @@ DOMAIN_MAX 1.0 1.0 1.0
 
     #[test]
     fn shader_has_entry_point() {
-        let src = ShaderSource::new("lut_postprocess", LUT_POSTPROCESS_WGSL, ShaderStage::Fragment);
+        let src = ShaderSource::new(
+            "lut_postprocess",
+            LUT_POSTPROCESS_WGSL,
+            ShaderStage::Fragment,
+        );
         assert!(src.has_entry_point());
     }
 
