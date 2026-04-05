@@ -411,8 +411,9 @@ impl SceneGraph {
     /// Recomputes world matrices for all nodes.
     /// Call once per frame before rendering.
     pub fn update_world_matrices(&mut self) {
-        // Find root nodes (parent == NONE).
-        let roots: Vec<u32> = self
+        // Iterative traversal with an explicit work-stack avoids per-node Vec
+        // allocation that the recursive approach required for children clone.
+        let mut stack: Vec<(u32, Mat4)> = self
             .nodes
             .iter()
             .enumerate()
@@ -420,27 +421,23 @@ impl SceneGraph {
                 #[allow(clippy::cast_possible_truncation)]
                 n.as_ref()
                     .filter(|node| node.parent.is_none())
-                    .map(|_| i as u32)
+                    .map(|_| (i as u32, Mat4::IDENTITY))
             })
             .collect();
 
-        for root in roots {
-            self.update_recursive(root, Mat4::IDENTITY);
-        }
-    }
-
-    fn update_recursive(&mut self, idx: u32, parent_world: Mat4) {
-        let i = idx as usize;
-        let (local, children) = {
+        while let Some((idx, parent_world)) = stack.pop() {
+            let i = idx as usize;
             let Some(Some(node)) = self.nodes.get(i) else {
-                return;
+                continue;
             };
-            (node.local_transform.to_matrix(), node.children.clone())
-        };
-        let world = parent_world * local;
-        self.world_matrices[i] = world;
-        for child in children {
-            self.update_recursive(child.0, world);
+            let world = parent_world * node.local_transform.to_matrix();
+            // Collect child indices as plain u32 (NodeId is Copy) before
+            // releasing the borrow so we can mutate world_matrices below.
+            let children: Vec<u32> = node.children.iter().map(|c| c.0).collect();
+            self.world_matrices[i] = world;
+            for child_idx in children {
+                stack.push((child_idx, world));
+            }
         }
     }
 
@@ -776,10 +773,12 @@ impl SceneGraph {
     }
 
     fn collect_descendants(&self, id: NodeId, out: &mut Vec<NodeId>) {
-        let Some(node) = self.get(id) else {
-            return;
-        };
-        let children = node.children.clone();
+        // Copy child NodeIds (Copy type) into a local vec so we do not hold
+        // the node reference across the recursive immutable re-borrow.
+        let children: Vec<NodeId> = self
+            .get(id)
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
         for child in children {
             out.push(child);
             self.collect_descendants(child, out);

@@ -318,15 +318,16 @@ impl StateMachine {
 
     /// Advances transition by `dt`.
     pub fn update(&mut self, dt: f32) {
-        if let Some(ref to) = self.transitioning_to.clone() {
+        if let Some(to) = self.transitioning_to.as_deref() {
             let duration = self
                 .transitions
                 .iter()
-                .find(|t| t.from == self.current_state && t.to == *to)
+                .find(|t| t.from == self.current_state && t.to == to)
                 .map_or(0.1, |t| t.duration);
             self.transition_progress += dt / duration;
             if self.transition_progress >= 1.0 {
-                self.current_state.clone_from(to);
+                let completed = to.to_owned();
+                self.current_state = completed;
                 self.transitioning_to = None;
                 self.transition_progress = 0.0;
             }
