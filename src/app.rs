@@ -515,11 +515,14 @@ impl winit::application::ApplicationHandler for WindowedApp {
 
                 self.input.begin_frame();
                 if let Some(engine) = &mut self.engine {
-                    engine.context.input.begin_frame();
                     let mut bridge = BridgeSystem {
                         callbacks: &mut *self.callbacks,
                     };
                     engine.frame(dt, &mut bridge);
+                    // begin_frame は engine.frame の**後**に呼ぶ。
+                    // こうすると KeyboardInput で蓄積された just_pressed を
+                    // callbacks.update() が正しく読める。
+                    engine.context.input.begin_frame();
                 }
 
                 // Update MVP uniform: compute rotation from engine time
