@@ -75,6 +75,8 @@ pub struct EngineContext {
     pub action_map: crate::input::ActionMap,
     pub plugins: crate::bridge::PluginRegistry,
     pub coroutines: crate::verse::TickExecutor,
+    /// Registered mesh assets — index is `MeshData::mesh_id`.
+    pub mesh_assets: Vec<crate::asset::MeshAsset>,
 
     /// External SDF evaluator (e.g. ALICE-SDF `CompiledSdf`).
     pub sdf_evaluator: Option<Box<dyn crate::bridge::SdfEvaluator>>,
@@ -99,6 +101,7 @@ impl EngineContext {
             input: crate::input::InputState::new(),
             action_map: crate::input::ActionMap::new(),
             plugins: crate::bridge::PluginRegistry::new(),
+            mesh_assets: Vec::new(),
             coroutines: crate::verse::TickExecutor::new(),
             sdf_evaluator: None,
             collision_provider: None,
@@ -109,6 +112,13 @@ impl EngineContext {
             #[cfg(feature = "ui")]
             ui: UiContext::new(),
         }
+    }
+
+    /// Registers a mesh asset and returns its `mesh_id` (index).
+    pub fn register_mesh_asset(&mut self, asset: crate::asset::MeshAsset) -> u32 {
+        let id = self.mesh_assets.len() as u32;
+        self.mesh_assets.push(asset);
+        id
     }
 
     /// Injects an external SDF evaluator (e.g. ALICE-SDF).

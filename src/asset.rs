@@ -92,13 +92,17 @@ pub fn parse_obj(name: &str, obj_text: &str) -> MeshAsset {
                     idx_str.parse::<u32>().ok().map(|i| i - 1) // OBJ is 1-indexed
                 })
                 .collect();
-            // Triangulate fan
+            // Triangulate fan with computed face normal
             if face_indices.len() >= 3 {
+                let p0 = positions.get(face_indices[0] as usize).copied().unwrap_or([0.0; 3]);
+                let p1 = positions.get(face_indices[1] as usize).copied().unwrap_or([0.0; 3]);
+                let p2 = positions.get(face_indices[2] as usize).copied().unwrap_or([0.0; 3]);
+                let normal = compute_face_normal(p0, p1, p2);
                 for i in 1..face_indices.len() - 1 {
                     for &fi in &[face_indices[0], face_indices[i], face_indices[i + 1]] {
                         let pos = positions.get(fi as usize).copied().unwrap_or([0.0; 3]);
                         let vi = vertices.len() as u32;
-                        vertices.push(Vertex::new(pos, [0.0, 1.0, 0.0], [0.0, 0.0]));
+                        vertices.push(Vertex::new(pos, normal, [0.0, 0.0]));
                         indices.push(vi);
                     }
                 }
@@ -110,6 +114,24 @@ pub fn parse_obj(name: &str, obj_text: &str) -> MeshAsset {
         name: name.to_string(),
         vertices,
         indices,
+    }
+}
+
+fn compute_face_normal(p0: [f32; 3], p1: [f32; 3], p2: [f32; 3]) -> [f32; 3] {
+    let ax = p1[0] - p0[0];
+    let ay = p1[1] - p0[1];
+    let az = p1[2] - p0[2];
+    let bx = p2[0] - p0[0];
+    let by = p2[1] - p0[1];
+    let bz = p2[2] - p0[2];
+    let nx = ay * bz - az * by;
+    let ny = az * bx - ax * bz;
+    let nz = ax * by - ay * bx;
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    if len > 1e-8 {
+        [nx * len.recip(), ny * len.recip(), nz * len.recip()]
+    } else {
+        [0.0, 1.0, 0.0]
     }
 }
 

@@ -205,35 +205,20 @@ impl WindowedApp {
     fn init_gpu_resources(&mut self) {
         let gpu = self.gpu.as_ref().unwrap();
 
-        // Cube vertices: position (3f) + color (3f), 8 corners × 3 triangles per face = 36 verts
-        #[rustfmt::skip]
-        let vertices: &[f32] = &[
-            // Front face (z = -0.5)
-            -0.5, -0.5, -0.5,  1.0, 0.0, 0.0,
-             0.5, -0.5, -0.5,  0.0, 1.0, 0.0,
-             0.5,  0.5, -0.5,  0.0, 0.0, 1.0,
-            -0.5,  0.5, -0.5,  1.0, 1.0, 0.0,
-            // Back face (z = 0.5)
-            -0.5, -0.5,  0.5,  1.0, 0.0, 1.0,
-             0.5, -0.5,  0.5,  0.0, 1.0, 1.0,
-             0.5,  0.5,  0.5,  1.0, 1.0, 1.0,
-            -0.5,  0.5,  0.5,  0.5, 0.5, 0.5,
-        ];
+        // MeshAsset があればそれを使う、なければデフォルトキューブ
+        let (vb_data, ib_data) = if let Some(engine) = &self.engine {
+            if let Some(asset) = engine.context.mesh_assets.first() {
+                mesh_asset_to_gpu_data(asset)
+            } else {
+                default_cube_data()
+            }
+        } else {
+            default_cube_data()
+        };
 
-        #[rustfmt::skip]
-        let indices: &[u16] = &[
-            0, 1, 2,  2, 3, 0, // front
-            1, 5, 6,  6, 2, 1, // right
-            5, 4, 7,  7, 6, 5, // back
-            4, 0, 3,  3, 7, 4, // left
-            3, 2, 6,  6, 7, 3, // top
-            4, 5, 1,  1, 0, 4, // bottom
-        ];
-        self.index_count = indices.len() as u32;
+        self.index_count = (ib_data.len() / 2) as u32; // u16 = 2 bytes each
 
-        let vb_bytes = bytemuck::cast_slice(vertices);
-        let ib_bytes = bytemuck::cast_slice(indices);
-        let (vb, ib) = gpu.create_mesh_buffers(vb_bytes, ib_bytes);
+        let (vb, ib) = gpu.create_mesh_buffers(&vb_data, &ib_data);
         self.vertex_buffer = Some(vb);
         self.index_buffer = Some(ib);
 
@@ -352,6 +337,64 @@ fn fs_main(@location(0) color: vec3<f32>) -> @location(0) vec4<f32> {
         self.uniform_buffer = Some(ub);
         self.bind_group = Some(bind_group);
     }
+}
+
+/// Default cube vertex/index data (position + color, u16 indices).
+#[cfg(feature = "window")]
+fn default_cube_data() -> (Vec<u8>, Vec<u8>) {
+    #[rustfmt::skip]
+    let vertices: &[f32] = &[
+        -0.5, -0.5, -0.5,  1.0, 0.0, 0.0,
+         0.5, -0.5, -0.5,  0.0, 1.0, 0.0,
+         0.5,  0.5, -0.5,  0.0, 0.0, 1.0,
+        -0.5,  0.5, -0.5,  1.0, 1.0, 0.0,
+        -0.5, -0.5,  0.5,  1.0, 0.0, 1.0,
+         0.5, -0.5,  0.5,  0.0, 1.0, 1.0,
+         0.5,  0.5,  0.5,  1.0, 1.0, 1.0,
+        -0.5,  0.5,  0.5,  0.5, 0.5, 0.5,
+    ];
+    #[rustfmt::skip]
+    let indices: &[u16] = &[
+        0, 1, 2,  2, 3, 0,
+        1, 5, 6,  6, 2, 1,
+        5, 4, 7,  7, 6, 5,
+        4, 0, 3,  3, 7, 4,
+        3, 2, 6,  6, 7, 3,
+        4, 5, 1,  1, 0, 4,
+    ];
+    (
+        bytemuck::cast_slice(vertices).to_vec(),
+        bytemuck::cast_slice(indices).to_vec(),
+    )
+}
+
+/// `MeshAsset` → GPU vertex (position+color) + index (u16) data.
+/// normal の絶対値を色として使う (デバッグ可視化)。
+#[cfg(feature = "window")]
+fn mesh_asset_to_gpu_data(asset: &crate::asset::MeshAsset) -> (Vec<u8>, Vec<u8>) {
+    // position(3f) + color(3f) = 6 floats per vertex
+    let mut verts: Vec<f32> = Vec::with_capacity(asset.vertices.len() * 6);
+    for v in &asset.vertices {
+        verts.push(v.position[0]);
+        verts.push(v.position[1]);
+        verts.push(v.position[2]);
+        // abs(normal) as color
+        verts.push(v.normal[0].abs().max(0.1));
+        verts.push(v.normal[1].abs().max(0.1));
+        verts.push(v.normal[2].abs().max(0.1));
+    }
+
+    // u32 → u16 indices
+    let indices: Vec<u16> = asset
+        .indices
+        .iter()
+        .map(|&i| i as u16)
+        .collect();
+
+    (
+        bytemuck::cast_slice(&verts).to_vec(),
+        bytemuck::cast_slice(&indices).to_vec(),
+    )
 }
 
 #[cfg(feature = "window")]
@@ -500,7 +543,7 @@ impl winit::application::ApplicationHandler for WindowedApp {
                     gpu.write_buffer(ub, mvp_bytes);
                 }
 
-                // Render
+                // Render 3D scene + UI overlay
                 if let (Some(gpu), Some(surface), Some(pipeline), Some(vb), Some(ib), Some(bg)) = (
                     &self.gpu,
                     &self.surface,
@@ -509,15 +552,67 @@ impl winit::application::ApplicationHandler for WindowedApp {
                     &self.index_buffer,
                     &self.bind_group,
                 ) {
-                    let _ = gpu.render_mesh(
-                        surface,
-                        pipeline,
-                        vb,
-                        ib,
-                        self.index_count,
-                        bg,
-                        crate::math::Color::new(0.05, 0.05, 0.08, 1.0),
-                    );
+                    if let Ok(output) = surface.get_current_texture() {
+                        let view = output
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+
+                        let mut encoder = gpu.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("frame_encoder"),
+                            },
+                        );
+
+                        // Pass 1: 3D scene
+                        {
+                            let mut pass =
+                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                    label: Some("scene_pass"),
+                                    color_attachments: &[Some(
+                                        wgpu::RenderPassColorAttachment {
+                                            view: &view,
+                                            resolve_target: None,
+                                            ops: wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                                    r: 0.05,
+                                                    g: 0.05,
+                                                    b: 0.08,
+                                                    a: 1.0,
+                                                }),
+                                                store: wgpu::StoreOp::Store,
+                                            },
+                                        },
+                                    )],
+                                    depth_stencil_attachment: None,
+                                    timestamp_writes: None,
+                                    occlusion_query_set: None,
+                                });
+                            pass.set_pipeline(pipeline);
+                            pass.set_bind_group(0, bg, &[]);
+                            pass.set_vertex_buffer(0, vb.slice(..));
+                            pass.set_index_buffer(
+                                ib.slice(..),
+                                wgpu::IndexFormat::Uint16,
+                            );
+                            pass.draw_indexed(0..self.index_count, 0, 0..1);
+                        }
+
+                        // Pass 2: UI overlay
+                        #[cfg(feature = "ui")]
+                        if let Some(engine) = &self.engine {
+                            crate::ui_renderer::render_ui_overlay(
+                                &gpu.device,
+                                &gpu.queue,
+                                &mut encoder,
+                                &view,
+                                gpu.surface_format(),
+                                &engine.context.ui,
+                            );
+                        }
+
+                        gpu.queue.submit(std::iter::once(encoder.finish()));
+                        output.present();
+                    }
                 }
 
                 if let Some(window) = &self.window {

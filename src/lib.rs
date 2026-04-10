@@ -97,6 +97,9 @@ pub mod gpu;
 #[cfg(feature = "gpu")]
 pub mod renderer;
 
+#[cfg(feature = "window")]
+pub mod ui_renderer;
+
 pub mod window;
 
 #[cfg(feature = "sdf")]
