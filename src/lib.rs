@@ -159,3 +159,7 @@ pub use texture::{GpuTextureDesc, TextureAsset};
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
 };
+pub use xr::{
+    MockProvider, XrAction, XrActionSet, XrBlendMode, XrConfig, XrError, XrFormFactor, XrHand,
+    XrHaptics, XrPose, XrProvider, XrSessionState, XrViewConfiguration, XrViewState,
+};
