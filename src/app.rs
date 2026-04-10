@@ -435,9 +435,20 @@ impl winit::application::ApplicationHandler for WindowedApp {
                     .and_then(|s| s.strip_suffix(')'))
                     .unwrap_or(&key_str);
                 if let Some(key) = crate::window::map_key(key_name) {
+                    // Write to both legacy local input and EngineContext input.
                     match event.state {
-                        ElementState::Pressed => self.input.key_press(key),
-                        ElementState::Released => self.input.key_release(key),
+                        ElementState::Pressed => {
+                            self.input.key_press(key);
+                            if let Some(engine) = &mut self.engine {
+                                engine.context.input.key_press(key);
+                            }
+                        }
+                        ElementState::Released => {
+                            self.input.key_release(key);
+                            if let Some(engine) = &mut self.engine {
+                                engine.context.input.key_release(key);
+                            }
+                        }
                     }
                 }
                 if event.physical_key
@@ -461,6 +472,7 @@ impl winit::application::ApplicationHandler for WindowedApp {
 
                 self.input.begin_frame();
                 if let Some(engine) = &mut self.engine {
+                    engine.context.input.begin_frame();
                     let mut bridge = BridgeSystem {
                         callbacks: &mut *self.callbacks,
                     };

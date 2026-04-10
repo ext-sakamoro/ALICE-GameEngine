@@ -71,6 +71,8 @@ pub struct EngineContext {
     pub scene: SceneGraph,
     pub resources: ResourceManager,
     pub time: GameTime,
+    pub input: crate::input::InputState,
+    pub action_map: crate::input::ActionMap,
     pub plugins: crate::bridge::PluginRegistry,
     pub coroutines: crate::verse::TickExecutor,
 
@@ -94,6 +96,8 @@ impl EngineContext {
             scene: SceneGraph::new("default"),
             resources: ResourceManager::new(),
             time: GameTime::new(),
+            input: crate::input::InputState::new(),
+            action_map: crate::input::ActionMap::new(),
             plugins: crate::bridge::PluginRegistry::new(),
             coroutines: crate::verse::TickExecutor::new(),
             sdf_evaluator: None,
