@@ -37,13 +37,13 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::app::{AppCallbacks, AppState};
-use crate::engine::{Engine, EngineConfig, System};
+use crate::app::AppState;
+use crate::engine::{Engine, EngineConfig, EngineContext, System};
 use crate::gpu::{GpuConfig, GpuContext};
 use crate::math::{Color, Quat, Vec3};
 use crate::window::{FrameTimer, WindowConfig};
 
-use super::provider::XrProvider;
+use super::provider::{XrAppCallbacks, XrProvider};
 use super::types::{
     XrAction, XrActionSet, XrConfig, XrError, XrHand, XrHaptics, XrPose, XrSessionState,
     XrViewState,
@@ -426,7 +426,7 @@ impl StereoWindowProvider {
 /// The window is split horizontally; the left half clears to a dark red tint
 /// and the right half to a dark blue tint, so the developer can visually
 /// confirm the stereo split. The provider supplies pose / input data via
-/// [`XrProvider`].
+/// [`XrProvider`] and is passed through to the callbacks on every frame.
 ///
 /// # Errors
 ///
@@ -434,7 +434,7 @@ impl StereoWindowProvider {
 pub fn run_xr_windowed(
     window_config: WindowConfig,
     engine_config: EngineConfig,
-    callbacks: Box<dyn AppCallbacks>,
+    callbacks: Box<dyn XrAppCallbacks>,
 ) -> Result<(), String> {
     let event_loop =
         EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
@@ -461,7 +461,7 @@ pub fn run_xr_windowed(
 struct StereoWindowApp {
     window_config: WindowConfig,
     engine_config: EngineConfig,
-    callbacks: Box<dyn AppCallbacks>,
+    callbacks: Box<dyn XrAppCallbacks>,
     provider: StereoWindowProvider,
     state: AppState,
     window: Option<Arc<Window>>,
@@ -471,21 +471,22 @@ struct StereoWindowApp {
     timer: FrameTimer,
 }
 
-struct CallbackBridge<'a> {
-    callbacks: &'a mut dyn AppCallbacks,
+struct XrBridge<'a> {
+    callbacks: &'a mut dyn XrAppCallbacks,
+    provider: &'a mut dyn XrProvider,
 }
 
-impl System for CallbackBridge<'_> {
-    fn init(&mut self, ctx: &mut crate::engine::EngineContext) {
-        self.callbacks.init(ctx);
+impl System for XrBridge<'_> {
+    fn init(&mut self, ctx: &mut EngineContext) {
+        self.callbacks.init(ctx, self.provider);
     }
 
-    fn fixed_update(&mut self, ctx: &mut crate::engine::EngineContext, fixed_dt: f32) {
-        self.callbacks.fixed_update(ctx, fixed_dt);
+    fn fixed_update(&mut self, ctx: &mut EngineContext, fixed_dt: f32) {
+        self.callbacks.fixed_update(ctx, self.provider, fixed_dt);
     }
 
-    fn update(&mut self, ctx: &mut crate::engine::EngineContext, dt: f32) {
-        self.callbacks.update(ctx, dt);
+    fn update(&mut self, ctx: &mut EngineContext, dt: f32) {
+        self.callbacks.update(ctx, self.provider, dt);
     }
 }
 
@@ -544,8 +545,9 @@ impl ApplicationHandler for StereoWindowApp {
         let surface_static: wgpu::Surface<'static> = unsafe { std::mem::transmute(surface) };
 
         let mut engine = Engine::new(self.engine_config.clone());
-        let mut bridge = CallbackBridge {
+        let mut bridge = XrBridge {
             callbacks: &mut *self.callbacks,
+            provider: &mut self.provider,
         };
         engine.init(&mut bridge);
 
@@ -619,8 +621,9 @@ impl ApplicationHandler for StereoWindowApp {
 
                 // 2. Drive the engine + user callbacks.
                 if let Some(engine) = &mut self.engine {
-                    let mut bridge = CallbackBridge {
+                    let mut bridge = XrBridge {
                         callbacks: &mut *self.callbacks,
+                        provider: &mut self.provider,
                     };
                     engine.frame(dt, &mut bridge);
                 }

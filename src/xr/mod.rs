@@ -58,7 +58,7 @@ pub mod types;
 pub mod stereo_window;
 
 pub use mock::MockProvider;
-pub use provider::XrProvider;
+pub use provider::{XrAppCallbacks, XrProvider};
 pub use types::{
     XrAction, XrActionSet, XrBlendMode, XrConfig, XrError, XrFormFactor, XrHand, XrHaptics, XrPose,
     XrSessionState, XrViewConfiguration, XrViewState,

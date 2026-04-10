@@ -1,4 +1,10 @@
 //! [`XrProvider`] trait — abstract input/output for `XR` backends.
+//!
+//! Also defines [`XrAppCallbacks`], the user-side trait implemented by games
+//! running under [`super::stereo_window::run_xr_windowed`] (or any other XR
+//! runner that wants to pass a provider through to callbacks).
+
+use crate::engine::EngineContext;
 
 use super::types::{
     XrAction, XrActionSet, XrConfig, XrError, XrHand, XrHaptics, XrPose, XrSessionState,
@@ -78,4 +84,30 @@ pub trait XrProvider: Send {
     ///
     /// Default implementation is a no-op; backends override as needed.
     fn request_exit(&mut self) {}
+}
+
+// ---------------------------------------------------------------------------
+// XrAppCallbacks — user-side callback trait for XR runners
+// ---------------------------------------------------------------------------
+
+/// Application callbacks that receive an [`XrProvider`] reference on every
+/// frame alongside the engine context.
+///
+/// Mirrors [`crate::app::AppCallbacks`] but with an extra `provider` argument
+/// so game code can read action state and apply haptics directly.
+pub trait XrAppCallbacks: Send {
+    /// Called once after the window + GPU + provider are ready.
+    fn init(&mut self, ctx: &mut EngineContext, provider: &mut dyn XrProvider);
+
+    /// Called every frame at variable rate.
+    fn update(&mut self, ctx: &mut EngineContext, provider: &mut dyn XrProvider, dt: f32);
+
+    /// Called at fixed timestep for physics.
+    fn fixed_update(
+        &mut self,
+        _ctx: &mut EngineContext,
+        _provider: &mut dyn XrProvider,
+        _fixed_dt: f32,
+    ) {
+    }
 }
