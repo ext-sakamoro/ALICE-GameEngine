@@ -72,6 +72,10 @@ name = "npc_chat"
 [[example]]
 name = "mcp_controlled"
 
+[[example]]
+name = "rpg"
+path = "templates/rpg.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

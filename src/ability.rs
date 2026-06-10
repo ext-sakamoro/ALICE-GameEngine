@@ -66,6 +66,7 @@ impl Attribute {
 // ---------------------------------------------------------------------------
 
 /// A collection of named attributes for an entity.
+#[derive(Debug, Clone)]
 pub struct AttributeSet {
     attrs: HashMap<String, Attribute>,
 }

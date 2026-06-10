@@ -51,6 +51,7 @@ pub mod ability;
 pub mod animation;
 pub mod app;
 pub mod asset;
+pub mod battle;
 pub mod bridge;
 pub mod camera_controller;
 pub mod collision;

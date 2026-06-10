@@ -357,6 +357,337 @@ impl Default for ScriptVars {
 }
 
 // ---------------------------------------------------------------------------
+// EventCommand — no-code event scripting (RPG-Cobo inspired)
+// ---------------------------------------------------------------------------
+
+/// Result of executing one step of an [`EventCommand`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandStatus {
+    /// Command finished — script advances to next command.
+    Done,
+    /// Command needs more ticks (e.g. [`WaitCommand`]).
+    Pending,
+    /// Command failed irrecoverably; script reports the error and stops.
+    Failed(String),
+}
+
+/// Mutable context passed to each [`EventCommand`] on every tick.
+///
+/// Owns the script's variable store, an optional reference to a battler's
+/// attributes (so commands can heal / damage / modify), and a log buffer.
+pub struct EventContext<'a> {
+    pub vars: &'a mut ScriptVars,
+    pub attrs: Option<&'a mut crate::ability::AttributeSet>,
+    pub log: &'a mut Vec<String>,
+    pub elapsed_ticks: u32,
+}
+
+/// A single executable command in an [`EventScript`].
+///
+/// Designed after RPG-Cobo `.sk` `EventCommands` — commands are small,
+/// composable, and may run across multiple ticks via
+/// [`CommandStatus::Pending`].
+pub trait EventCommand: Send {
+    /// Advance the command. Called once per tick until it returns
+    /// [`CommandStatus::Done`] or [`CommandStatus::Failed`].
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus;
+    /// Identifier for logging / debugging.
+    fn name(&self) -> &str;
+}
+
+/// Display a line of dialogue or narration.
+#[derive(Debug, Clone)]
+pub struct MessageCommand {
+    pub speaker: String,
+    pub text: String,
+}
+
+impl MessageCommand {
+    #[must_use]
+    pub fn new(speaker: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            speaker: speaker.into(),
+            text: text.into(),
+        }
+    }
+}
+
+impl EventCommand for MessageCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        ctx.log.push(format!("{}: {}", self.speaker, self.text));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "message"
+    }
+}
+
+/// Modify a named attribute on the current battler (if `ctx.attrs` is set).
+#[derive(Debug, Clone)]
+pub struct ChangeAttrCommand {
+    pub attr_name: String,
+    pub delta: f32,
+}
+
+impl ChangeAttrCommand {
+    #[must_use]
+    pub fn new(attr_name: impl Into<String>, delta: f32) -> Self {
+        Self {
+            attr_name: attr_name.into(),
+            delta,
+        }
+    }
+}
+
+impl EventCommand for ChangeAttrCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        let Some(attrs) = ctx.attrs.as_mut() else {
+            return CommandStatus::Failed("no attrs in context".into());
+        };
+        if attrs.modify(&self.attr_name, self.delta) {
+            ctx.log.push(format!(
+                "{} {} by {:+.0} (now {})",
+                self.attr_name,
+                if self.delta >= 0.0 {
+                    "raised"
+                } else {
+                    "reduced"
+                },
+                self.delta,
+                attrs.value(&self.attr_name)
+            ));
+            CommandStatus::Done
+        } else {
+            CommandStatus::Failed(format!("attr '{}' not found", self.attr_name))
+        }
+    }
+    fn name(&self) -> &'static str {
+        "change_attr"
+    }
+}
+
+/// Block the script for `ticks` ticks.
+#[derive(Debug, Clone)]
+pub struct WaitCommand {
+    pub ticks: u32,
+    elapsed: u32,
+}
+
+impl WaitCommand {
+    #[must_use]
+    pub const fn new(ticks: u32) -> Self {
+        Self { ticks, elapsed: 0 }
+    }
+}
+
+impl EventCommand for WaitCommand {
+    fn execute(&mut self, _ctx: &mut EventContext) -> CommandStatus {
+        self.elapsed += 1;
+        if self.elapsed >= self.ticks {
+            CommandStatus::Done
+        } else {
+            CommandStatus::Pending
+        }
+    }
+    fn name(&self) -> &'static str {
+        "wait"
+    }
+}
+
+/// Branch on the value of a script variable (boolean).
+///
+/// On the first tick, evaluates `vars.get_bool(var_name)`; subsequent ticks
+/// delegate to the chosen branch until that branch is `Done`.
+pub struct BranchCommand {
+    pub var_name: String,
+    pub if_true: Box<dyn EventCommand>,
+    pub if_false: Box<dyn EventCommand>,
+    branch_taken: Option<bool>,
+}
+
+impl BranchCommand {
+    #[must_use]
+    pub fn new(
+        var_name: impl Into<String>,
+        if_true: Box<dyn EventCommand>,
+        if_false: Box<dyn EventCommand>,
+    ) -> Self {
+        Self {
+            var_name: var_name.into(),
+            if_true,
+            if_false,
+            branch_taken: None,
+        }
+    }
+}
+
+impl EventCommand for BranchCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        if self.branch_taken.is_none() {
+            self.branch_taken = Some(ctx.vars.get_bool(&self.var_name).unwrap_or(false));
+        }
+        let cmd: &mut dyn EventCommand = if self.branch_taken == Some(true) {
+            self.if_true.as_mut()
+        } else {
+            self.if_false.as_mut()
+        };
+        cmd.execute(ctx)
+    }
+    fn name(&self) -> &'static str {
+        "branch"
+    }
+}
+
+/// Add `count` of `item_name` to the inventory, stored in `ctx.vars` under
+/// the key `"item:<name>"`.
+#[derive(Debug, Clone)]
+pub struct GiveItemCommand {
+    pub item_name: String,
+    pub count: i64,
+}
+
+impl GiveItemCommand {
+    #[must_use]
+    pub fn new(item_name: impl Into<String>, count: i64) -> Self {
+        Self {
+            item_name: item_name.into(),
+            count,
+        }
+    }
+}
+
+impl EventCommand for GiveItemCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        let key = format!("item:{}", self.item_name);
+        let current = ctx.vars.get_int(&key).unwrap_or(0);
+        ctx.vars.set_int(&key, current + self.count);
+        ctx.log
+            .push(format!("Got {}x {}", self.count, self.item_name));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "give_item"
+    }
+}
+
+/// Signal that a battle should begin. The actual [`crate::battle`] runner is
+/// driven by the outer game loop; this command merely sets the variable
+/// `"pending_battle"` (string) to the `encounter_id`. The host reads that and
+/// transitions into battle, clearing the variable once resolved.
+#[derive(Debug, Clone)]
+pub struct BeginBattleCommand {
+    pub encounter_id: String,
+}
+
+impl BeginBattleCommand {
+    #[must_use]
+    pub fn new(encounter_id: impl Into<String>) -> Self {
+        Self {
+            encounter_id: encounter_id.into(),
+        }
+    }
+}
+
+impl EventCommand for BeginBattleCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        ctx.vars.set_string("pending_battle", &self.encounter_id);
+        ctx.log
+            .push(format!("[Battle begins: {}]", self.encounter_id));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "begin_battle"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EventScript — sequence of commands
+// ---------------------------------------------------------------------------
+
+/// An ordered sequence of [`EventCommand`]s executed one at a time.
+///
+/// A script `step` advances the current command; if that command returns
+/// [`CommandStatus::Done`], the index moves forward.
+pub struct EventScript {
+    commands: Vec<Box<dyn EventCommand>>,
+    current_idx: usize,
+    finished: bool,
+    failure: Option<String>,
+}
+
+impl EventScript {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            commands: Vec::new(),
+            current_idx: 0,
+            finished: false,
+            failure: None,
+        }
+    }
+
+    /// Append a command. Returns self for builder-style chaining.
+    pub fn push(&mut self, cmd: Box<dyn EventCommand>) -> &mut Self {
+        self.commands.push(cmd);
+        self
+    }
+
+    #[must_use]
+    pub const fn is_done(&self) -> bool {
+        self.finished
+    }
+
+    #[must_use]
+    pub fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
+    }
+
+    #[must_use]
+    pub const fn current_idx(&self) -> usize {
+        self.current_idx
+    }
+
+    #[must_use]
+    pub fn command_count(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Advance the script by one tick. Returns the current command's
+    /// [`CommandStatus`], or `Done` if the entire script has finished.
+    pub fn step(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        if self.finished {
+            return CommandStatus::Done;
+        }
+        if self.current_idx >= self.commands.len() {
+            self.finished = true;
+            return CommandStatus::Done;
+        }
+        let cmd = self.commands[self.current_idx].as_mut();
+        match cmd.execute(ctx) {
+            CommandStatus::Done => {
+                self.current_idx += 1;
+                if self.current_idx >= self.commands.len() {
+                    self.finished = true;
+                }
+                CommandStatus::Done
+            }
+            CommandStatus::Pending => CommandStatus::Pending,
+            CommandStatus::Failed(msg) => {
+                self.finished = true;
+                self.failure = Some(msg.clone());
+                CommandStatus::Failed(msg)
+            }
+        }
+    }
+}
+
+impl Default for EventScript {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -552,5 +883,173 @@ mod tests {
         v.set_string("c", "3");
         v.set_bool("d", true);
         assert_eq!(v.total_count(), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // EventCommand tests
+    // -----------------------------------------------------------------------
+
+    use crate::ability::{Attribute, AttributeSet};
+
+    fn ctx<'a>(
+        vars: &'a mut ScriptVars,
+        attrs: Option<&'a mut AttributeSet>,
+        log: &'a mut Vec<String>,
+    ) -> EventContext<'a> {
+        EventContext {
+            vars,
+            attrs,
+            log,
+            elapsed_ticks: 0,
+        }
+    }
+
+    #[test]
+    fn message_command_logs_text() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = MessageCommand::new("Elder", "Welcome, traveler.");
+        let status = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(status, CommandStatus::Done);
+        assert_eq!(log.len(), 1);
+        assert!(log[0].contains("Elder") && log[0].contains("Welcome"));
+    }
+
+    #[test]
+    fn change_attr_modifies_set() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut attrs = AttributeSet::new();
+        attrs.add(Attribute::new("hp", 50.0, 0.0, 100.0));
+        let mut cmd = ChangeAttrCommand::new("hp", 20.0);
+        let status = cmd.execute(&mut ctx(&mut vars, Some(&mut attrs), &mut log));
+        assert_eq!(status, CommandStatus::Done);
+        assert!((attrs.value("hp") - 70.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn change_attr_fails_without_context_attrs() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = ChangeAttrCommand::new("hp", 10.0);
+        let status = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(matches!(status, CommandStatus::Failed(_)));
+    }
+
+    #[test]
+    fn wait_command_pends_then_done() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = WaitCommand::new(3);
+        assert_eq!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Pending
+        );
+        assert_eq!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Pending
+        );
+        assert_eq!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Done
+        );
+    }
+
+    #[test]
+    fn branch_command_takes_true_path() {
+        let mut vars = ScriptVars::new();
+        vars.set_bool("flag", true);
+        let mut log = Vec::new();
+        let mut cmd = BranchCommand::new(
+            "flag",
+            Box::new(MessageCommand::new("T", "true path")),
+            Box::new(MessageCommand::new("F", "false path")),
+        );
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(log[0].contains("true path"));
+    }
+
+    #[test]
+    fn branch_command_falls_back_when_var_missing() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = BranchCommand::new(
+            "missing",
+            Box::new(MessageCommand::new("T", "yes")),
+            Box::new(MessageCommand::new("F", "no")),
+        );
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(log[0].contains("no"));
+    }
+
+    #[test]
+    fn give_item_accumulates_in_vars() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = GiveItemCommand::new("potion", 2);
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_int("item:potion"), Some(2));
+        let mut again = GiveItemCommand::new("potion", 3);
+        again.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_int("item:potion"), Some(5));
+    }
+
+    #[test]
+    fn begin_battle_sets_pending_var() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = BeginBattleCommand::new("slime_cave_01");
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_string("pending_battle"), Some("slime_cave_01"));
+    }
+
+    #[test]
+    fn event_script_runs_in_order() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut script = EventScript::new();
+        script.push(Box::new(MessageCommand::new("A", "1")));
+        script.push(Box::new(MessageCommand::new("B", "2")));
+        script.push(Box::new(MessageCommand::new("C", "3")));
+        while !script.is_done() {
+            script.step(&mut ctx(&mut vars, None, &mut log));
+        }
+        assert_eq!(log.len(), 3);
+        assert!(log[0].contains("A: 1") && log[2].contains("C: 3"));
+    }
+
+    #[test]
+    fn event_script_pauses_on_wait() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut script = EventScript::new();
+        script.push(Box::new(MessageCommand::new("A", "first")));
+        script.push(Box::new(WaitCommand::new(2)));
+        script.push(Box::new(MessageCommand::new("B", "after wait")));
+        // Tick 1: emit "first"
+        script.step(&mut ctx(&mut vars, None, &mut log));
+        // Tick 2: wait pending
+        let s2 = script.step(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(s2, CommandStatus::Pending);
+        // Tick 3: wait done
+        script.step(&mut ctx(&mut vars, None, &mut log));
+        // Tick 4: emit "after wait"
+        script.step(&mut ctx(&mut vars, None, &mut log));
+        assert!(script.is_done());
+        assert!(log[0].contains("first") && log[1].contains("after wait"));
+    }
+
+    #[test]
+    fn event_script_stops_on_failure() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut script = EventScript::new();
+        script.push(Box::new(ChangeAttrCommand::new("hp", 10.0))); // fails (no attrs)
+        script.push(Box::new(MessageCommand::new("X", "never runs")));
+        let s = script.step(&mut ctx(&mut vars, None, &mut log));
+        assert!(matches!(s, CommandStatus::Failed(_)));
+        assert!(script.is_done());
+        assert!(script.failure().is_some());
+        assert!(log.is_empty());
     }
 }
