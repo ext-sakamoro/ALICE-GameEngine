@@ -1,10 +1,22 @@
 # ALICE-GameEngine
 
-メッシュ + SDF ハイブリッドゲームエンジン（Rust製）。36モジュール、738テスト、wgpu レンダラー（Vulkan/Metal/DX12/WebGPU）。
+メッシュ + SDF ハイブリッドゲームエンジン (Rust 製)。42 モジュール、**744 テスト** (lib) / 24 (doc)、wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU)、**ターン制バトル + ノーコードイベントスクリプト** で RPG が作れます。
 
 [English](README.md)
 
-## クイックスタート（5行）
+## 主な機能
+
+- **ハイブリッドシーングラフ** — メッシュと SDF ボリュームを同じツリーに混在
+- **wgpu Deferred レンダラー** — GBuffer、RenderGraph、debug overlay
+- **Verlet 物理** + sweep-and-prune 広域 + SDF CCD
+- **HRTF オーディオ** バス効果と空間パン
+- **ターン制 RPG ランタイム** — `TurnBattleRunner` + 13 種の `EventCommand`
+  (Choice/SetVar/IfVar/Switch/HasItem/TakeItem/MapTransition/Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue/...)
+- **`bridge::*` trait** — ALICE-SDF, ALICE-Physics, ALICE-Audio, ALICE-Text,
+  ALICE-Metaverse 等を差し替え可能な抽象境界で接続
+- **XR レイヤー** (Pure-Rust、openxr 依存なし) MockProvider + StereoWindow
+
+## クイックスタート (5 行)
 
 ```rust
 use alice_game_engine::easy::*;
@@ -30,6 +42,51 @@ cargo run --example spinning_cube --features full
 ```
 
 wgpu でカラフルなキューブが回転するウィンドウが開きます。Escで終了。
+
+## ターン制 RPG
+
+RPG スターターテンプレートを example として登録済み (`templates/rpg.rs`):
+
+```bash
+cargo run --example rpg
+```
+
+実行結果 (抜粋):
+
+```
+Elder: Welcome, traveler. A slime has made the cave its home.
+CHOICE: Will you help us?
+  (1) Accept  (2) Decline
+> Accept
+[switch quest_active = true]
+[Battle begins: cave_slime]
+
+=== Battle: Hero vs Slime ===
+  Hero attacks Slime for 13 damage. (12 HP left)
+  Slime attacks Hero for 2 damage. (58 HP left)
+  Hero attacks Slime for 13 damage. (0 HP left)
+  Slime is defeated!
+
+Elder: Take this potion.
+[has_item potion >= 2 ? true]
+```
+
+テンプレートは 3 層を組み合わせます:
+
+1. **`battle::TurnBattleRunner`** — 速度順ターンループ。`Attack /
+   UseAbility / Defend / Flee` アクション、`BattleAi` trait、デフォルトの
+   `RandomAi` を用意
+2. **`scripting::EventScript`** — `EventCommand` のシーケンス。13 種類:
+   `Message`, `ChangeAttr`, `Wait`, `Branch`, `GiveItem`, `BeginBattle`,
+   `Choice`, `SetVar`, `IfVar`, `SetSwitch`, `HasItem`, `TakeItem`,
+   `MapTransition`、加えて高度フロー制御 `Cutscene`, `Parallel`,
+   `Repeat`, `LoopUntil`, `LlmDialogue` (LLM 連動 NPC 会話)
+3. **`ability::AbilitySystem`** — UE5 GAS インスパイアの属性、効果、
+   クールダウン
+
+世界 (ステージ) はエンジン外から `EngineContext::set_world_provider` +
+`bridge::WorldProvider` trait 経由で差し込みます (実例: `ALICE-Metaverse`
+の 6 zone 実装)。
 
 ```rust
 use alice_game_engine::app::{run_windowed, AppCallbacks};
@@ -87,7 +144,7 @@ fn main() {
                         (128bit精度)
 ```
 
-## モジュール一覧（36）
+## モジュール一覧 (42)
 
 | モジュール | 行数 | テスト | 説明 |
 |-----------|-----:|------:|------|
@@ -103,10 +160,11 @@ fn main() {
 | navmesh | 654 | 21 | NavMesh、A*経路探索、SDF動的回避、群衆分離 (RVO) |
 | animation | 650 | 32 | キーフレーム (Linear/Step/Cubic)、トラック、クリップ、ステートマシン |
 | input | 587 | 16 | キーボード/マウス/ゲームパッド、ActionMap、軸バインディング |
-| scripting | 549 | 24 | EventBus (Pub/Sub)、Timer/TimerManager、ScriptVars |
+| scripting | 1,560 | 73 | EventBus (Pub/Sub)、Timer/TimerManager、ScriptVars、13 種の EventCommand (Message/Choice/SetVar/IfVar/SetSwitch/HasItem/TakeItem/MapTransition/BeginBattle/Wait/Branch/ChangeAttr/GiveItem) + 高度フロー (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue) + EventScript ランナー |
 | scene2d | 532 | 21 | Sprite2D、TileMap、Aabb2、Body2D、Physics2D、Zオーダー |
 | gpu | 521 | 10 | wgpu Device/Queue/Surface、render_mesh()、テクスチャアップロード |
 | ability | 501 | 16 | ゲームプレイアビリティシステム (UE5 GAS風): 属性、エフェクト、クールダウン |
+| battle | 660 | 15 | ターン制バトルランナー、Battler/Party/BattleAction、Attack/Defend/Flee/UseAbility、BattleAi trait + RandomAi、速度順実行 |
 | shader | 439 | 15 | ShaderCache、5つのビルトインWGSLシェーダー |
 | particle | 432 | 16 | CPUエミッター、マルチシェイプ (Point/Sphere/Box/Cone)、重力 |
 | import | 409 | 17 | Unity YAMLシーンパーサー、UE5 .uassetヘッダー、フォーマット検出 |
@@ -118,14 +176,14 @@ fn main() {
 | collision | 333 | 10 | GJK凸衝突判定、SDF-メッシュハイブリッドnarrowphase |
 | camera_controller | 322 | 19 | FPSカメラ (WASD+マウス)、Orbitカメラ (回転/ズーム/パン) |
 | resource | 309 | 12 | 非同期リソース管理、参照カウント |
-| bridge | 306 | 8 | ALICE-xxx連携トレイト (SDF/Physics/Audio/Mesh/Shader/UI)、プラグインシステム |
+| bridge | 642 | 12 | ALICE-xxx連携トレイト (`SdfEvaluator`/`CollisionProvider`/`AudioSampleProvider`/`WorldProvider`/`TextProcessor`/`AnimationProvider`/`NetworkTransport`/`SdfFontProvider` 等)、プラグインシステム |
 | easy | 295 | 9 | GameBuilder + Game 高レベルAPI (5行ゲームセットアップ) |
 | query | 293 | 11 | 型安全ECSクエリ (query2/3)、フィルター、SystemScheduler |
 | gpu_mesh | 280 | 9 | GpuMeshDesc、VertexLayout、DrawCommand/DrawQueue |
 | simd_eval | 268 | 8 | SIMD 8-wide SDF評価 (wide f32x8)、Vec3x8、バッチeval |
 | lod | 264 | 13 | LODグループ選択、スクリーンカバレッジ、バッチカリング |
 | window | 263 | 15 | WindowConfig、キーマッピング、FrameTimer |
-| **合計** | **19,560** | **738** | |
+| **合計** | **20,840** | **744** | |
 
 ## 機能フラグ
 
@@ -154,15 +212,36 @@ cargo fmt -- --check              # 0 差分
 
 `bridge` モジュールで以下のトレイトを定義:
 
-| トレイト | 接続先 |
-|---------|--------|
+| トレイト | 接続先 (実例) |
+|---------|---------------|
 | `SdfEvaluator` | ALICE-SDF (`CompiledSdf`) |
 | `CollisionProvider` | ALICE-Physics |
 | `AudioSampleProvider` | ALICE-Audio デコーダー |
 | `MeshProvider` | ALICE-SDF Marching Cubes 出力 |
 | `ShaderTranspiler` | ALICE-SDF HLSL/GLSL トランスパイラ |
+| `WorldProvider` | **ALICE-Metaverse** (6 zone テーマパーク、ZoneId/Weather/Teleport) |
+| `TextProcessor` | **ALICE-Text** (`AliceTextProcessor` adapter、自然言語ログ圧縮) |
+| `AnimationProvider` | ALICE-Animation |
+| `SkeletonProvider` | スケルタルアニメ provider |
+| `SdfFontProvider` | ALICE-Font |
+| `NetworkTransport` | ALICE-Sync 等のトランスポート |
+| `StreamingProtocol` | ALICE-Streaming-Protocol |
 | `UiRenderer` | カスタムUIレンダラー |
 | `Plugin` | 任意の拡張プラグイン |
+
+trait は engine 側に定義のみ、adapter 実装は下流クレートに置く設計
+(`alice-game-engine` が ALICE-Text 等に直接依存しないため、
+crate のフットプリントが軽い)。実装例は `ALICE-Metaverse/core/src/adapters.rs`
+の `AliceTextProcessor` 参照。
+
+## ALICE-Metaverse 統合実例
+
+`ALICE-Metaverse` は `bridge::WorldProvider` を実装する private crate。
+6 zone (Plaza / Story / Tomorrow / Aqua / Crystal / Sky) で全 RPG が動く
+統合 demo を `cargo run --bin metaverse-tour-demo` で実行可能 (Plaza
+チュートリアル → 5 zone を踏破 → "Hero of the Metaverse" 称号獲得まで
+通る)。同 demo は Save/Load (serde_json、340 bytes) と ALICE-Text
+ブリッジによる戦闘ログ圧縮 (2222 → 708 bytes、31% 比) も実演する。
 
 ## ライセンス
 

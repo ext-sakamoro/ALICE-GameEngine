@@ -1,8 +1,20 @@
 # ALICE-GameEngine
 
-Hybrid mesh + SDF game engine in Rust. 36 modules, 738 tests, wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU).
+Hybrid mesh + SDF game engine in Rust. 42 modules, **744 tests** (lib) / 24 (doc), wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU), **turn-based battle + no-code event scripting** for RPGs.
 
 [日本語ドキュメント](README.ja.md)
+
+## What's in the box
+
+- **Hybrid scene graph** — meshes and SDF volumes coexist in the same tree
+- **Deferred wgpu renderer** with GBuffer, RenderGraph, debug overlay
+- **Verlet physics** + sweep-and-prune broadphase + SDF CCD
+- **HRTF audio** with bus effects and spatial panning
+- **Turn-based RPG runtime** — `TurnBattleRunner` + 13 `EventCommand`s
+  (Choice/SetVar/IfVar/Switch/HasItem/TakeItem/MapTransition/Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue/...)
+- **`bridge::*` traits** for plugging in ALICE-SDF, ALICE-Physics,
+  ALICE-Audio, ALICE-Text, ALICE-Metaverse and your own back-ends
+- **XR layer** (pure-Rust, no OpenXR dep) with MockProvider + StereoWindow
 
 ## Quick Start (5 lines)
 
@@ -30,6 +42,50 @@ cargo run --example spinning_cube --features full
 ```
 
 Opens a window with a rotating colored cube rendered via wgpu. Press Escape to exit.
+
+## Turn-Based RPG
+
+A full RPG starter (`templates/rpg.rs`) is registered as an example:
+
+```bash
+cargo run --example rpg
+```
+
+Output (excerpt):
+
+```
+Elder: Welcome, traveler. A slime has made the cave its home.
+CHOICE: Will you help us?
+  (1) Accept  (2) Decline
+> Accept
+[switch quest_active = true]
+[Battle begins: cave_slime]
+
+=== Battle: Hero vs Slime ===
+  Hero attacks Slime for 13 damage. (12 HP left)
+  Slime attacks Hero for 2 damage. (58 HP left)
+  Hero attacks Slime for 13 damage. (0 HP left)
+  Slime is defeated!
+
+Elder: Take this potion.
+[has_item potion >= 2 ? true]
+```
+
+The template composes three pieces:
+
+1. **`battle::TurnBattleRunner`** — speed-ordered turn loop with `Attack /
+   UseAbility / Defend / Flee` actions, `BattleAi` trait, default `RandomAi`
+2. **`scripting::EventScript`** — sequence of `EventCommand`s. 13 built-ins:
+   `Message`, `ChangeAttr`, `Wait`, `Branch`, `GiveItem`, `BeginBattle`,
+   `Choice`, `SetVar`, `IfVar`, `SetSwitch`, `HasItem`, `TakeItem`,
+   `MapTransition`, plus the advanced flow controls `Cutscene`, `Parallel`,
+   `Repeat`, `LoopUntil`, `LlmDialogue` (LLM-backed NPC dialogue)
+3. **`ability::AbilitySystem`** — UE5 GAS-inspired attributes, gameplay
+   effects, cooldowns
+
+Hook a themed world into the engine via `EngineContext::set_world_provider`
+and the `bridge::WorldProvider` trait (see `ALICE-Metaverse` for a
+6-zone implementation).
 
 ```rust
 use alice_game_engine::app::{run_windowed, AppCallbacks};
@@ -383,6 +439,47 @@ let mut agents = vec![
 crowd_separation(&mut agents, 2.0, 1.0);
 ```
 
+### Battle — Turn-Based Runner
+
+```rust
+use alice_game_engine::ability::{Attribute, AttributeSet};
+use alice_game_engine::battle::{
+    BattleAction, BattleCommand, BattleResult, Battler, Party, RandomAi, Team,
+    TurnBattleRunner,
+};
+
+fn battler(name: &str, hp: f32, atk: f32, speed: f32, team: Team) -> Battler {
+    let mut a = AttributeSet::new();
+    a.add(Attribute::new("hp", hp, 0.0, hp));
+    a.add(Attribute::new("atk", atk, 0.0, 999.0));
+    a.add(Attribute::new("def", 0.0, 0.0, 999.0));
+    a.add(Attribute::new("speed", speed, 0.0, 999.0));
+    Battler::new(name, a, team)
+}
+
+let allies  = Party::new(vec![battler("Hero", 80.0, 12.0, 10.0, Team::Ally)]);
+let enemies = Party::new(vec![battler("Slime", 25.0, 4.0, 4.0, Team::Enemy)]);
+let mut runner = TurnBattleRunner::new(allies, enemies);
+let mut ai = RandomAi::new(1);
+
+loop {
+    let cmds = vec![BattleCommand {
+        actor_idx: 0,
+        action: BattleAction::Attack { target_idx: 0 },
+    }];
+    match runner.run_turn(cmds, &mut ai) {
+        BattleResult::Ongoing => continue,
+        _ => break,
+    }
+}
+assert_eq!(runner.result(), BattleResult::Win);
+```
+
+The runner applies `Defend` first (halving incoming damage), tries `Flee`
+(succeeds if total ally speed > enemy), then resolves remaining actions in
+descending `speed` order. Implement `BattleAi` to plug in your own enemy
+strategy (`RandomAi` is provided out of the box).
+
 ### Ability System (UE5 GAS)
 
 ```rust
@@ -494,7 +591,7 @@ let nodes = unity_scene_to_nodes(&objects); // → Vec<Node> for scene graph
 let sdf_node = load_sdf_json(r#"{"Primitive":{"Sphere":{"radius":1.5}}}"#).unwrap();
 ```
 
-### Scripting — Events & Timers
+### Scripting — Events, Timers, and no-code EventCommands
 
 ```rust
 use alice_game_engine::scripting::*;
@@ -512,6 +609,33 @@ let mut timers = TimerManager::new();
 timers.add(Timer::new("respawn", 3.0, TimerMode::OneShot));
 timers.add(Timer::new("tick", 0.5, TimerMode::Repeating));
 let fired = timers.update(0.6); // → ["tick"]
+
+// no-code RPG events — drop commands into an EventScript
+let mut script = EventScript::new();
+script.push(Box::new(MessageCommand::new("Elder", "Hello, traveler.")));
+script.push(Box::new(ChoiceCommand::pick(
+    "Take the quest?",
+    vec!["Accept".into(), "Decline".into()],
+    "answer",
+    0, // tests / starter templates: hard-code 'Accept'
+)));
+script.push(Box::new(IfVarCommand::new(
+    "answer",
+    Comparison::Eq,
+    0,
+    Box::new(SetSwitchCommand::new("quest_active", true)),
+    Box::new(MessageCommand::new("Elder", "Maybe next time.")),
+)));
+script.push(Box::new(GiveItemCommand::new("potion", 2)));
+script.push(Box::new(HasItemCommand::new("potion", 1, "has_potion")));
+// CutsceneCommand / ParallelCommand / RepeatCommand / LoopUntilCommand /
+// LlmDialogueCommand are also available for richer flows.
+
+let mut vars = ScriptVars::new();
+let mut log = Vec::new();
+let mut ctx = EventContext { vars: &mut vars, attrs: None,
+    log: &mut log, elapsed_ticks: 0 };
+while !script.is_done() { script.step(&mut ctx); }
 ```
 
 ## Architecture
@@ -552,10 +676,11 @@ let fired = timers.update(0.6); // → ["tick"]
 | navmesh | 654 | 21 | NavMesh, A* pathfinding, SDF avoidance, crowd separation (RVO) |
 | animation | 650 | 32 | Keyframe (Linear/Step/Cubic), Track, Clip, Player, StateMachine |
 | input | 587 | 16 | Keyboard/Mouse/Gamepad, ActionMap, axis binding, just_pressed |
-| scripting | 549 | 24 | EventBus (pub/sub), Timer/TimerManager, ScriptVars |
+| scripting | 1,560 | 73 | EventBus (pub/sub), Timer/TimerManager, ScriptVars, 13 EventCommands (Message/Choice/SetVar/IfVar/SetSwitch/HasItem/TakeItem/MapTransition/BeginBattle/Wait/Branch/ChangeAttr/GiveItem) + advanced flow (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue) + EventScript runner |
 | scene2d | 532 | 21 | Sprite2D, TileMap, Aabb2, Body2D, Physics2D, z-order |
 | gpu | 521 | 10 | wgpu Device/Queue/Surface, render_mesh(), create_texture_rgba8() |
 | ability | 501 | 16 | Gameplay Ability System: attributes, effects, cooldowns, modifiers |
+| battle | 660 | 15 | Turn-based runner, Battler/Party/BattleAction, Attack/Defend/Flee/UseAbility, BattleAi trait + RandomAi, speed-ordered execution |
 | shader | 439 | 15 | ShaderCache, 5 built-in WGSL shaders |
 | particle | 432 | 16 | CPU emitter, multi-shape (Point/Sphere/Box/Cone), gravity |
 | import | 409 | 17 | Unity YAML scene parser, UE5 .uasset header parser, format detection |
@@ -567,14 +692,14 @@ let fired = timers.update(0.6); // → ["tick"]
 | collision | 333 | 10 | GJK convex intersection, SDF-mesh hybrid narrowphase |
 | camera_controller | 322 | 19 | FPS camera (WASD+mouse), Orbit camera (rotate/zoom/pan) |
 | resource | 309 | 12 | Async resource manager, ref counting, load state |
-| bridge | 306 | 8 | ALICE-xxx integration traits (SDF, Physics, Audio, Mesh, Shader, UI), Plugin system |
 | easy | 295 | 9 | GameBuilder + Game high-level API (5-line game setup) |
 | query | 293 | 11 | Typed ECS queries (query2/3), filter, SystemScheduler |
 | gpu_mesh | 280 | 9 | GpuMeshDesc, VertexLayout, DrawCommand/DrawQueue |
 | simd_eval | 268 | 8 | SIMD 8-wide SDF evaluation (wide f32x8), Vec3x8, batch eval |
 | lod | 264 | 13 | LOD group selection, screen coverage, batch culling |
 | window | 263 | 15 | WindowConfig, key mapping, FrameTimer |
-| **Total** | **19,560** | **738** | |
+| bridge | 642 | 12 | ALICE-xxx integration traits (`SdfEvaluator`, `CollisionProvider`, `AudioSampleProvider`, `WorldProvider`, `TextProcessor`, `AnimationProvider`, `NetworkTransport`, `SdfFontProvider`, ...), Plugin system |
+| **Total** | **20,840** | **744** | |
 
 ## Feature Flags
 
@@ -592,10 +717,55 @@ let fired = timers.update(0.6); // → ["tick"]
 | `godot` | Godot GDExtension bindings |
 | `full` | All runtime features (excludes ffi/python/godot) |
 
+## ALICE Eco-System Integration
+
+The `bridge` module exposes trait surfaces for plugging in ALICE-xxx crates
+or your own implementations:
+
+| Trait | Hooked to (examples) |
+|-------|----------------------|
+| `SdfEvaluator` | ALICE-SDF `CompiledSdf` |
+| `CollisionProvider` | ALICE-Physics |
+| `AudioSampleProvider` | ALICE-Audio decoders |
+| `MeshProvider` | ALICE-SDF Marching Cubes output |
+| `ShaderTranspiler` | ALICE-SDF HLSL/GLSL transpiler |
+| `WorldProvider` | **ALICE-Metaverse** (6-zone themed park, ZoneId/Weather/Teleport) |
+| `TextProcessor` | **ALICE-Text** (`AliceTextProcessor` adapter for log/dialogue compression) |
+| `AnimationProvider` | ALICE-Animation |
+| `SkeletonProvider` | skeletal animation backend |
+| `SdfFontProvider` | ALICE-Font |
+| `NetworkTransport` | ALICE-Sync or custom transports |
+| `StreamingProtocol` | ALICE-Streaming-Protocol |
+| `UiRenderer` | custom UI back-end |
+| `Plugin` | per-frame extension hook |
+
+The engine crate is dep-free of the ALICE-xxx stack — adapter
+implementations live in downstream consumers. See
+`ALICE-Metaverse/core/src/adapters.rs` (`AliceTextProcessor`) for a
+working example.
+
+## Reference Integration: ALICE-Metaverse
+
+`ALICE-Metaverse` (private commercial crate) implements
+`bridge::WorldProvider` for a six-zone SDF park. Run the full integration
+demo:
+
+```bash
+cd ../ALICE-Metaverse
+cargo run --bin metaverse-tour-demo
+```
+
+The tour walks Plaza (tutorial) → Story Hall → Tomorrow → Aqua → Crystal
+→ Sky (final boss), running each zone's quest, then performs a
+roundtrip `save::save` / `save::load` (340 bytes lossless JSON) followed
+by an ALICE-Text bridge compression of the accumulated battle log
+(2222 → 708 bytes, 31% / 3.1× ratio).
+
 ## Quality
 
 ```bash
-cargo test --features full        # 843 tests
+cargo test --features full        # 928 tests (lib) + 24 (doc)
+cargo clippy -- -W clippy::all    # 0 lib warnings on engine code
 cargo fmt -- --check              # 0 diffs
 ```
 
