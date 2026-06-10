@@ -242,6 +242,115 @@ pub trait ImageDecoderBridge: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// World Bridge — for ALICE-Metaverse / external themed-world providers
+// ---------------------------------------------------------------------------
+
+/// Opaque zone identifier. Concrete providers choose their own zone taxonomy;
+/// the engine treats this as a `u32` handle and does not interpret it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ZoneId(pub u32);
+
+/// Time-of-day + weather snapshot used for lighting, particle, audio cues.
+/// POD layout — directly copy-able to GPU uniforms.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorldEnvironment {
+    /// 0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset.
+    pub day_phase: f32,
+    /// 0.0..=1.0 fog density.
+    pub fog: f32,
+    /// 0.0..=1.0 rain intensity.
+    pub rain: f32,
+    /// 0.0..=1.0 lightning strobe (decays fast).
+    pub lightning: f32,
+    /// Ambient temperature in Celsius. Default 20.
+    pub temperature_c: f32,
+}
+
+/// Spawn pose for a zone.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SpawnPose {
+    pub position: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+/// Result of a teleport request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeleportResult {
+    Started,
+    Busy,
+    Unknown,
+}
+
+/// Trait for stateful world providers (e.g. ALICE-Metaverse themed park).
+///
+/// A `WorldProvider` represents a *running* simulated world — it owns the
+/// camera, time-of-day, weather, zone topology, and any internal dynamics.
+/// The engine queries it each frame for environment cues and forwards camera
+/// input through it.
+///
+/// This trait is scene-agnostic — concrete providers may implement zones via
+/// SDF, voxel grids, polygon meshes, or any combination. SDF evaluation
+/// remains the responsibility of [`SdfEvaluator`]; a provider may also
+/// implement that trait, or expose neither.
+///
+/// # Threading
+/// `Send + Sync`. The engine may call read-only methods from render threads
+/// while a single owning thread drives [`Self::step`].
+pub trait WorldProvider: Send + Sync {
+    /// Advances the world by `dt` seconds. Called once per fixed step from
+    /// `Engine::step()` before system updates.
+    fn step(&mut self, dt: f32);
+
+    fn camera_position(&self) -> Vec3;
+    fn camera_yaw(&self) -> f32;
+    fn camera_pitch(&self) -> f32;
+
+    /// Applies look delta (mouse / right-stick).
+    fn look_delta(&mut self, dyaw: f32, dpitch: f32);
+
+    /// Applies movement intent in camera-local axes
+    /// (x=right, y=up, z=forward). `sprinting` modulates speed.
+    fn move_intent(&mut self, local_dir: Vec3, sprinting: bool);
+
+    fn environment(&self) -> WorldEnvironment;
+
+    fn current_zone(&self) -> ZoneId;
+    fn zone_spawn(&self, zone: ZoneId) -> Option<SpawnPose>;
+
+    /// Lists all zones. Default: empty (anonymous zones).
+    fn zones(&self) -> Vec<ZoneId> {
+        Vec::new()
+    }
+
+    /// Display name for a zone in a given BCP-47 locale (`"ja"`, `"en"`).
+    /// Default: None.
+    fn zone_name(&self, _zone: ZoneId, _locale: &str) -> Option<String> {
+        None
+    }
+
+    /// Initiates a teleport. Engine resets input deltas on `Started`.
+    fn teleport_to(&mut self, zone: ZoneId) -> TeleportResult;
+
+    /// True while a teleport animation is playing. Default: false.
+    fn is_teleporting(&self) -> bool {
+        false
+    }
+
+    /// Returns the WGSL fragment shader for this world (for wgpu).
+    /// Default: None — engine renderer handles all rendering.
+    fn shader_wgsl(&self) -> Option<String> {
+        None
+    }
+
+    /// Returns the GLSL fragment shader (for WebGL / OpenGL paths).
+    /// Default: None.
+    fn shader_glsl(&self) -> Option<String> {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Plugin system
 // ---------------------------------------------------------------------------
 
@@ -414,5 +523,120 @@ mod tests {
     fn plugin_not_found() {
         let reg = PluginRegistry::new();
         assert!(reg.find("nonexistent").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // WorldProvider tests
+    // -----------------------------------------------------------------------
+
+    struct TestWorld {
+        pos: Vec3,
+        yaw: f32,
+        pitch: f32,
+        zone: ZoneId,
+        env: WorldEnvironment,
+        teleporting: bool,
+    }
+
+    impl TestWorld {
+        fn new() -> Self {
+            Self {
+                pos: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+                zone: ZoneId(0),
+                env: WorldEnvironment::default(),
+                teleporting: false,
+            }
+        }
+    }
+
+    impl WorldProvider for TestWorld {
+        fn step(&mut self, _dt: f32) {
+            self.teleporting = false;
+        }
+        fn camera_position(&self) -> Vec3 {
+            self.pos
+        }
+        fn camera_yaw(&self) -> f32 {
+            self.yaw
+        }
+        fn camera_pitch(&self) -> f32 {
+            self.pitch
+        }
+        fn look_delta(&mut self, dyaw: f32, dpitch: f32) {
+            self.yaw += dyaw;
+            self.pitch = (self.pitch + dpitch).clamp(-1.5, 1.5);
+        }
+        fn move_intent(&mut self, dir: Vec3, _sprint: bool) {
+            self.pos = self.pos + dir;
+        }
+        fn environment(&self) -> WorldEnvironment {
+            self.env
+        }
+        fn current_zone(&self) -> ZoneId {
+            self.zone
+        }
+        fn zone_spawn(&self, zone: ZoneId) -> Option<SpawnPose> {
+            (zone.0 < 6).then_some(SpawnPose {
+                position: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            })
+        }
+        fn teleport_to(&mut self, zone: ZoneId) -> TeleportResult {
+            if self.teleporting {
+                return TeleportResult::Busy;
+            }
+            if zone.0 >= 6 {
+                return TeleportResult::Unknown;
+            }
+            self.teleporting = true;
+            self.zone = zone;
+            TeleportResult::Started
+        }
+        fn is_teleporting(&self) -> bool {
+            self.teleporting
+        }
+    }
+
+    #[test]
+    fn world_provider_teleport_lifecycle() {
+        let mut w = TestWorld::new();
+        assert_eq!(w.teleport_to(ZoneId(2)), TeleportResult::Started);
+        assert!(w.is_teleporting());
+        assert_eq!(w.current_zone(), ZoneId(2));
+        assert_eq!(w.teleport_to(ZoneId(3)), TeleportResult::Busy);
+        w.step(0.016);
+        assert!(!w.is_teleporting());
+        assert_eq!(w.teleport_to(ZoneId(99)), TeleportResult::Unknown);
+    }
+
+    #[test]
+    fn world_environment_default_is_clear_midnight() {
+        let env = WorldEnvironment::default();
+        assert!(env.day_phase.abs() < f32::EPSILON);
+        assert!(env.fog.abs() < f32::EPSILON);
+        assert!(env.rain.abs() < f32::EPSILON);
+        assert!(env.lightning.abs() < f32::EPSILON);
+        assert!(env.temperature_c.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn zone_id_is_opaque() {
+        assert_ne!(ZoneId(0), ZoneId(1));
+        assert_eq!(ZoneId(5), ZoneId(5));
+        let w = TestWorld::new();
+        assert!(w.zone_spawn(ZoneId(0)).is_some());
+        assert!(w.zone_spawn(ZoneId(99)).is_none());
+    }
+
+    #[test]
+    fn world_provider_default_shaders_none() {
+        let w = TestWorld::new();
+        assert!(w.shader_wgsl().is_none());
+        assert!(w.shader_glsl().is_none());
+        assert!(w.zones().is_empty());
+        assert!(w.zone_name(ZoneId(0), "ja").is_none());
     }
 }

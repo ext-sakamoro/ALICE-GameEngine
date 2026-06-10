@@ -82,6 +82,8 @@ pub struct EngineContext {
     pub sdf_evaluator: Option<Box<dyn crate::bridge::SdfEvaluator>>,
     /// External collision provider (e.g. ALICE-Physics).
     pub collision_provider: Option<Box<dyn crate::bridge::CollisionProvider>>,
+    /// External world provider (e.g. ALICE-Metaverse).
+    pub world_provider: Option<Box<dyn crate::bridge::WorldProvider>>,
 
     #[cfg(feature = "audio")]
     pub audio: AudioEngine,
@@ -105,6 +107,7 @@ impl EngineContext {
             coroutines: crate::verse::TickExecutor::new(),
             sdf_evaluator: None,
             collision_provider: None,
+            world_provider: None,
 
             #[cfg(feature = "audio")]
             audio: AudioEngine::new(),
@@ -131,10 +134,27 @@ impl EngineContext {
         self.collision_provider = Some(provider);
     }
 
+    /// Injects an external world provider (e.g. ALICE-Metaverse).
+    pub fn set_world_provider(&mut self, provider: Box<dyn crate::bridge::WorldProvider>) {
+        self.world_provider = Some(provider);
+    }
+
     /// Evaluates SDF at a point using the external evaluator (if set) or returns None.
     #[must_use]
     pub fn eval_sdf(&self, p: Vec3) -> Option<f32> {
         self.sdf_evaluator.as_ref().map(|e| e.eval(p))
+    }
+
+    /// Returns the current environment from the world provider, if set.
+    #[must_use]
+    pub fn world_environment(&self) -> Option<crate::bridge::WorldEnvironment> {
+        self.world_provider.as_ref().map(|w| w.environment())
+    }
+
+    /// Returns the current zone from the world provider, if set.
+    #[must_use]
+    pub fn current_zone(&self) -> Option<crate::bridge::ZoneId> {
+        self.world_provider.as_ref().map(|w| w.current_zone())
     }
 }
 
@@ -193,6 +213,11 @@ impl Engine {
             system.fixed_update(&mut self.context, self.config.fixed_timestep);
             self.fixed_accumulator -= self.config.fixed_timestep;
             fixed_steps += 1;
+        }
+
+        // Step external world provider (e.g. ALICE-Metaverse) before user systems
+        if let Some(wp) = self.context.world_provider.as_mut() {
+            wp.step(dt);
         }
 
         // Variable update
