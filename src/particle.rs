@@ -224,6 +224,140 @@ impl ParticleEmitter {
 }
 
 // ---------------------------------------------------------------------------
+// Curl noise force field — divergence-free flow for organic particle motion
+// ---------------------------------------------------------------------------
+
+/// Hash-based scalar value-noise in 3D, returns roughly `[-1, 1]`.
+#[inline]
+fn vnoise3(x: f32, y: f32, z: f32) -> f32 {
+    let ix = x.floor();
+    let iy = y.floor();
+    let iz = z.floor();
+    let h = ((ix * 12.9898) + (iy * 78.233) + (iz * 37.719)).sin() * 43_758.547;
+    let v = h - h.floor();
+    v * 2.0 - 1.0
+}
+
+/// Sample a divergence-free curl-noise vector at world position `p`,
+/// `scale` controls feature size (small → fine swirls, large → broad gusts).
+///
+/// Computed as `∇ × ψ(p)` where `ψ` is a 3D vector noise potential.
+/// Result is approximately incompressible — ideal for fire/smoke/dust
+/// because particles never collapse to a point.
+#[must_use]
+pub fn curl_noise(p: crate::math::Vec3, scale: f32) -> crate::math::Vec3 {
+    let e = 0.01;
+    let x = p.x() * scale;
+    let y = p.y() * scale;
+    let z = p.z() * scale;
+
+    // 3 independent potential components
+    let p1 = |x: f32, y: f32, z: f32| vnoise3(x, y, z);
+    let p2 = |x: f32, y: f32, z: f32| vnoise3(x + 31.7, y + 17.3, z + 7.1);
+    let p3 = |x: f32, y: f32, z: f32| vnoise3(x + 5.5, y + 23.9, z + 41.2);
+
+    // ∂p3/∂y - ∂p2/∂z
+    let dx = (p3(x, y + e, z) - p3(x, y - e, z)) - (p2(x, y, z + e) - p2(x, y, z - e));
+    // ∂p1/∂z - ∂p3/∂x
+    let dy = (p1(x, y, z + e) - p1(x, y, z - e)) - (p3(x + e, y, z) - p3(x - e, y, z));
+    // ∂p2/∂x - ∂p1/∂y
+    let dz = (p2(x + e, y, z) - p2(x - e, y, z)) - (p1(x, y + e, z) - p1(x, y - e, z));
+
+    let two_e = 2.0 * e;
+    crate::math::Vec3::new(dx / two_e, dy / two_e, dz / two_e)
+}
+
+/// Apply a curl-noise force to every alive particle in the emitter, scaled
+/// by `strength` (units / sec²).
+pub fn apply_curl_noise(emitter: &mut ParticleEmitter, scale: f32, strength: f32, dt: f32) {
+    for p in &mut emitter.particles {
+        if !p.alive {
+            continue;
+        }
+        let force = curl_noise(p.position, scale);
+        let dv = crate::math::Vec3::new(
+            force.x() * strength * dt,
+            force.y() * strength * dt,
+            force.z() * strength * dt,
+        );
+        p.velocity = p.velocity + dv;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Trail emitter — chained sub-particles that lag behind a primary emitter
+// ---------------------------------------------------------------------------
+
+/// A single trail-particle: one segment of a moving ribbon.
+#[derive(Debug, Clone, Copy)]
+pub struct TrailParticle {
+    pub position: crate::math::Vec3,
+    pub life_remaining: f32,
+    pub life_initial: f32,
+}
+
+/// Emits one [`TrailParticle`] per frame interval at the configured
+/// `source` position. Useful for rocket/comet trails, bullet ribbons,
+/// dust streams behind moving objects.
+#[derive(Debug, Clone)]
+pub struct TrailEmitter {
+    pub source: crate::math::Vec3,
+    pub life_per_segment: f32,
+    pub spawn_interval: f32,
+    pub trail: Vec<TrailParticle>,
+    pub max_trail_len: usize,
+    accumulator: f32,
+}
+
+impl TrailEmitter {
+    #[must_use]
+    pub const fn new(source: crate::math::Vec3) -> Self {
+        Self {
+            source,
+            life_per_segment: 1.0,
+            spawn_interval: 0.05,
+            trail: Vec::new(),
+            max_trail_len: 64,
+            accumulator: 0.0,
+        }
+    }
+
+    /// Advance: age existing segments, drop dead ones, and spawn new ones
+    /// from `source` at the configured interval.
+    pub fn update(&mut self, dt: f32) {
+        // Age & cull.
+        for p in &mut self.trail {
+            p.life_remaining -= dt;
+        }
+        self.trail.retain(|p| p.life_remaining > 0.0);
+
+        // Spawn at intervals.
+        self.accumulator += dt;
+        while self.accumulator >= self.spawn_interval {
+            self.accumulator -= self.spawn_interval;
+            if self.trail.len() >= self.max_trail_len {
+                self.trail.remove(0);
+            }
+            self.trail.push(TrailParticle {
+                position: self.source,
+                life_remaining: self.life_per_segment,
+                life_initial: self.life_per_segment,
+            });
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.trail.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.trail.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -428,5 +562,111 @@ mod tests {
         emitter.update(1.0);
         emitter.update(1.0);
         assert!(emitter.alive_count() > 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Curl noise + Trail tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn curl_noise_is_bounded() {
+        // Sample many points, all should produce finite vectors.
+        let mut max_mag = 0.0_f32;
+        for i in 0..100 {
+            let t = i as f32 * 0.1;
+            let v = curl_noise(crate::math::Vec3::new(t, t * 0.5, t * 0.3), 0.7);
+            assert!(v.x().is_finite() && v.y().is_finite() && v.z().is_finite());
+            let mag = (v.x() * v.x() + v.y() * v.y() + v.z() * v.z()).sqrt();
+            if mag > max_mag {
+                max_mag = mag;
+            }
+        }
+        // Bound is loose because vnoise3 spans roughly [-1,1] and we take
+        // central differences over 0.01 — magnitudes around 100 are
+        // typical, far less than 1000.
+        assert!(max_mag < 1000.0, "curl noise magnitudes blew up: {max_mag}");
+    }
+
+    #[test]
+    fn curl_noise_deterministic() {
+        let p = crate::math::Vec3::new(1.0, 2.0, 3.0);
+        let a = curl_noise(p, 0.5);
+        let b = curl_noise(p, 0.5);
+        assert!((a.x() - b.x()).abs() < f32::EPSILON);
+        assert!((a.y() - b.y()).abs() < f32::EPSILON);
+        assert!((a.z() - b.z()).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn apply_curl_noise_changes_velocity() {
+        let cfg = EmitterConfig {
+            max_particles: 10,
+            emit_rate: 5.0,
+            lifetime_min: 5.0,
+            lifetime_max: 5.0,
+            speed_min: 1.0,
+            speed_max: 1.0,
+            size_start: 1.0,
+            size_end: 1.0,
+            color_start: Color::WHITE,
+            color_end: Color::WHITE,
+            gravity: crate::math::Vec3::ZERO,
+            shape: EmitterShape::Point,
+            world_space: true,
+        };
+        let mut emitter = ParticleEmitter::new(cfg);
+        emitter.update(1.0); // spawn some particles
+        let before: Vec<_> = emitter.particles.iter().map(|p| p.velocity).collect();
+        apply_curl_noise(&mut emitter, 0.5, 10.0, 0.1);
+        let after: Vec<_> = emitter.particles.iter().map(|p| p.velocity).collect();
+        // At least one alive particle should have a changed velocity.
+        let any_changed = before.iter().zip(after.iter()).any(|(b, a)| {
+            (a.x() - b.x()).abs() > 1e-6
+                || (a.y() - b.y()).abs() > 1e-6
+                || (a.z() - b.z()).abs() > 1e-6
+        });
+        assert!(any_changed);
+    }
+
+    #[test]
+    fn trail_emitter_spawns_at_interval() {
+        let mut t = TrailEmitter::new(crate::math::Vec3::ZERO);
+        t.spawn_interval = 0.1;
+        t.life_per_segment = 1.0;
+        // 1 second @ 0.1s interval → 10 segments.
+        for _ in 0..10 {
+            t.update(0.1);
+        }
+        assert!((t.len() as i32 - 10).abs() <= 1);
+    }
+
+    #[test]
+    fn trail_emitter_ages_and_drops() {
+        let mut t = TrailEmitter::new(crate::math::Vec3::ZERO);
+        t.spawn_interval = 0.05;
+        t.life_per_segment = 0.2;
+        // Spawn segments for 0.5s
+        for _ in 0..10 {
+            t.update(0.05);
+        }
+        let count_after_spawn = t.len();
+        // Stop spawning further by raising spawn_interval far above dt,
+        // then advance time so all current segments expire.
+        t.spawn_interval = 999.0;
+        t.update(1.0); // > life_per_segment → everyone dies
+        assert!(t.len() < count_after_spawn);
+        assert_eq!(t.len(), 0);
+    }
+
+    #[test]
+    fn trail_respects_max_len() {
+        let mut t = TrailEmitter::new(crate::math::Vec3::ZERO);
+        t.spawn_interval = 0.01;
+        t.life_per_segment = 100.0; // never die during test
+        t.max_trail_len = 8;
+        for _ in 0..200 {
+            t.update(0.01);
+        }
+        assert!(t.len() <= 8);
     }
 }

@@ -60,6 +60,7 @@ pub mod ecs;
 pub mod engine;
 pub mod fix128;
 pub mod gpu_mesh;
+pub mod hd2d_postfx;
 pub mod image_decode;
 pub mod import;
 pub mod input;
