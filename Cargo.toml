@@ -45,6 +45,7 @@ winit = { version = "0.30", optional = true }
 
 [dev-dependencies]
 approx = "0.5"
+naga = { version = "25", default-features = false, features = ["wgsl-in"] }
 
 [[bin]]
 name = "mcp_server"
@@ -75,6 +76,10 @@ name = "mcp_controlled"
 [[example]]
 name = "rpg"
 path = "templates/rpg.rs"
+
+[[example]]
+name = "multiplayer_battle"
+path = "templates/multiplayer_battle.rs"
 
 [profile.release]
 opt-level = 3

@@ -55,12 +55,20 @@ pub enum Team {
 /// Conventional attribute names used by the default action handlers:
 /// `hp` (current life), `atk` (attack power), `def` (defense), `speed`
 /// (turn order). Providers may add `mp` or custom resource attributes too.
+///
+/// `cell` is optional grid coordinates for tactical RPGs; ignored by the
+/// default action handlers but populated by the `Move` action and
+/// inspectable by custom AIs.
+/// `attack_range` is the Chebyshev range at which this battler can land
+/// an `Attack`. Default `1` (melee). Bows/spells set higher values.
 #[derive(Debug, Clone)]
 pub struct Battler {
     pub name: String,
     pub attrs: AttributeSet,
     pub team: Team,
     pub defending: bool,
+    pub cell: GridCell,
+    pub attack_range: u32,
 }
 
 impl Battler {
@@ -71,7 +79,23 @@ impl Battler {
             attrs,
             team,
             defending: false,
+            cell: GridCell::default(),
+            attack_range: 1,
         }
+    }
+
+    /// Builder: set this battler's starting grid cell.
+    #[must_use]
+    pub const fn with_cell(mut self, cell: GridCell) -> Self {
+        self.cell = cell;
+        self
+    }
+
+    /// Builder: set this battler's Chebyshev attack range.
+    #[must_use]
+    pub const fn with_attack_range(mut self, range: u32) -> Self {
+        self.attack_range = range;
+        self
     }
 
     /// True if the battler still has positive `hp`.
@@ -134,6 +158,39 @@ pub enum BattleAction {
     Defend,
     /// Attempt to flee the battle. Succeeds if total ally speed > total enemy.
     Flee,
+    /// Move on the grid map (only meaningful when the runner has a
+    /// [`crate::navmesh::NavMesh`] attached). `dx`/`dy` are signed cell
+    /// deltas (often `-1`/`0`/`1`).
+    Move { dx: i32, dy: i32 },
+}
+
+/// Grid coordinates for a battler on a tactical map. Optional — only
+/// used by RPGs that want positional combat (attack range / movement).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GridCell {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl GridCell {
+    #[must_use]
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    /// Chebyshev (king-move) distance — 1 cell per N/E/S/W or diagonal.
+    #[must_use]
+    pub fn chebyshev(self, other: Self) -> u32 {
+        (self.x - other.x)
+            .unsigned_abs()
+            .max((self.y - other.y).unsigned_abs())
+    }
+
+    /// Manhattan distance.
+    #[must_use]
+    pub fn manhattan(self, other: Self) -> u32 {
+        (self.x - other.x).unsigned_abs() + (self.y - other.y).unsigned_abs()
+    }
 }
 
 /// A queued action: who is doing what.
@@ -378,17 +435,41 @@ impl TurnBattleRunner {
                 self.do_use_ability(actor_team, cmd.actor_idx, ability_name, *target_idx);
             }
             BattleAction::Defend | BattleAction::Flee => { /* handled in pre-pass */ }
+            BattleAction::Move { dx, dy } => {
+                self.do_move(actor_team, cmd.actor_idx, *dx, *dy);
+            }
         }
     }
 
+    fn do_move(&mut self, actor_team: Team, actor_idx: usize, dx: i32, dy: i32) {
+        let party = match actor_team {
+            Team::Ally => &mut self.allies,
+            Team::Enemy => &mut self.enemies,
+        };
+        let Some(actor) = party.battlers.get_mut(actor_idx) else {
+            return;
+        };
+        if !actor.is_alive() {
+            return;
+        }
+        let old = actor.cell;
+        actor.cell = GridCell::new(old.x + dx, old.y + dy);
+        self.log.push(format!(
+            "{} moves to ({}, {}).",
+            actor.name, actor.cell.x, actor.cell.y
+        ));
+    }
+
     fn do_attack(&mut self, actor_team: Team, actor_idx: usize, target_idx: usize) {
-        let (actor_atk, actor_name) = {
+        let (actor_atk, actor_name, actor_cell, actor_range) = {
             let actor_party = match actor_team {
                 Team::Ally => &self.allies,
                 Team::Enemy => &self.enemies,
             };
             match actor_party.battlers.get(actor_idx) {
-                Some(a) if a.is_alive() => (a.attrs.value("atk"), a.name.clone()),
+                Some(a) if a.is_alive() => {
+                    (a.attrs.value("atk"), a.name.clone(), a.cell, a.attack_range)
+                }
                 _ => return,
             }
         };
@@ -404,6 +485,20 @@ impl TurnBattleRunner {
             return;
         };
         if !target.is_alive() {
+            return;
+        }
+        // Grid range check: if both have non-default cells, enforce
+        // attack_range as Chebyshev distance.
+        let target_cell = target.cell;
+        let default_cell = GridCell::default();
+        if (actor_cell != default_cell || target_cell != default_cell)
+            && actor_cell.chebyshev(target_cell) > actor_range
+        {
+            self.log.push(format!(
+                "{actor_name} is too far from {} to attack ({} > {actor_range}).",
+                target.name,
+                actor_cell.chebyshev(target_cell)
+            ));
             return;
         }
         let def = target.attrs.value("def");
@@ -872,5 +967,88 @@ mod tests {
         // Subsequent calls do nothing
         let r2 = r.run_turn(vec![], &mut ai);
         assert_eq!(r2, BattleResult::Win);
+    }
+
+    // -----------------------------------------------------------------------
+    // Grid / range tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn grid_cell_distances() {
+        let a = GridCell::new(0, 0);
+        let b = GridCell::new(3, 4);
+        assert_eq!(a.chebyshev(b), 4);
+        assert_eq!(a.manhattan(b), 7);
+    }
+
+    #[test]
+    fn melee_blocked_by_distance() {
+        let hero = make_battler("Hero", 30.0, 12.0, 0.0, 10.0, Team::Ally)
+            .with_cell(GridCell::new(0, 0))
+            .with_attack_range(1);
+        let allies = Party::new(vec![hero]);
+        let mut slime = make_battler("Slime", 30.0, 3.0, 0.0, 4.0, Team::Enemy);
+        slime.cell = GridCell::new(5, 0);
+        let enemies = Party::new(vec![slime]);
+        let mut r = TurnBattleRunner::new(allies, enemies);
+        let mut ai = RandomAi::new(1);
+        r.run_turn(
+            vec![BattleCommand {
+                actor_idx: 0,
+                action: BattleAction::Attack { target_idx: 0 },
+            }],
+            &mut ai,
+        );
+        // Out of range — no damage taken.
+        assert!((r.enemies.battlers[0].attrs.value("hp") - 30.0).abs() < f32::EPSILON);
+        assert!(r.log().iter().any(|s| s.contains("too far")));
+    }
+
+    #[test]
+    fn ranged_attack_within_range() {
+        let archer = make_battler("Archer", 30.0, 12.0, 0.0, 10.0, Team::Ally)
+            .with_cell(GridCell::new(0, 0))
+            .with_attack_range(5);
+        let allies = Party::new(vec![archer]);
+        let mut goblin = make_battler("Goblin", 30.0, 3.0, 0.0, 4.0, Team::Enemy);
+        goblin.cell = GridCell::new(4, 2);
+        let enemies = Party::new(vec![goblin]);
+        let mut r = TurnBattleRunner::new(allies, enemies);
+        let mut ai = RandomAi::new(1);
+        r.run_turn(
+            vec![BattleCommand {
+                actor_idx: 0,
+                action: BattleAction::Attack { target_idx: 0 },
+            }],
+            &mut ai,
+        );
+        // Range 5 ≥ Chebyshev 4 — should land.
+        assert!(r.enemies.battlers[0].attrs.value("hp") < 30.0);
+    }
+
+    #[test]
+    fn move_action_updates_cell() {
+        let hero = make_battler("Hero", 30.0, 12.0, 0.0, 10.0, Team::Ally)
+            .with_cell(GridCell::new(2, 2))
+            .with_attack_range(1);
+        let allies = Party::new(vec![hero]);
+        let enemies = Party::new(vec![make_battler(
+            "Slime",
+            30.0,
+            3.0,
+            0.0,
+            4.0,
+            Team::Enemy,
+        )]);
+        let mut r = TurnBattleRunner::new(allies, enemies);
+        let mut ai = RandomAi::new(1);
+        r.run_turn(
+            vec![BattleCommand {
+                actor_idx: 0,
+                action: BattleAction::Move { dx: 1, dy: -1 },
+            }],
+            &mut ai,
+        );
+        assert_eq!(r.allies.battlers[0].cell, GridCell::new(3, 1));
     }
 }

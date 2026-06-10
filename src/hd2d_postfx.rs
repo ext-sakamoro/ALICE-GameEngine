@@ -343,6 +343,41 @@ mod tests {
         assert!(smaa_wgsl().len() > 100);
     }
 
+    // naga front-end validation — parses the WGSL into a `Module` and
+    // validates type/binding correctness. Catches typos / mismatched
+    // bindings / undefined symbols without needing a GPU.
+    fn parse_wgsl(src: &str) -> Result<naga::Module, String> {
+        naga::front::wgsl::parse_str(src).map_err(|e| format!("{e:?}"))
+    }
+
+    fn validate_module(m: &naga::Module) -> Result<(), String> {
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(m)
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"))
+    }
+
+    #[test]
+    fn hd2d_sprite_wgsl_parses_and_validates() {
+        let m = parse_wgsl(hd2d_sprite_wgsl()).expect("parse hd2d_sprite_wgsl");
+        validate_module(&m).expect("validate hd2d_sprite_wgsl");
+    }
+
+    #[test]
+    fn ssgi_wgsl_parses_and_validates() {
+        let m = parse_wgsl(ssgi_wgsl()).expect("parse ssgi_wgsl");
+        validate_module(&m).expect("validate ssgi_wgsl");
+    }
+
+    #[test]
+    fn smaa_wgsl_parses_and_validates() {
+        let m = parse_wgsl(smaa_wgsl()).expect("parse smaa_wgsl");
+        validate_module(&m).expect("validate smaa_wgsl");
+    }
+
     #[test]
     fn sprite_modes_distinct() {
         assert_ne!(SpriteMode::Unlit, SpriteMode::Lit);

@@ -48,6 +48,7 @@
 // ---------------------------------------------------------------------------
 
 pub mod ability;
+pub mod action_combat;
 pub mod animation;
 pub mod app;
 pub mod asset;
