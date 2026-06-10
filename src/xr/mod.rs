@@ -24,15 +24,19 @@
 //!
 //! ```no_run
 //! # #[cfg(feature = "window")] {
-//! use alice_game_engine::xr::{run_xr_windowed, StereoWindowProvider};
-//! use alice_game_engine::engine::EngineConfig;
+//! use alice_game_engine::xr::{run_xr_windowed, XrAppCallbacks, XrProvider};
+//! use alice_game_engine::engine::{EngineConfig, EngineContext};
 //! use alice_game_engine::window::WindowConfig;
-//! use alice_game_engine::app::AppCallbacks;
 //!
 //! struct MyVrGame;
-//! impl AppCallbacks for MyVrGame {
-//!     fn init(&mut self, _ctx: &mut alice_game_engine::engine::EngineContext) {}
-//!     fn update(&mut self, _ctx: &mut alice_game_engine::engine::EngineContext, _dt: f32) {}
+//! impl XrAppCallbacks for MyVrGame {
+//!     fn init(&mut self, _ctx: &mut EngineContext, _provider: &mut dyn XrProvider) {}
+//!     fn update(
+//!         &mut self,
+//!         _ctx: &mut EngineContext,
+//!         _provider: &mut dyn XrProvider,
+//!         _dt: f32,
+//!     ) {}
 //! }
 //!
 //! run_xr_windowed(
