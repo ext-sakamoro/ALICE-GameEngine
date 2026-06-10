@@ -570,6 +570,330 @@ impl EventCommand for GiveItemCommand {
     }
 }
 
+/// Closure type used by [`ChoiceCommand`] to pick an option index.
+pub type ChooserFn = dyn FnMut(&[String]) -> usize + Send;
+
+/// Multiple-choice dialogue. Asks the supplied chooser closure for a
+/// selection, then writes the chosen index to `result_var` (as i64).
+///
+/// Hosts plug in their own UI via the closure. Tests / starter templates can
+/// use [`ChoiceCommand::pick`] to hard-code the index.
+pub struct ChoiceCommand {
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub result_var: String,
+    chooser: Box<ChooserFn>,
+}
+
+impl ChoiceCommand {
+    pub fn new(
+        prompt: impl Into<String>,
+        options: Vec<String>,
+        result_var: impl Into<String>,
+        chooser: impl FnMut(&[String]) -> usize + Send + 'static,
+    ) -> Self {
+        Self {
+            prompt: prompt.into(),
+            options,
+            result_var: result_var.into(),
+            chooser: Box::new(chooser),
+        }
+    }
+
+    /// Convenience: always pick option `idx`. Useful in tests and templates.
+    #[must_use]
+    pub fn pick(
+        prompt: impl Into<String>,
+        options: Vec<String>,
+        result_var: impl Into<String>,
+        idx: usize,
+    ) -> Self {
+        Self::new(prompt, options, result_var, move |_| idx)
+    }
+}
+
+impl EventCommand for ChoiceCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        ctx.log.push(format!("CHOICE: {}", self.prompt));
+        for (i, opt) in self.options.iter().enumerate() {
+            ctx.log.push(format!("  ({}) {}", i + 1, opt));
+        }
+        let idx = (self.chooser)(&self.options);
+        if idx >= self.options.len() {
+            return CommandStatus::Failed(format!(
+                "chooser returned out-of-range index {idx} (options={})",
+                self.options.len()
+            ));
+        }
+        // `idx < options.len()` (usize) so `i64::try_from` cannot overflow in
+        // practice; the cast is safe on all platforms with usize ≤ 64 bits.
+        let idx_i64 = i64::try_from(idx).unwrap_or(i64::MAX);
+        ctx.vars.set_int(&self.result_var, idx_i64);
+        ctx.log.push(format!("> {}", self.options[idx]));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "choice"
+    }
+}
+
+/// Typed value carried by [`SetVarCommand`].
+#[derive(Debug, Clone)]
+pub enum VarValue {
+    Int(i64),
+    Float(f64),
+    String(String),
+    Bool(bool),
+}
+
+/// Write a [`VarValue`] into [`ScriptVars`] under `var_name`.
+#[derive(Debug, Clone)]
+pub struct SetVarCommand {
+    pub var_name: String,
+    pub value: VarValue,
+}
+
+impl SetVarCommand {
+    #[must_use]
+    pub fn new(var_name: impl Into<String>, value: VarValue) -> Self {
+        Self {
+            var_name: var_name.into(),
+            value,
+        }
+    }
+}
+
+impl EventCommand for SetVarCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        match &self.value {
+            VarValue::Int(v) => ctx.vars.set_int(&self.var_name, *v),
+            VarValue::Float(v) => ctx.vars.set_float(&self.var_name, *v),
+            VarValue::String(v) => ctx.vars.set_string(&self.var_name, v),
+            VarValue::Bool(v) => ctx.vars.set_bool(&self.var_name, *v),
+        }
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "set_var"
+    }
+}
+
+/// Comparison operator used by [`IfVarCommand`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Comparison {
+    Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+}
+
+impl Comparison {
+    #[must_use]
+    pub const fn evaluate(self, lhs: i64, rhs: i64) -> bool {
+        match self {
+            Self::Eq => lhs == rhs,
+            Self::Ne => lhs != rhs,
+            Self::Gt => lhs > rhs,
+            Self::Lt => lhs < rhs,
+            Self::Ge => lhs >= rhs,
+            Self::Le => lhs <= rhs,
+        }
+    }
+}
+
+/// Branch on an int [`ScriptVars`] entry compared against a constant.
+pub struct IfVarCommand {
+    pub var_name: String,
+    pub op: Comparison,
+    pub rhs: i64,
+    pub if_true: Box<dyn EventCommand>,
+    pub if_false: Box<dyn EventCommand>,
+    branch_taken: Option<bool>,
+}
+
+impl IfVarCommand {
+    #[must_use]
+    pub fn new(
+        var_name: impl Into<String>,
+        op: Comparison,
+        rhs: i64,
+        if_true: Box<dyn EventCommand>,
+        if_false: Box<dyn EventCommand>,
+    ) -> Self {
+        Self {
+            var_name: var_name.into(),
+            op,
+            rhs,
+            if_true,
+            if_false,
+            branch_taken: None,
+        }
+    }
+}
+
+impl EventCommand for IfVarCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        if self.branch_taken.is_none() {
+            let lhs = ctx.vars.get_int(&self.var_name).unwrap_or(0);
+            self.branch_taken = Some(self.op.evaluate(lhs, self.rhs));
+        }
+        let cmd: &mut dyn EventCommand = if self.branch_taken == Some(true) {
+            self.if_true.as_mut()
+        } else {
+            self.if_false.as_mut()
+        };
+        cmd.execute(ctx)
+    }
+    fn name(&self) -> &'static str {
+        "if_var"
+    }
+}
+
+/// Set a boolean switch (stored as a bool [`ScriptVars`] entry).
+/// Conceptually distinct from [`SetVarCommand`] with `VarValue::Bool`:
+/// switches are the canonical "global game flags" of an RPG (e.g.
+/// `hall_door_unlocked`, `cave_visited`).
+#[derive(Debug, Clone)]
+pub struct SetSwitchCommand {
+    pub switch_name: String,
+    pub value: bool,
+}
+
+impl SetSwitchCommand {
+    #[must_use]
+    pub fn new(switch_name: impl Into<String>, value: bool) -> Self {
+        Self {
+            switch_name: switch_name.into(),
+            value,
+        }
+    }
+}
+
+impl EventCommand for SetSwitchCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        ctx.vars.set_bool(&self.switch_name, self.value);
+        ctx.log
+            .push(format!("[switch {} = {}]", self.switch_name, self.value));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "set_switch"
+    }
+}
+
+/// Check whether the inventory holds at least `min_count` of `item_name`.
+/// Writes the boolean result to `result_var`.
+///
+/// Inventory items are stored as ints under the key `"item:<name>"`,
+/// matching [`GiveItemCommand`].
+#[derive(Debug, Clone)]
+pub struct HasItemCommand {
+    pub item_name: String,
+    pub min_count: i64,
+    pub result_var: String,
+}
+
+impl HasItemCommand {
+    #[must_use]
+    pub fn new(
+        item_name: impl Into<String>,
+        min_count: i64,
+        result_var: impl Into<String>,
+    ) -> Self {
+        Self {
+            item_name: item_name.into(),
+            min_count,
+            result_var: result_var.into(),
+        }
+    }
+}
+
+impl EventCommand for HasItemCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        let key = format!("item:{}", self.item_name);
+        let owned = ctx.vars.get_int(&key).unwrap_or(0);
+        let has = owned >= self.min_count;
+        ctx.vars.set_bool(&self.result_var, has);
+        ctx.log.push(format!(
+            "[has_item {} >= {} ? {}]",
+            self.item_name, self.min_count, has
+        ));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "has_item"
+    }
+}
+
+/// Remove `count` of `item_name` from the inventory. Fails if not enough.
+#[derive(Debug, Clone)]
+pub struct TakeItemCommand {
+    pub item_name: String,
+    pub count: i64,
+}
+
+impl TakeItemCommand {
+    #[must_use]
+    pub fn new(item_name: impl Into<String>, count: i64) -> Self {
+        Self {
+            item_name: item_name.into(),
+            count,
+        }
+    }
+}
+
+impl EventCommand for TakeItemCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        let key = format!("item:{}", self.item_name);
+        let owned = ctx.vars.get_int(&key).unwrap_or(0);
+        if owned < self.count {
+            return CommandStatus::Failed(format!(
+                "not enough {} (have {owned}, need {})",
+                self.item_name, self.count
+            ));
+        }
+        ctx.vars.set_int(&key, owned - self.count);
+        ctx.log
+            .push(format!("Took {}x {}", self.count, self.item_name));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "take_item"
+    }
+}
+
+/// Signal that the player should transition to another map / zone. Sets
+/// `"pending_map_transition"` (string) to `destination_id`. The host (engine
+/// driver) reads this and performs the actual `WorldProvider::teleport_to`.
+#[derive(Debug, Clone)]
+pub struct MapTransitionCommand {
+    pub destination_id: String,
+}
+
+impl MapTransitionCommand {
+    #[must_use]
+    pub fn new(destination_id: impl Into<String>) -> Self {
+        Self {
+            destination_id: destination_id.into(),
+        }
+    }
+}
+
+impl EventCommand for MapTransitionCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        ctx.vars
+            .set_string("pending_map_transition", &self.destination_id);
+        ctx.log
+            .push(format!("[map transition -> {}]", self.destination_id));
+        CommandStatus::Done
+    }
+    fn name(&self) -> &'static str {
+        "map_transition"
+    }
+}
+
 /// Signal that a battle should begin. The actual [`crate::battle`] runner is
 /// driven by the outer game loop; this command merely sets the variable
 /// `"pending_battle"` (string) to the `encounter_id`. The host reads that and
@@ -1037,6 +1361,248 @@ mod tests {
         script.step(&mut ctx(&mut vars, None, &mut log));
         assert!(script.is_done());
         assert!(log[0].contains("first") && log[1].contains("after wait"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2 commands (Choice / SetVar / IfVar / SetSwitch / HasItem /
+    //                  TakeItem / MapTransition)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn choice_command_writes_index() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = ChoiceCommand::pick(
+            "Accept?",
+            vec!["Accept".into(), "Decline".into()],
+            "accept",
+            1,
+        );
+        let status = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(status, CommandStatus::Done);
+        assert_eq!(vars.get_int("accept"), Some(1));
+        assert!(log.iter().any(|s| s.contains("Decline")));
+    }
+
+    #[test]
+    fn choice_command_fails_on_oor_index() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = ChoiceCommand::pick(
+            "Pick",
+            vec!["A".into(), "B".into()],
+            "r",
+            5, // out of range
+        );
+        let status = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(matches!(status, CommandStatus::Failed(_)));
+    }
+
+    #[test]
+    fn choice_command_with_dynamic_chooser() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut counter = 0;
+        let mut cmd = ChoiceCommand::new(
+            "Step",
+            vec!["A".into(), "B".into(), "C".into()],
+            "step",
+            move |_| {
+                counter += 1;
+                counter % 3
+            },
+        );
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_int("step"), Some(1));
+    }
+
+    #[test]
+    fn set_var_int() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = SetVarCommand::new("score", VarValue::Int(42));
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_int("score"), Some(42));
+    }
+
+    #[test]
+    fn set_var_string() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = SetVarCommand::new("name", VarValue::String("Lyra".into()));
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_string("name"), Some("Lyra"));
+    }
+
+    #[test]
+    fn set_var_bool_and_float() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        SetVarCommand::new("ready", VarValue::Bool(true))
+            .execute(&mut ctx(&mut vars, None, &mut log));
+        SetVarCommand::new("ratio", VarValue::Float(0.75))
+            .execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_bool("ready"), Some(true));
+        assert_eq!(vars.get_float("ratio"), Some(0.75));
+    }
+
+    #[test]
+    fn comparison_evaluates_all_ops() {
+        assert!(Comparison::Eq.evaluate(5, 5));
+        assert!(!Comparison::Eq.evaluate(5, 6));
+        assert!(Comparison::Ne.evaluate(5, 6));
+        assert!(Comparison::Gt.evaluate(6, 5));
+        assert!(Comparison::Lt.evaluate(5, 6));
+        assert!(Comparison::Ge.evaluate(5, 5) && Comparison::Ge.evaluate(6, 5));
+        assert!(Comparison::Le.evaluate(5, 5) && Comparison::Le.evaluate(4, 5));
+    }
+
+    #[test]
+    fn if_var_takes_true_branch() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("level", 10);
+        let mut log = Vec::new();
+        let mut cmd = IfVarCommand::new(
+            "level",
+            Comparison::Ge,
+            5,
+            Box::new(MessageCommand::new("T", "high level")),
+            Box::new(MessageCommand::new("F", "low level")),
+        );
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(log[0].contains("high level"));
+    }
+
+    #[test]
+    fn if_var_takes_false_branch() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("gold", 5);
+        let mut log = Vec::new();
+        let mut cmd = IfVarCommand::new(
+            "gold",
+            Comparison::Ge,
+            100,
+            Box::new(MessageCommand::new("T", "afford")),
+            Box::new(MessageCommand::new("F", "broke")),
+        );
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(log[0].contains("broke"));
+    }
+
+    #[test]
+    fn if_var_defaults_to_zero_on_missing() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = IfVarCommand::new(
+            "never_set",
+            Comparison::Eq,
+            0,
+            Box::new(MessageCommand::new("T", "zero")),
+            Box::new(MessageCommand::new("F", "nonzero")),
+        );
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(log[0].contains("zero"));
+    }
+
+    #[test]
+    fn set_switch_writes_bool() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = SetSwitchCommand::new("hall_door_unlocked", true);
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_bool("hall_door_unlocked"), Some(true));
+    }
+
+    #[test]
+    fn set_switch_and_branch_chain() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        SetSwitchCommand::new("flag", true).execute(&mut ctx(&mut vars, None, &mut log));
+        let mut branch = BranchCommand::new(
+            "flag",
+            Box::new(MessageCommand::new("T", "on")),
+            Box::new(MessageCommand::new("F", "off")),
+        );
+        branch.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(log.iter().any(|s| s.contains("on")));
+    }
+
+    #[test]
+    fn has_item_true_when_enough_owned() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("item:potion", 3);
+        let mut log = Vec::new();
+        let mut cmd = HasItemCommand::new("potion", 2, "has_potion");
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_bool("has_potion"), Some(true));
+    }
+
+    #[test]
+    fn has_item_false_when_short() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("item:potion", 1);
+        let mut log = Vec::new();
+        let mut cmd = HasItemCommand::new("potion", 5, "has_potion");
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(vars.get_bool("has_potion"), Some(false));
+    }
+
+    #[test]
+    fn take_item_succeeds_when_enough() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("item:potion", 3);
+        let mut log = Vec::new();
+        let mut cmd = TakeItemCommand::new("potion", 2);
+        let status = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(status, CommandStatus::Done);
+        assert_eq!(vars.get_int("item:potion"), Some(1));
+    }
+
+    #[test]
+    fn take_item_fails_when_short() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("item:key", 0);
+        let mut log = Vec::new();
+        let mut cmd = TakeItemCommand::new("key", 1);
+        let status = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(matches!(status, CommandStatus::Failed(_)));
+    }
+
+    #[test]
+    fn map_transition_sets_pending_var() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = MapTransitionCommand::new("cave_entrance");
+        cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(
+            vars.get_string("pending_map_transition"),
+            Some("cave_entrance")
+        );
+    }
+
+    #[test]
+    fn full_phase2_script_branches_on_choice() {
+        // Realistic flow: ask, set switch from choice, branch on switch.
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut script = EventScript::new();
+        script.push(Box::new(ChoiceCommand::pick(
+            "Take quest?",
+            vec!["Yes".into(), "No".into()],
+            "accept_idx",
+            0,
+        )));
+        script.push(Box::new(IfVarCommand::new(
+            "accept_idx",
+            Comparison::Eq,
+            0,
+            Box::new(SetSwitchCommand::new("quest_active", true)),
+            Box::new(SetSwitchCommand::new("quest_active", false)),
+        )));
+        while !script.is_done() {
+            script.step(&mut ctx(&mut vars, None, &mut log));
+        }
+        assert_eq!(vars.get_bool("quest_active"), Some(true));
     }
 
     #[test]

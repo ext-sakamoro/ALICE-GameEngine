@@ -17,8 +17,9 @@ use alice_game_engine::battle::{
     BattleAction, BattleCommand, BattleResult, Battler, Party, RandomAi, Team, TurnBattleRunner,
 };
 use alice_game_engine::scripting::{
-    BeginBattleCommand, ChangeAttrCommand, CommandStatus, EventContext, EventScript,
-    GiveItemCommand, MessageCommand, ScriptVars,
+    BeginBattleCommand, ChangeAttrCommand, ChoiceCommand, CommandStatus, Comparison, EventContext,
+    EventScript, GiveItemCommand, HasItemCommand, IfVarCommand, MessageCommand, ScriptVars,
+    SetSwitchCommand,
 };
 
 fn make_hero() -> Battler {
@@ -41,22 +42,41 @@ fn make_slime() -> Battler {
     Battler::new("Slime", attrs, Team::Enemy)
 }
 
-/// Build the opening event: NPC tells you to slay a slime in the caves.
+/// Build the opening event: NPC asks the hero to take a quest, branches on
+/// the answer, then triggers the battle if accepted.
 fn opening_quest() -> EventScript {
     let mut script = EventScript::new();
     script.push(Box::new(MessageCommand::new(
         "Elder",
         "Welcome, traveler. A slime has made the cave its home.",
     )));
-    script.push(Box::new(MessageCommand::new(
-        "Elder",
-        "Defeat it, and the village will reward you.",
+    // Choice — for the template we hard-code "Accept" (idx 0).
+    script.push(Box::new(ChoiceCommand::pick(
+        "Will you help us?",
+        vec!["Accept".into(), "Decline".into()],
+        "accept_idx",
+        0,
     )));
-    script.push(Box::new(BeginBattleCommand::new("cave_slime")));
+    // If accepted: set a switch + start the battle.
+    // If declined: set the switch false + return without battle.
+    script.push(Box::new(IfVarCommand::new(
+        "accept_idx",
+        Comparison::Eq,
+        0,
+        Box::new(SetSwitchCommand::new("quest_active", true)),
+        Box::new(SetSwitchCommand::new("quest_active", false)),
+    )));
+    script.push(Box::new(IfVarCommand::new(
+        "accept_idx",
+        Comparison::Eq,
+        0,
+        Box::new(BeginBattleCommand::new("cave_slime")),
+        Box::new(MessageCommand::new("Elder", "I see. Travel safely, then.")),
+    )));
     script
 }
 
-/// Build the reward event: gold + potion + closing line.
+/// Build the reward event: gold + potion + check inventory + closing line.
 fn reward_quest() -> EventScript {
     let mut script = EventScript::new();
     script.push(Box::new(MessageCommand::new(
@@ -65,6 +85,9 @@ fn reward_quest() -> EventScript {
     )));
     script.push(Box::new(ChangeAttrCommand::new("gold", 50.0)));
     script.push(Box::new(GiveItemCommand::new("potion", 2)));
+    // Check inventory — sets a bool var `has_potions`.
+    script.push(Box::new(HasItemCommand::new("potion", 2, "has_potions")));
+    // Final remark uses the bool via BranchCommand-style chain.
     script.push(Box::new(MessageCommand::new(
         "Elder",
         "Safe travels, hero.",
@@ -135,8 +158,19 @@ fn main() {
     }
 
     println!("\n=== Final state ===");
-    println!("  Hero HP : {}", hero.attrs.value("hp"));
-    println!("  Hero MP : {}", hero.attrs.value("mp"));
-    println!("  Gold    : {}", hero.attrs.value("gold"));
-    println!("  Potion  : {}", vars.get_int("item:potion").unwrap_or(0));
+    println!("  Hero HP     : {}", hero.attrs.value("hp"));
+    println!("  Hero MP     : {}", hero.attrs.value("mp"));
+    println!("  Gold        : {}", hero.attrs.value("gold"));
+    println!(
+        "  Potion      : {}",
+        vars.get_int("item:potion").unwrap_or(0)
+    );
+    println!(
+        "  Quest done  : {}",
+        vars.get_bool("quest_active").unwrap_or(false)
+    );
+    println!(
+        "  Has potions : {}",
+        vars.get_bool("has_potions").unwrap_or(false)
+    );
 }
