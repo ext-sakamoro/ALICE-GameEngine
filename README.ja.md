@@ -12,8 +12,8 @@
 - **HRTF オーディオ** バス効果と空間パン
 - **ターン制 RPG ランタイム** — `TurnBattleRunner` + 13 種の `EventCommand`
   (Choice/SetVar/IfVar/Switch/HasItem/TakeItem/MapTransition/Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue/...)
-- **`bridge::*` trait** — ALICE-SDF, ALICE-Physics, ALICE-Audio, ALICE-Text,
-  ALICE-Metaverse 等を差し替え可能な抽象境界で接続
+- **`bridge::*` trait** — ALICE-SDF, ALICE-Physics, ALICE-Audio, ALICE-Text
+  等を差し替え可能な抽象境界で接続
 - **XR レイヤー** (Pure-Rust、openxr 依存なし) MockProvider + StereoWindow
 
 ## クイックスタート (5 行)
@@ -85,8 +85,8 @@ Elder: Take this potion.
    クールダウン
 
 世界 (ステージ) はエンジン外から `EngineContext::set_world_provider` +
-`bridge::WorldProvider` trait 経由で差し込みます (実例: `ALICE-Metaverse`
-の 6 zone 実装)。
+`bridge::WorldProvider` trait 経由で差し込みます。1 度実装すれば、戦闘 +
+イベントランタイムを任意の世界観で再利用できます。
 
 ```rust
 use alice_game_engine::app::{run_windowed, AppCallbacks};
@@ -219,7 +219,7 @@ cargo fmt -- --check              # 0 差分
 | `AudioSampleProvider` | ALICE-Audio デコーダー |
 | `MeshProvider` | ALICE-SDF Marching Cubes 出力 |
 | `ShaderTranspiler` | ALICE-SDF HLSL/GLSL トランスパイラ |
-| `WorldProvider` | **ALICE-Metaverse** (6 zone テーマパーク、ZoneId/Weather/Teleport) |
+| `WorldProvider` | テーマ別ワールドバックエンド (ZoneId/Weather/Teleport) |
 | `TextProcessor` | **ALICE-Text** (`AliceTextProcessor` adapter、自然言語ログ圧縮) |
 | `AnimationProvider` | ALICE-Animation |
 | `SkeletonProvider` | スケルタルアニメ provider |
@@ -230,18 +230,8 @@ cargo fmt -- --check              # 0 差分
 | `Plugin` | 任意の拡張プラグイン |
 
 trait は engine 側に定義のみ、adapter 実装は下流クレートに置く設計
-(`alice-game-engine` が ALICE-Text 等に直接依存しないため、
-crate のフットプリントが軽い)。実装例は `ALICE-Metaverse/core/src/adapters.rs`
-の `AliceTextProcessor` 参照。
-
-## ALICE-Metaverse 統合実例
-
-`ALICE-Metaverse` は `bridge::WorldProvider` を実装する private crate。
-6 zone (Plaza / Story / Tomorrow / Aqua / Crystal / Sky) で全 RPG が動く
-統合 demo を `cargo run --bin metaverse-tour-demo` で実行可能 (Plaza
-チュートリアル → 5 zone を踏破 → "Hero of the Metaverse" 称号獲得まで
-通る)。同 demo は Save/Load (serde_json、340 bytes) と ALICE-Text
-ブリッジによる戦闘ログ圧縮 (2222 → 708 bytes、31% 比) も実演する。
+(`alice-game-engine` が ALICE-Text 等に直接依存しないため、各ゲームが
+必要なバックエンドだけ選択可能)。
 
 ## ライセンス
 

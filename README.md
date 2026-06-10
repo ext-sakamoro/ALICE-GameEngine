@@ -13,7 +13,7 @@ Hybrid mesh + SDF game engine in Rust. 42 modules, **744 tests** (lib) / 24 (doc
 - **Turn-based RPG runtime** — `TurnBattleRunner` + 13 `EventCommand`s
   (Choice/SetVar/IfVar/Switch/HasItem/TakeItem/MapTransition/Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue/...)
 - **`bridge::*` traits** for plugging in ALICE-SDF, ALICE-Physics,
-  ALICE-Audio, ALICE-Text, ALICE-Metaverse and your own back-ends
+  ALICE-Audio, ALICE-Text and your own back-ends
 - **XR layer** (pure-Rust, no OpenXR dep) with MockProvider + StereoWindow
 
 ## Quick Start (5 lines)
@@ -84,8 +84,8 @@ The template composes three pieces:
    effects, cooldowns
 
 Hook a themed world into the engine via `EngineContext::set_world_provider`
-and the `bridge::WorldProvider` trait (see `ALICE-Metaverse` for a
-6-zone implementation).
+and the `bridge::WorldProvider` trait — implement once and reuse the same
+battle / event runtime across any setting.
 
 ```rust
 use alice_game_engine::app::{run_windowed, AppCallbacks};
@@ -729,7 +729,7 @@ or your own implementations:
 | `AudioSampleProvider` | ALICE-Audio decoders |
 | `MeshProvider` | ALICE-SDF Marching Cubes output |
 | `ShaderTranspiler` | ALICE-SDF HLSL/GLSL transpiler |
-| `WorldProvider` | **ALICE-Metaverse** (6-zone themed park, ZoneId/Weather/Teleport) |
+| `WorldProvider` | themed-world back-end (ZoneId/Weather/Teleport) |
 | `TextProcessor` | **ALICE-Text** (`AliceTextProcessor` adapter for log/dialogue compression) |
 | `AnimationProvider` | ALICE-Animation |
 | `SkeletonProvider` | skeletal animation backend |
@@ -740,26 +740,8 @@ or your own implementations:
 | `Plugin` | per-frame extension hook |
 
 The engine crate is dep-free of the ALICE-xxx stack — adapter
-implementations live in downstream consumers. See
-`ALICE-Metaverse/core/src/adapters.rs` (`AliceTextProcessor`) for a
-working example.
-
-## Reference Integration: ALICE-Metaverse
-
-`ALICE-Metaverse` (private commercial crate) implements
-`bridge::WorldProvider` for a six-zone SDF park. Run the full integration
-demo:
-
-```bash
-cd ../ALICE-Metaverse
-cargo run --bin metaverse-tour-demo
-```
-
-The tour walks Plaza (tutorial) → Story Hall → Tomorrow → Aqua → Crystal
-→ Sky (final boss), running each zone's quest, then performs a
-roundtrip `save::save` / `save::load` (340 bytes lossless JSON) followed
-by an ALICE-Text bridge compression of the accumulated battle log
-(2222 → 708 bytes, 31% / 3.1× ratio).
+implementations live in downstream consumer crates so each game can pick
+the back-ends it actually needs.
 
 ## Quality
 
