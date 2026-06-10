@@ -385,11 +385,7 @@ fn mesh_asset_to_gpu_data(asset: &crate::asset::MeshAsset) -> (Vec<u8>, Vec<u8>)
     }
 
     // u32 → u16 indices
-    let indices: Vec<u16> = asset
-        .indices
-        .iter()
-        .map(|&i| i as u16)
-        .collect();
+    let indices: Vec<u16> = asset.indices.iter().map(|&i| i as u16).collect();
 
     (
         bytemuck::cast_slice(&verts).to_vec(),
@@ -560,43 +556,37 @@ impl winit::application::ApplicationHandler for WindowedApp {
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
 
-                        let mut encoder = gpu.device.create_command_encoder(
-                            &wgpu::CommandEncoderDescriptor {
-                                label: Some("frame_encoder"),
-                            },
-                        );
+                        let mut encoder =
+                            gpu.device
+                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                    label: Some("frame_encoder"),
+                                });
 
                         // Pass 1: 3D scene
                         {
-                            let mut pass =
-                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: Some("scene_pass"),
-                                    color_attachments: &[Some(
-                                        wgpu::RenderPassColorAttachment {
-                                            view: &view,
-                                            resolve_target: None,
-                                            ops: wgpu::Operations {
-                                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                                    r: 0.05,
-                                                    g: 0.05,
-                                                    b: 0.08,
-                                                    a: 1.0,
-                                                }),
-                                                store: wgpu::StoreOp::Store,
-                                            },
-                                        },
-                                    )],
-                                    depth_stencil_attachment: None,
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                });
+                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("scene_pass"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: 0.05,
+                                            g: 0.05,
+                                            b: 0.08,
+                                            a: 1.0,
+                                        }),
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                            });
                             pass.set_pipeline(pipeline);
                             pass.set_bind_group(0, bg, &[]);
                             pass.set_vertex_buffer(0, vb.slice(..));
-                            pass.set_index_buffer(
-                                ib.slice(..),
-                                wgpu::IndexFormat::Uint16,
-                            );
+                            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
                             pass.draw_indexed(0..self.index_count, 0, 0..1);
                         }
 

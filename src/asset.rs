@@ -94,9 +94,18 @@ pub fn parse_obj(name: &str, obj_text: &str) -> MeshAsset {
                 .collect();
             // Triangulate fan with computed face normal
             if face_indices.len() >= 3 {
-                let p0 = positions.get(face_indices[0] as usize).copied().unwrap_or([0.0; 3]);
-                let p1 = positions.get(face_indices[1] as usize).copied().unwrap_or([0.0; 3]);
-                let p2 = positions.get(face_indices[2] as usize).copied().unwrap_or([0.0; 3]);
+                let p0 = positions
+                    .get(face_indices[0] as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
+                let p1 = positions
+                    .get(face_indices[1] as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
+                let p2 = positions
+                    .get(face_indices[2] as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
                 let normal = compute_face_normal(p0, p1, p2);
                 for i in 1..face_indices.len() - 1 {
                     for &fi in &[face_indices[0], face_indices[i], face_indices[i + 1]] {

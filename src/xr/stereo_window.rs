@@ -436,8 +436,7 @@ pub fn run_xr_windowed(
     engine_config: EngineConfig,
     callbacks: Box<dyn XrAppCallbacks>,
 ) -> Result<(), String> {
-    let event_loop =
-        EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+    let event_loop = EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
     let mut app = StereoWindowApp {
@@ -558,12 +557,7 @@ impl ApplicationHandler for StereoWindowApp {
         self.state = AppState::Running;
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
                 self.state = AppState::Exiting;
