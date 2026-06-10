@@ -924,6 +924,285 @@ impl EventCommand for BeginBattleCommand {
     }
 }
 
+/// One line of a [`CutsceneCommand`].
+#[derive(Debug, Clone)]
+pub struct CutsceneLine {
+    pub speaker: String,
+    pub text: String,
+    /// Ticks to pause after emitting this line.
+    pub wait_ticks: u32,
+}
+
+impl CutsceneLine {
+    #[must_use]
+    pub fn new(speaker: impl Into<String>, text: impl Into<String>, wait_ticks: u32) -> Self {
+        Self {
+            speaker: speaker.into(),
+            text: text.into(),
+            wait_ticks,
+        }
+    }
+}
+
+/// Emits a sequence of (`speaker`, `text`, `wait_ticks`) lines. Each line is
+/// logged immediately, then the command pends for `wait_ticks` ticks before
+/// moving on. Acts like an inlined "cutscene" of dialogue without manually
+/// chaining [`MessageCommand`] + [`WaitCommand`].
+pub struct CutsceneCommand {
+    pub lines: Vec<CutsceneLine>,
+    current: usize,
+    wait_remaining: u32,
+    emitted_current: bool,
+}
+
+impl CutsceneCommand {
+    #[must_use]
+    pub const fn new(lines: Vec<CutsceneLine>) -> Self {
+        Self {
+            lines,
+            current: 0,
+            wait_remaining: 0,
+            emitted_current: false,
+        }
+    }
+}
+
+impl EventCommand for CutsceneCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        if self.current >= self.lines.len() {
+            return CommandStatus::Done;
+        }
+        let line = &self.lines[self.current];
+        if !self.emitted_current {
+            ctx.log.push(format!("{}: {}", line.speaker, line.text));
+            self.emitted_current = true;
+            self.wait_remaining = line.wait_ticks;
+        }
+        if self.wait_remaining > 0 {
+            self.wait_remaining -= 1;
+            return CommandStatus::Pending;
+        }
+        self.current += 1;
+        self.emitted_current = false;
+        if self.current >= self.lines.len() {
+            CommandStatus::Done
+        } else {
+            CommandStatus::Pending
+        }
+    }
+    fn name(&self) -> &'static str {
+        "cutscene"
+    }
+}
+
+/// Run multiple [`EventCommand`]s "in parallel" — each is ticked once per
+/// outer step, and the parallel block is done only when **all** children are
+/// done. Useful for e.g. animating two NPCs simultaneously, or running a
+/// timed countdown alongside dialogue.
+///
+/// If any child returns [`CommandStatus::Failed`], the parallel block fails
+/// immediately with that error.
+pub struct ParallelCommand {
+    commands: Vec<Box<dyn EventCommand>>,
+    done: Vec<bool>,
+}
+
+impl ParallelCommand {
+    #[must_use]
+    pub fn new(commands: Vec<Box<dyn EventCommand>>) -> Self {
+        let n = commands.len();
+        Self {
+            commands,
+            done: vec![false; n],
+        }
+    }
+}
+
+impl EventCommand for ParallelCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        let mut all_done = true;
+        for (i, cmd) in self.commands.iter_mut().enumerate() {
+            if self.done[i] {
+                continue;
+            }
+            match cmd.execute(ctx) {
+                CommandStatus::Done => {
+                    self.done[i] = true;
+                }
+                CommandStatus::Pending => {
+                    all_done = false;
+                }
+                CommandStatus::Failed(msg) => {
+                    return CommandStatus::Failed(msg);
+                }
+            }
+        }
+        if all_done {
+            CommandStatus::Done
+        } else {
+            CommandStatus::Pending
+        }
+    }
+    fn name(&self) -> &'static str {
+        "parallel"
+    }
+}
+
+/// Factory type for commands created lazily inside [`RepeatCommand`] /
+/// [`LoopUntilCommand`].
+pub type CommandFactory = dyn FnMut() -> Box<dyn EventCommand> + Send;
+
+/// Run a command `count` times by re-building it on each iteration via the
+/// factory closure. Done after the `count`-th iteration completes.
+pub struct RepeatCommand {
+    factory: Box<CommandFactory>,
+    inner: Box<dyn EventCommand>,
+    remaining: u32,
+}
+
+impl RepeatCommand {
+    /// `count` must be ≥ 1 (anything less is treated as 1).
+    pub fn new<F>(count: u32, mut factory: F) -> Self
+    where
+        F: FnMut() -> Box<dyn EventCommand> + Send + 'static,
+    {
+        let first = factory();
+        let remaining = count.saturating_sub(1);
+        Self {
+            factory: Box::new(factory),
+            inner: first,
+            remaining,
+        }
+    }
+}
+
+impl EventCommand for RepeatCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        match self.inner.execute(ctx) {
+            CommandStatus::Done => {
+                if self.remaining == 0 {
+                    CommandStatus::Done
+                } else {
+                    self.remaining -= 1;
+                    self.inner = (self.factory)();
+                    CommandStatus::Pending
+                }
+            }
+            other => other,
+        }
+    }
+    fn name(&self) -> &'static str {
+        "repeat"
+    }
+}
+
+/// Run a command repeatedly until a `ScriptVars` int satisfies the given
+/// [`Comparison`]. Each completion of the inner command triggers a re-build
+/// via the factory closure. Done when the condition first matches.
+pub struct LoopUntilCommand {
+    var_name: String,
+    op: Comparison,
+    rhs: i64,
+    factory: Box<CommandFactory>,
+    inner: Box<dyn EventCommand>,
+}
+
+impl LoopUntilCommand {
+    pub fn new<F>(var_name: impl Into<String>, op: Comparison, rhs: i64, mut factory: F) -> Self
+    where
+        F: FnMut() -> Box<dyn EventCommand> + Send + 'static,
+    {
+        let first = factory();
+        Self {
+            var_name: var_name.into(),
+            op,
+            rhs,
+            factory: Box::new(factory),
+            inner: first,
+        }
+    }
+}
+
+impl EventCommand for LoopUntilCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        let lhs = ctx.vars.get_int(&self.var_name).unwrap_or(0);
+        if self.op.evaluate(lhs, self.rhs) {
+            return CommandStatus::Done;
+        }
+        match self.inner.execute(ctx) {
+            CommandStatus::Done => {
+                self.inner = (self.factory)();
+                CommandStatus::Pending
+            }
+            other => other,
+        }
+    }
+    fn name(&self) -> &'static str {
+        "loop_until"
+    }
+}
+
+/// Closure type for [`LlmDialogueCommand`].
+pub type LlmResponder = dyn FnMut(&str) -> Option<String> + Send;
+
+/// Ask an LLM for a response and log it as a dialogue line. The actual LLM
+/// call is delegated to a closure provided at construction, keeping the
+/// command transport-agnostic (works with `MockLlm`, real `OpenAI`, on-device
+/// Llama, etc.).
+pub struct LlmDialogueCommand {
+    pub speaker: String,
+    pub prompt: String,
+    responder: Box<LlmResponder>,
+    cached: Option<String>,
+}
+
+impl LlmDialogueCommand {
+    pub fn new<F>(speaker: impl Into<String>, prompt: impl Into<String>, responder: F) -> Self
+    where
+        F: FnMut(&str) -> Option<String> + Send + 'static,
+    {
+        Self {
+            speaker: speaker.into(),
+            prompt: prompt.into(),
+            responder: Box::new(responder),
+            cached: None,
+        }
+    }
+
+    /// Convenience constructor that hard-codes the response — for tests
+    /// and starter templates.
+    #[must_use]
+    pub fn canned(
+        speaker: impl Into<String>,
+        prompt: impl Into<String>,
+        response: impl Into<String>,
+    ) -> Self {
+        let response: String = response.into();
+        Self::new(speaker, prompt, move |_| Some(response.clone()))
+    }
+}
+
+impl EventCommand for LlmDialogueCommand {
+    fn execute(&mut self, ctx: &mut EventContext) -> CommandStatus {
+        if self.cached.is_none() {
+            self.cached = (self.responder)(&self.prompt);
+        }
+        match self.cached.as_ref() {
+            Some(text) => {
+                ctx.log.push(format!("{}: {}", self.speaker, text));
+                CommandStatus::Done
+            }
+            None => CommandStatus::Failed(format!(
+                "LLM responder returned None for prompt '{}'",
+                self.prompt
+            )),
+        }
+    }
+    fn name(&self) -> &'static str {
+        "llm_dialogue"
+    }
+}
+
 // ---------------------------------------------------------------------------
 // EventScript — sequence of commands
 // ---------------------------------------------------------------------------
@@ -1603,6 +1882,174 @@ mod tests {
             script.step(&mut ctx(&mut vars, None, &mut log));
         }
         assert_eq!(vars.get_bool("quest_active"), Some(true));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase B: Cutscene / Parallel / Repeat / LoopUntil / LlmDialogue
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cutscene_emits_all_lines_in_order() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = CutsceneCommand::new(vec![
+            CutsceneLine::new("A", "first", 0),
+            CutsceneLine::new("B", "second", 0),
+            CutsceneLine::new("C", "third", 0),
+        ]);
+        for _ in 0..10 {
+            if matches!(
+                cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+                CommandStatus::Done
+            ) {
+                break;
+            }
+        }
+        assert_eq!(log.len(), 3);
+        assert!(log[0].contains("A: first"));
+        assert!(log[2].contains("C: third"));
+    }
+
+    #[test]
+    fn cutscene_waits_between_lines() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = CutsceneCommand::new(vec![
+            CutsceneLine::new("A", "1", 2),
+            CutsceneLine::new("B", "2", 0),
+        ]);
+        let mut steps = 0;
+        loop {
+            let s = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+            steps += 1;
+            if s == CommandStatus::Done || steps > 10 {
+                break;
+            }
+        }
+        assert_eq!(log.len(), 2);
+    }
+
+    #[test]
+    fn parallel_runs_children_concurrently() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = ParallelCommand::new(vec![
+            Box::new(MessageCommand::new("A", "alpha")),
+            Box::new(MessageCommand::new("B", "beta")),
+        ]);
+        let s = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(s, CommandStatus::Done);
+        assert_eq!(log.len(), 2);
+    }
+
+    #[test]
+    fn parallel_pending_when_any_pending() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = ParallelCommand::new(vec![
+            Box::new(MessageCommand::new("A", "fast")),
+            Box::new(WaitCommand::new(3)),
+        ]);
+        // Tick 1: A done; Wait(3): 1<3 → Pending → overall Pending
+        assert_eq!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Pending
+        );
+        // Tick 2: Wait(3): 2<3 → Pending
+        assert_eq!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Pending
+        );
+        // Tick 3: Wait(3): 3≥3 → Done → overall Done
+        assert_eq!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Done
+        );
+    }
+
+    #[test]
+    fn parallel_fails_when_any_fails() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = ParallelCommand::new(vec![
+            Box::new(MessageCommand::new("A", "ok")),
+            Box::new(ChangeAttrCommand::new("hp", 1.0)),
+        ]);
+        assert!(matches!(
+            cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+            CommandStatus::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn repeat_runs_count_iterations() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = RepeatCommand::new(3, || Box::new(MessageCommand::new("X", "tick")));
+        for _ in 0..10 {
+            if matches!(
+                cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+                CommandStatus::Done
+            ) {
+                break;
+            }
+        }
+        assert_eq!(log.len(), 3);
+    }
+
+    #[test]
+    fn repeat_minimum_one_iteration() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = RepeatCommand::new(0, || Box::new(MessageCommand::new("X", "once")));
+        for _ in 0..5 {
+            if matches!(
+                cmd.execute(&mut ctx(&mut vars, None, &mut log)),
+                CommandStatus::Done
+            ) {
+                break;
+            }
+        }
+        assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn loop_until_exits_on_condition() {
+        let mut vars = ScriptVars::new();
+        vars.set_int("counter", 0);
+        let mut log = Vec::new();
+        let mut cmd = LoopUntilCommand::new("counter", Comparison::Ge, 3, || {
+            Box::new(MessageCommand::new("tick", "."))
+        });
+        for _ in 0..10 {
+            let s = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+            if s == CommandStatus::Done {
+                break;
+            }
+            let c = vars.get_int("counter").unwrap_or(0);
+            vars.set_int("counter", c + 1);
+        }
+        assert!(vars.get_int("counter").unwrap_or(0) >= 3);
+    }
+
+    #[test]
+    fn llm_dialogue_canned_response() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd =
+            LlmDialogueCommand::canned("Sage", "What is the meaning of life?", "It is to play.");
+        let s = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert_eq!(s, CommandStatus::Done);
+        assert!(log[0].contains("Sage: It is to play."));
+    }
+
+    #[test]
+    fn llm_dialogue_fails_on_none() {
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        let mut cmd = LlmDialogueCommand::new("X", "prompt", |_| None);
+        let s = cmd.execute(&mut ctx(&mut vars, None, &mut log));
+        assert!(matches!(s, CommandStatus::Failed(_)));
     }
 
     #[test]
