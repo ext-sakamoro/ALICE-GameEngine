@@ -1,6 +1,6 @@
 # ALICE-GameEngine
 
-メッシュ + SDF ハイブリッドゲームエンジン (Rust 製)。42 モジュール、**744 テスト** (lib) / 24 (doc)、wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU)、**ターン制バトル + ノーコードイベントスクリプト** で RPG が作れます。
+メッシュ + SDF ハイブリッドゲームエンジン (Rust 製)。44 モジュール、**793 テスト** (default) / **1,007** (full features) + 24 doc-test、wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU)、**ターン制 RPG + 3D アクション戦闘 + ノーコードイベントスクリプト** で本格ゲームが作れます。
 
 [English](README.md)
 
@@ -9,9 +9,19 @@
 - **ハイブリッドシーングラフ** — メッシュと SDF ボリュームを同じツリーに混在
 - **wgpu Deferred レンダラー** — GBuffer、RenderGraph、debug overlay
 - **Verlet 物理** + sweep-and-prune 広域 + SDF CCD
-- **HRTF オーディオ** バス効果と空間パン
-- **ターン制 RPG ランタイム** — `TurnBattleRunner` + 13 種の `EventCommand`
-  (Choice/SetVar/IfVar/Switch/HasItem/TakeItem/MapTransition/Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue/...)
+- **HRTF オーディオ** バス効果、`MusicTrack` BGM cross-fade、`ReverbZone`
+- **ターン制 RPG ランタイム** — `TurnBattleRunner` (速度順、grid 位置 +
+  攻撃射程) + 13 種の serializable `EventCommand` + 高度フロー 5 種
+  (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue) + `EventScriptDef` JSON
+- **3D アクション戦闘** — `Hitbox` / `Hurtbox` (sphere + capsule)、
+  `ComboSystem` 入力ウィンドウ、`LockOn` (cone)、`HitStop` (Sekiro/DMC 風)
+- **アニメーション** — Keyframe、`StateMachine`、`BlendTree1D`、2-bone IK
+- **経路探索** — A*、**階層 A***、grid → NavMesh 自動生成
+- **パーティクル** — CPU emitter + **Curl Noise 力場** + `TrailEmitter`
+- **HD-2D / post-process** — `Sprite3D` billboard + WGSL テンプレート
+  (pbr-sprite、**SSGI** 16 sample、**SMAA**、すべて naga validated)
+- **マルチプレイ基盤** — `LoopbackTransport` で `bridge::NetworkTransport`
+  を実装、`examples/multiplayer_battle` で demo
 - **`bridge::*` trait** — ALICE-SDF, ALICE-Physics, ALICE-Audio, ALICE-Text
   等を差し替え可能な抽象境界で接続
 - **XR レイヤー** (Pure-Rust、openxr 依存なし) MockProvider + StereoWindow
@@ -121,6 +131,51 @@ fn main() {
 }
 ```
 
+## マルチプレイ
+
+```bash
+cargo run --example multiplayer_battle
+```
+
+2 peer の `LoopbackTransport` (in-memory) で host + client が同じ
+`TurnBattleRunner` を協調動作させるサンプル。本番では `bridge::NetworkTransport`
+を ALICE-Sync や WebRTC バックエンドに差し替え可能。
+
+## 3D アクション戦闘
+
+リアルタイム character-action ゲーム (DMC / Souls / Sekiro 系) 向け:
+
+```rust
+use alice_game_engine::action_combat::{
+    ColliderShape, HitStop, Hitbox, Hurtbox, LockOn, LockOnCandidate, resolve_hits,
+};
+use alice_game_engine::math::Vec3;
+
+let mut hits = vec![{
+    let mut h = Hitbox::new(1, 100, ColliderShape::Sphere {
+        center: Vec3::new(0.0, 0.0, 0.0), radius: 1.0,
+    }, "heavy_swipe");
+    h.damage = 22.0;
+    h.hitstop_frames = 4;  // 4 frame freeze on impact (Sekiro 風)
+    h
+}];
+let mut hurts = vec![Hurtbox::new(2, 200, ColliderShape::Sphere {
+    center: Vec3::new(0.5, 0.0, 0.0), radius: 1.0,
+})];
+
+let events = resolve_hits(&mut hits, &mut hurts);
+
+// HitStop で打撃の重さを演出
+let mut hs = HitStop::default();
+hs.trigger(events.iter().map(|e| e.hitstop_frames).max().unwrap_or(0));
+// hs.is_active() の間は hs.time_scale() == 0.0 で update を凍結
+
+// LockOn は cone 内のターゲットを自動選択
+let mut lock = LockOn::new(15.0, 0.6 /* ~34° 半角 */);
+let cands = vec![LockOnCandidate { entity: 200, position: Vec3::new(0.0, 0.0, 5.0) }];
+let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
+```
+
 ## アーキテクチャ
 
 ```
@@ -144,29 +199,31 @@ fn main() {
                         (128bit精度)
 ```
 
-## モジュール一覧 (42)
+## モジュール一覧 (44)
 
 | モジュール | 行数 | テスト | 説明 |
 |-----------|-----:|------:|------|
 | ecs | 1,872 | 107 | SoA スパースセット ECS、空間ハッシュグリッド broadphase |
 | scene_graph | 1,277 | 43 | メッシュ+SDFハイブリッドノードツリー、AABB3、フラスタムカリング |
 | sdf | 1,243 | 39 | 7プリミティブ、6ブーリアン演算、正規MC (256テーブル)、Rayon並列MC、球トレース |
-| audio | 975 | 39 | バスエフェクト (ピンポン)、HRTF、PCM再生、空間パンニング、WAVエクスポート |
+| audio | 1,240 | 47 | バスエフェクト (ピンポン)、HRTF、PCM再生、空間パンニング、WAVエクスポート、**MusicTrack** (BGM cross-fade)、**ReverbZone** (4 preset) |
 | ui | 951 | 30 | 保持モードUI、水平/垂直レイアウト、フォーカス管理、テーマ |
 | physics3d | 815 | 36 | ベルレ積分、SAP broadphase、インパルスソルバー、SDF CCD、ダンピング、スリープ |
 | math | 776 | 30 | Vec2/3/4、Mat4、Quat、Color、透視/正射影投影 |
 | renderer | 773 | 25 | ディファードGBuffer、RenderGraph (Kahnトポソート)、DebugRenderer |
 | app | 715 | 13 | `run_windowed()` (winit+wgpu)、`HeadlessRunner`、WAVエクスポート |
-| navmesh | 654 | 21 | NavMesh、A*経路探索、SDF動的回避、群衆分離 (RVO) |
-| animation | 650 | 32 | キーフレーム (Linear/Step/Cubic)、トラック、クリップ、ステートマシン |
+| navmesh | 960 | 27 | NavMesh、A*経路探索、SDF動的回避、群衆分離 (RVO)、**grid → NavMesh 自動生成**、**階層 A*** クラスタ計画 |
+| animation | 950 | 42 | キーフレーム (Linear/Step/Cubic)、トラック、クリップ、ステートマシン、**2-bone IK ソルバ**、**BlendTree1D** |
 | input | 587 | 16 | キーボード/マウス/ゲームパッド、ActionMap、軸バインディング |
-| scripting | 1,560 | 73 | EventBus (Pub/Sub)、Timer/TimerManager、ScriptVars、13 種の EventCommand (Message/Choice/SetVar/IfVar/SetSwitch/HasItem/TakeItem/MapTransition/BeginBattle/Wait/Branch/ChangeAttr/GiveItem) + 高度フロー (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue) + EventScript ランナー |
+| scripting | 2,140 | 68 | EventBus (Pub/Sub)、Timer/TimerManager、ScriptVars、13 種の EventCommand + 高度フロー (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue)、EventScript ランナー、**EventScriptDef** serialize 対応で no-code editor / hot reload 基盤 |
 | scene2d | 532 | 21 | Sprite2D、TileMap、Aabb2、Body2D、Physics2D、Zオーダー |
 | gpu | 521 | 10 | wgpu Device/Queue/Surface、render_mesh()、テクスチャアップロード |
 | ability | 501 | 16 | ゲームプレイアビリティシステム (UE5 GAS風): 属性、エフェクト、クールダウン |
-| battle | 660 | 15 | ターン制バトルランナー、Battler/Party/BattleAction、Attack/Defend/Flee/UseAbility、BattleAi trait + RandomAi、速度順実行 |
+| battle | 950 | 19 | ターン制バトルランナー、Battler/Party/BattleAction (Attack/Defend/Flee/UseAbility/Move)、BattleAi trait + RandomAi、速度順実行、**GridCell** + Chebyshev 攻撃射程 |
+| action_combat | 600 | 14 | 3D アクション戦闘 — Hitbox/Hurtbox (sphere+capsule)、resolve_hits、ComboSystem 入力ウィンドウ、LockOn (cone)、HitStop |
+| hd2d_postfx | 320 | 11 | Sprite3D billboard + WGSL シェーダ (hd2d_sprite/ssgi/smaa)、naga validated |
 | shader | 439 | 15 | ShaderCache、5つのビルトインWGSLシェーダー |
-| particle | 432 | 16 | CPUエミッター、マルチシェイプ (Point/Sphere/Box/Cone)、重力 |
+| particle | 720 | 22 | CPUエミッター、マルチシェイプ (Point/Sphere/Box/Cone)、重力、**Curl Noise 力場**、**TrailEmitter** (max-len cap 付き) |
 | import | 409 | 17 | Unity YAMLシーンパーサー、UE5 .uassetヘッダー、フォーマット検出 |
 | texture | 400 | 18 | TextureAsset、ミップマップ、チェッカーボード、GpuTextureDesc |
 | fix128 | 353 | 19 | 128bit固定小数点 (i128, 40分数ビット)、Fix128Vec3、長時間精度 |
@@ -183,7 +240,7 @@ fn main() {
 | simd_eval | 268 | 8 | SIMD 8-wide SDF評価 (wide f32x8)、Vec3x8、バッチeval |
 | lod | 264 | 13 | LODグループ選択、スクリーンカバレッジ、バッチカリング |
 | window | 263 | 15 | WindowConfig、キーマッピング、FrameTimer |
-| **合計** | **20,840** | **744** | |
+| **合計** | **22,300** | **793** | |
 
 ## 機能フラグ
 

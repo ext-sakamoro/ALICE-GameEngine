@@ -1,6 +1,6 @@
 # ALICE-GameEngine
 
-Hybrid mesh + SDF game engine in Rust. 42 modules, **744 tests** (lib) / 24 (doc), wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU), **turn-based battle + no-code event scripting** for RPGs.
+Hybrid mesh + SDF game engine in Rust. 44 modules, **793 tests** (default) / **1007** (full features) + 24 doc-tests, wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU), **turn-based RPG + 3D action combat + no-code event scripting**.
 
 [日本語ドキュメント](README.ja.md)
 
@@ -9,9 +9,20 @@ Hybrid mesh + SDF game engine in Rust. 42 modules, **744 tests** (lib) / 24 (doc
 - **Hybrid scene graph** — meshes and SDF volumes coexist in the same tree
 - **Deferred wgpu renderer** with GBuffer, RenderGraph, debug overlay
 - **Verlet physics** + sweep-and-prune broadphase + SDF CCD
-- **HRTF audio** with bus effects and spatial panning
-- **Turn-based RPG runtime** — `TurnBattleRunner` + 13 `EventCommand`s
-  (Choice/SetVar/IfVar/Switch/HasItem/TakeItem/MapTransition/Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue/...)
+- **HRTF audio** with bus effects, `MusicTrack` BGM cross-fade, `ReverbZone`
+- **Turn-based RPG runtime** — `TurnBattleRunner` (speed-ordered, grid +
+  attack-range) + 13 serializable `EventCommand`s + 5 advanced flow
+  (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue) + `EventScriptDef` JSON
+- **3D action combat** — `Hitbox` / `Hurtbox` (sphere + capsule),
+  `ComboSystem` with input window, `LockOn` (cone), `HitStop` for weighty hits
+- **Animation** — Keyframes, `StateMachine`, `BlendTree1D`, 2-bone analytic IK
+- **Pathfinding** — A*, **hierarchical A*** with cluster planning,
+  grid-to-NavMesh auto-generation
+- **Particles** — CPU emitter + **curl-noise force field** + `TrailEmitter`
+- **HD-2D / post-process** — `Sprite3D` billboard + WGSL templates for
+  pbr-sprite, **SSGI** (16 samples) and **SMAA** (all naga-validated)
+- **Multiplayer scaffolding** — `LoopbackTransport` implements
+  `bridge::NetworkTransport`, demoed in `examples/multiplayer_battle`
 - **`bridge::*` traits** for plugging in ALICE-SDF, ALICE-Physics,
   ALICE-Audio, ALICE-Text and your own back-ends
 - **XR layer** (pure-Rust, no OpenXR dep) with MockProvider + StereoWindow
@@ -667,22 +678,24 @@ while !script.is_done() { script.step(&mut ctx); }
 | ecs | 1,872 | 107 | SoA sparse-set ECS, spatial hash grid broadphase |
 | scene_graph | 1,277 | 43 | Mesh+SDF hybrid node tree, AABB3, frustum culling, reparenting |
 | sdf | 1,243 | 39 | 7 primitives, 6 boolean ops, Marching Cubes (256 tables), Rayon parallel MC, sphere trace, SDF collider |
-| audio | 975 | 39 | Bus effects (ping-pong), HRTF, PCM playback, spatial panning, WAV export |
+| audio | 1,240 | 47 | Bus effects (ping-pong), HRTF, PCM playback, spatial panning, WAV export, **MusicTrack** (BGM cross-fade), **ReverbZone** (4 presets) |
 | ui | 951 | 30 | Retained-mode widgets, vertical+horizontal layout, focus management, theme |
 | physics3d | 815 | 36 | Verlet integration, sweep-and-prune broadphase, impulse solver, SDF CCD, damping, sleeping |
 | math | 776 | 30 | Vec2/3/4, Mat4, Quat, Color, perspective+orthographic projection |
 | renderer | 773 | 25 | Deferred GBuffer, RenderGraph (Kahn topo sort), DebugRenderer |
 | app | 715 | 13 | `run_windowed()` (winit+wgpu), `HeadlessRunner`, WAV export |
-| navmesh | 654 | 21 | NavMesh, A* pathfinding, SDF avoidance, crowd separation (RVO) |
-| animation | 650 | 32 | Keyframe (Linear/Step/Cubic), Track, Clip, Player, StateMachine |
+| navmesh | 960 | 27 | NavMesh, A* pathfinding, SDF avoidance, crowd separation (RVO), **grid→NavMesh auto-generation**, **hierarchical A*** with cluster planning |
+| animation | 950 | 42 | Keyframe (Linear/Step/Cubic), Track, Clip, Player, StateMachine, **2-bone IK solver**, **BlendTree1D** |
 | input | 587 | 16 | Keyboard/Mouse/Gamepad, ActionMap, axis binding, just_pressed |
-| scripting | 1,560 | 73 | EventBus (pub/sub), Timer/TimerManager, ScriptVars, 13 EventCommands (Message/Choice/SetVar/IfVar/SetSwitch/HasItem/TakeItem/MapTransition/BeginBattle/Wait/Branch/ChangeAttr/GiveItem) + advanced flow (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue) + EventScript runner |
+| scripting | 2,140 | 68 | EventBus (pub/sub), Timer/TimerManager, ScriptVars, 13 EventCommands + advanced flow (Cutscene/Parallel/Repeat/LoopUntil/LlmDialogue), EventScript runner, **EventScriptDef** serializable definition for no-code editors / hot reload |
 | scene2d | 532 | 21 | Sprite2D, TileMap, Aabb2, Body2D, Physics2D, z-order |
 | gpu | 521 | 10 | wgpu Device/Queue/Surface, render_mesh(), create_texture_rgba8() |
 | ability | 501 | 16 | Gameplay Ability System: attributes, effects, cooldowns, modifiers |
-| battle | 660 | 15 | Turn-based runner, Battler/Party/BattleAction, Attack/Defend/Flee/UseAbility, BattleAi trait + RandomAi, speed-ordered execution |
+| battle | 950 | 19 | Turn-based runner, Battler/Party/BattleAction, Attack/Defend/Flee/UseAbility/Move, BattleAi trait + RandomAi, speed-ordered execution, GridCell + Chebyshev attack range |
+| action_combat | 600 | 14 | 3D action combat — Hitbox/Hurtbox (sphere+capsule), resolve_hits, ComboSystem with input window, LockOn (cone), HitStop |
+| hd2d_postfx | 320 | 11 | Sprite3D billboard + WGSL templates (hd2d_sprite/ssgi/smaa), naga-validated |
 | shader | 439 | 15 | ShaderCache, 5 built-in WGSL shaders |
-| particle | 432 | 16 | CPU emitter, multi-shape (Point/Sphere/Box/Cone), gravity |
+| particle | 720 | 22 | CPU emitter, multi-shape (Point/Sphere/Box/Cone), gravity, **curl-noise force field**, **TrailEmitter** with max-len cap |
 | import | 409 | 17 | Unity YAML scene parser, UE5 .uasset header parser, format detection |
 | texture | 400 | 18 | TextureAsset, mipmap, checkerboard, GpuTextureDesc, SamplerDesc |
 | fix128 | 353 | 19 | 128-bit fixed-point (i128, 40 frac bits), Fix128Vec3, long-duration precision |
@@ -699,7 +712,7 @@ while !script.is_done() { script.step(&mut ctx); }
 | lod | 264 | 13 | LOD group selection, screen coverage, batch culling |
 | window | 263 | 15 | WindowConfig, key mapping, FrameTimer |
 | bridge | 642 | 12 | ALICE-xxx integration traits (`SdfEvaluator`, `CollisionProvider`, `AudioSampleProvider`, `WorldProvider`, `TextProcessor`, `AnimationProvider`, `NetworkTransport`, `SdfFontProvider`, ...), Plugin system |
-| **Total** | **20,840** | **744** | |
+| **Total** | **22,300** | **793** | |
 
 ## Feature Flags
 
@@ -743,10 +756,59 @@ The engine crate is dep-free of the ALICE-xxx stack — adapter
 implementations live in downstream consumer crates so each game can pick
 the back-ends it actually needs.
 
+## Multiplayer
+
+```bash
+cargo run --example multiplayer_battle
+```
+
+A two-peer `LoopbackTransport` (in-memory) shows host + client coordinating
+the same `TurnBattleRunner`. Swap the transport for an ALICE-Sync or
+WebRTC back-end in production — `bridge::NetworkTransport` is the only
+contract the runner sees.
+
+## 3D Action Combat
+
+For real-time character-action games (DMC / Souls / Sekiro style):
+
+```rust
+use alice_game_engine::action_combat::{
+    ColliderShape, HitStop, Hitbox, Hurtbox, LockOn, LockOnCandidate, resolve_hits,
+};
+use alice_game_engine::math::Vec3;
+
+let mut hits = vec![{
+    let mut h = Hitbox::new(1, 100, ColliderShape::Sphere {
+        center: Vec3::new(0.0, 0.0, 0.0), radius: 1.0,
+    }, "heavy_swipe");
+    h.damage = 22.0;
+    h.hitstop_frames = 4;
+    h
+}];
+let mut hurts = vec![Hurtbox::new(2, 200, ColliderShape::Sphere {
+    center: Vec3::new(0.5, 0.0, 0.0), radius: 1.0,
+})];
+
+let events = resolve_hits(&mut hits, &mut hurts);
+for e in &events {
+    println!("{} hit {} for {} dmg from {}", e.attacker, e.target, e.damage, e.source);
+}
+
+// HitStop gives weighty impact:
+let mut hs = HitStop::default();
+hs.trigger(events.iter().map(|e| e.hitstop_frames).max().unwrap_or(0));
+// While hs.is_active(), use hs.time_scale() (== 0.0) to freeze updates.
+
+// LockOn picks a target inside a cone:
+let mut lock = LockOn::new(15.0, 0.6 /* ~34° half-angle */);
+let cands = vec![LockOnCandidate { entity: 200, position: Vec3::new(0.0, 0.0, 5.0) }];
+let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
+```
+
 ## Quality
 
 ```bash
-cargo test --features full        # 928 tests (lib) + 24 (doc)
+cargo test --features full        # 1,007 lib tests + 24 doc-tests
 cargo clippy -- -W clippy::all    # 0 lib warnings on engine code
 cargo fmt -- --check              # 0 diffs
 ```
