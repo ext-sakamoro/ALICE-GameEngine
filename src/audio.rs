@@ -660,6 +660,177 @@ impl AudioEngine {
 }
 
 // ---------------------------------------------------------------------------
+// MusicTrack — BGM with cross-fade
+// ---------------------------------------------------------------------------
+
+/// Cross-fade state of a BGM swap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MusicFadeState {
+    Idle,
+    /// Currently fading from `prev_track_id` to `current_track_id` over
+    /// `total_secs`; `elapsed` is how far in.
+    Fading {
+        elapsed: f32,
+        total_secs: f32,
+    },
+}
+
+/// Background-music controller with cross-fade between tracks.
+///
+/// Stores an opaque `track_id` (u32) — actual audio is the caller's
+/// concern (they should map ids to `AudioSource`s). The controller emits
+/// volume gains for the *current* and *previous* track so the caller can
+/// scale their audio mixes accordingly.
+pub struct MusicTrack {
+    pub current_track_id: u32,
+    pub prev_track_id: u32,
+    pub current_volume: f32,
+    pub prev_volume: f32,
+    pub state: MusicFadeState,
+}
+
+impl MusicTrack {
+    #[must_use]
+    pub const fn new(initial_track_id: u32) -> Self {
+        Self {
+            current_track_id: initial_track_id,
+            prev_track_id: 0,
+            current_volume: 1.0,
+            prev_volume: 0.0,
+            state: MusicFadeState::Idle,
+        }
+    }
+
+    /// Start a cross-fade to `target_track_id` over `secs` seconds. If a
+    /// fade is already in progress, it is interrupted: the current track
+    /// becomes the new "previous" and the fade restarts.
+    pub fn fade_to(&mut self, target_track_id: u32, secs: f32) {
+        self.prev_track_id = self.current_track_id;
+        self.prev_volume = self.current_volume;
+        self.current_track_id = target_track_id;
+        self.current_volume = 0.0;
+        self.state = MusicFadeState::Fading {
+            elapsed: 0.0,
+            total_secs: secs.max(1e-3),
+        };
+    }
+
+    /// Advance the cross-fade by `dt` seconds. Updates volumes.
+    pub fn update(&mut self, dt: f32) {
+        if let MusicFadeState::Fading {
+            ref mut elapsed,
+            total_secs,
+        } = self.state
+        {
+            *elapsed += dt;
+            let t = (*elapsed / total_secs).clamp(0.0, 1.0);
+            self.current_volume = t;
+            self.prev_volume = 1.0 - t;
+            if *elapsed >= total_secs {
+                self.current_volume = 1.0;
+                self.prev_volume = 0.0;
+                self.prev_track_id = 0;
+                self.state = MusicFadeState::Idle;
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn is_fading(&self) -> bool {
+        matches!(self.state, MusicFadeState::Fading { .. })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReverbZone — per-zone reverb presets
+// ---------------------------------------------------------------------------
+
+/// A reverb preset suitable for a [`ReverbZone`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReverbPreset {
+    pub decay: f32,
+    pub mix: f32,
+    /// Optional pre-delay in seconds (0 = none).
+    pub pre_delay_secs: f32,
+}
+
+impl ReverbPreset {
+    /// Open outdoor space — minimal reverb, short decay.
+    pub const OUTDOOR: Self = Self {
+        decay: 0.2,
+        mix: 0.05,
+        pre_delay_secs: 0.0,
+    };
+    /// Small room (e.g. dialogue scene).
+    pub const ROOM: Self = Self {
+        decay: 0.4,
+        mix: 0.12,
+        pre_delay_secs: 0.01,
+    };
+    /// Cathedral / cave — long decay, wet mix.
+    pub const CAVERN: Self = Self {
+        decay: 0.85,
+        mix: 0.35,
+        pre_delay_secs: 0.05,
+    };
+    /// Underwater — heavily wet, dark.
+    pub const UNDERWATER: Self = Self {
+        decay: 0.7,
+        mix: 0.5,
+        pre_delay_secs: 0.03,
+    };
+}
+
+/// A spatial zone with a reverb preset. The active zone is the one whose
+/// center is closest to the listener (within `radius`).
+#[derive(Debug, Clone)]
+pub struct ReverbZone {
+    pub center: Vec3,
+    pub radius: f32,
+    pub preset: ReverbPreset,
+    pub name: String,
+}
+
+impl ReverbZone {
+    #[must_use]
+    pub fn new(name: impl Into<String>, center: Vec3, radius: f32, preset: ReverbPreset) -> Self {
+        Self {
+            center,
+            radius,
+            preset,
+            name: name.into(),
+        }
+    }
+
+    /// True if `listener` is inside this zone.
+    #[must_use]
+    pub fn contains(&self, listener: Vec3) -> bool {
+        let d = self.center.distance(listener);
+        d <= self.radius
+    }
+}
+
+/// Select the active zone for a listener. Returns the first containing
+/// zone, falling back to the nearest by center distance, or `None` if the
+/// list is empty.
+#[must_use]
+pub fn active_reverb_zone<'a>(zones: &'a [ReverbZone], listener: Vec3) -> Option<&'a ReverbZone> {
+    if zones.is_empty() {
+        return None;
+    }
+    // Prefer one that *contains* the listener.
+    if let Some(z) = zones.iter().find(|z| z.contains(listener)) {
+        return Some(z);
+    }
+    // Otherwise nearest center.
+    zones.iter().min_by(|a, b| {
+        let da = a.center.distance(listener);
+        let db = b.center.distance(listener);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1036,5 +1207,97 @@ mod tests {
         let left_sum: f32 = output.samples.iter().step_by(2).sum();
         let right_sum: f32 = output.samples.iter().skip(1).step_by(2).sum();
         assert!(left_sum > right_sum);
+    }
+
+    // -----------------------------------------------------------------------
+    // MusicTrack tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn music_track_idle_at_init() {
+        let m = MusicTrack::new(1);
+        assert_eq!(m.current_track_id, 1);
+        assert!(!m.is_fading());
+        assert!((m.current_volume - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn music_track_fade_completes() {
+        let mut m = MusicTrack::new(1);
+        m.fade_to(2, 1.0);
+        assert!(m.is_fading());
+        assert_eq!(m.current_track_id, 2);
+        assert_eq!(m.prev_track_id, 1);
+        m.update(0.5);
+        assert!((m.current_volume - 0.5).abs() < 0.01);
+        assert!((m.prev_volume - 0.5).abs() < 0.01);
+        m.update(0.5);
+        assert!(!m.is_fading());
+        assert!((m.current_volume - 1.0).abs() < f32::EPSILON);
+        assert!((m.prev_volume - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn music_track_interrupted_fade() {
+        let mut m = MusicTrack::new(1);
+        m.fade_to(2, 2.0);
+        m.update(0.5); // halfway-ish through 1→2
+        m.fade_to(3, 1.0); // interrupt, start 2→3
+        assert_eq!(m.current_track_id, 3);
+        assert_eq!(m.prev_track_id, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // ReverbZone tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reverb_zone_contains() {
+        let z = ReverbZone::new("hall", Vec3::ZERO, 10.0, ReverbPreset::CAVERN);
+        assert!(z.contains(Vec3::new(5.0, 0.0, 0.0)));
+        assert!(!z.contains(Vec3::new(11.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn active_reverb_zone_picks_containing() {
+        let zones = vec![
+            ReverbZone::new(
+                "outdoor",
+                Vec3::new(50.0, 0.0, 0.0),
+                30.0,
+                ReverbPreset::OUTDOOR,
+            ),
+            ReverbZone::new("cavern", Vec3::ZERO, 10.0, ReverbPreset::CAVERN),
+        ];
+        let z = active_reverb_zone(&zones, Vec3::new(2.0, 0.0, 0.0)).unwrap();
+        assert_eq!(z.name, "cavern");
+    }
+
+    #[test]
+    fn active_reverb_zone_falls_back_to_nearest() {
+        let zones = vec![
+            ReverbZone::new(
+                "far",
+                Vec3::new(100.0, 0.0, 0.0),
+                5.0,
+                ReverbPreset::OUTDOOR,
+            ),
+            ReverbZone::new("close", Vec3::new(20.0, 0.0, 0.0), 5.0, ReverbPreset::ROOM),
+        ];
+        // Listener at (10,0,0) is outside both. Closest center is "close".
+        let z = active_reverb_zone(&zones, Vec3::new(10.0, 0.0, 0.0)).unwrap();
+        assert_eq!(z.name, "close");
+    }
+
+    #[test]
+    fn active_reverb_zone_empty_returns_none() {
+        assert!(active_reverb_zone(&[], Vec3::ZERO).is_none());
+    }
+
+    #[test]
+    fn reverb_presets_distinct() {
+        assert_ne!(ReverbPreset::OUTDOOR, ReverbPreset::CAVERN);
+        assert!(ReverbPreset::CAVERN.decay > ReverbPreset::ROOM.decay);
+        assert!(ReverbPreset::UNDERWATER.mix > ReverbPreset::OUTDOOR.mix);
     }
 }

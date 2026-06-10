@@ -358,6 +358,194 @@ impl StateMachine {
 }
 
 // ---------------------------------------------------------------------------
+// IK Solver — 2-bone analytic (law-of-cosines)
+// ---------------------------------------------------------------------------
+
+/// Result of a 2-bone IK solve: the world-space position of the middle
+/// joint (e.g. the elbow / knee). The chain root and the tip target are
+/// inputs; the upper / lower bone lengths constrain the geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IkSolution {
+    /// World-space position of the middle joint.
+    pub mid: crate::math::Vec3,
+    /// True if the target was reachable; false if the chain had to be
+    /// straightened toward the target (out of range).
+    pub reachable: bool,
+}
+
+/// Two-bone analytic IK solver — given a root anchor, a tip target, and
+/// two segment lengths, compute the middle joint position.
+///
+/// Uses the law of cosines on the triangle (root, mid, tip). When the
+/// target is beyond `upper + lower`, the chain straightens (`reachable=false`).
+/// When too close (< |upper - lower|), the chain collapses outward; the
+/// solver still returns a valid mid joint.
+///
+/// `pole` is a hint vector that disambiguates the two valid mid positions
+/// (the IK plane contains root, tip, and pole). A common choice for a
+/// humanoid is `Vec3::Y` (knee/elbow bends away from "up").
+#[must_use]
+pub fn solve_ik_2bone(
+    root: crate::math::Vec3,
+    target: crate::math::Vec3,
+    upper: f32,
+    lower: f32,
+    pole: crate::math::Vec3,
+) -> IkSolution {
+    use crate::math::Vec3;
+    let to_target = target - root;
+    let dist = to_target.length();
+    let max_reach = upper + lower;
+    let min_reach = (upper - lower).abs();
+
+    // Direction from root to target.
+    let dir = if dist > 1e-6 {
+        Vec3::new(
+            to_target.x() / dist,
+            to_target.y() / dist,
+            to_target.z() / dist,
+        )
+    } else {
+        Vec3::new(1.0, 0.0, 0.0)
+    };
+
+    // Out of reach → straighten along dir.
+    if dist >= max_reach {
+        let mid = root + Vec3::new(dir.x() * upper, dir.y() * upper, dir.z() * upper);
+        return IkSolution {
+            mid,
+            reachable: false,
+        };
+    }
+
+    let clamped_dist = dist.max(min_reach + 1e-4);
+    // Law of cosines: cos(angle at root) = (u² + d² - l²) / (2 u d)
+    let cos_a = ((upper * upper + clamped_dist * clamped_dist - lower * lower)
+        / (2.0 * upper * clamped_dist))
+        .clamp(-1.0, 1.0);
+    let sin_a = (1.0 - cos_a * cos_a).max(0.0).sqrt();
+
+    // Build orthonormal basis: dir is forward, perp lies in (dir, pole) plane.
+    let pole_proj_dot = pole.dot(dir);
+    let perp_raw = pole
+        - Vec3::new(
+            dir.x() * pole_proj_dot,
+            dir.y() * pole_proj_dot,
+            dir.z() * pole_proj_dot,
+        );
+    let perp_len = perp_raw.length();
+    let perp = if perp_len > 1e-6 {
+        Vec3::new(
+            perp_raw.x() / perp_len,
+            perp_raw.y() / perp_len,
+            perp_raw.z() / perp_len,
+        )
+    } else {
+        // Pole parallel to dir — pick any orthogonal axis.
+        if dir.y().abs() < 0.9 {
+            Vec3::new(0.0, 1.0, 0.0)
+        } else {
+            Vec3::new(1.0, 0.0, 0.0)
+        }
+    };
+
+    let forward = upper * cos_a;
+    let lateral = upper * sin_a;
+    let mid = root
+        + Vec3::new(
+            dir.x() * forward + perp.x() * lateral,
+            dir.y() * forward + perp.y() * lateral,
+            dir.z() * forward + perp.z() * lateral,
+        );
+    IkSolution {
+        mid,
+        reachable: true,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BlendTree1D — 1-parameter clip blending (walk → run, etc.)
+// ---------------------------------------------------------------------------
+
+/// One entry of a [`BlendTree1D`]: a clip name pinned to a parameter value.
+#[derive(Debug, Clone)]
+pub struct BlendNode1D {
+    pub clip: String,
+    pub at: f32,
+}
+
+/// 1D linear blend tree: walks an ordered list of nodes by parameter value
+/// and returns the two surrounding clip names plus a `0..1` blend weight.
+///
+/// Typical use: parameter = "speed" with nodes
+/// `[("idle", 0.0), ("walk", 1.0), ("run", 4.0)]`. Setting parameter=2.0
+/// yields `("walk", "run", 0.333)`.
+#[derive(Debug, Clone, Default)]
+pub struct BlendTree1D {
+    pub nodes: Vec<BlendNode1D>,
+}
+
+impl BlendTree1D {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { nodes: Vec::new() }
+    }
+
+    /// Add a node. Maintains nodes sorted by `at` ascending.
+    pub fn push(&mut self, clip: impl Into<String>, at: f32) -> &mut Self {
+        let node = BlendNode1D {
+            clip: clip.into(),
+            at,
+        };
+        // Insert at correct position to keep sorted.
+        let idx = self
+            .nodes
+            .iter()
+            .position(|n| n.at > at)
+            .unwrap_or(self.nodes.len());
+        self.nodes.insert(idx, node);
+        self
+    }
+
+    /// Sample the tree at the given parameter value. Returns `(prev_clip,
+    /// next_clip, blend_weight 0..1)`. Edge cases: empty tree → `None`;
+    /// single node → both clips are the same and weight is 0.
+    #[must_use]
+    pub fn sample(&self, param: f32) -> Option<(&str, &str, f32)> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        if self.nodes.len() == 1 {
+            let n = &self.nodes[0];
+            return Some((&n.clip, &n.clip, 0.0));
+        }
+        // Below first node → clamp to first.
+        if param <= self.nodes[0].at {
+            let n = &self.nodes[0];
+            return Some((&n.clip, &n.clip, 0.0));
+        }
+        // Above last → clamp to last.
+        let last = self.nodes.last().unwrap();
+        if param >= last.at {
+            return Some((&last.clip, &last.clip, 0.0));
+        }
+        // Find surrounding pair.
+        for w in self.nodes.windows(2) {
+            if param >= w[0].at && param <= w[1].at {
+                let span = w[1].at - w[0].at;
+                let t = if span > 1e-6 {
+                    (param - w[0].at) / span
+                } else {
+                    0.0
+                };
+                return Some((&w[0].clip, &w[1].clip, t));
+            }
+        }
+        unreachable!("blend tree pair lookup failed despite range check");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -656,5 +844,116 @@ mod tests {
         let clip = AnimationClip::new("empty");
         let vals = clip.evaluate(1.0);
         assert!(vals.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // IK solver tests
+    // -----------------------------------------------------------------------
+
+    use crate::math::Vec3;
+
+    #[test]
+    fn ik_2bone_reachable_target() {
+        let root = Vec3::ZERO;
+        let target = Vec3::new(1.5, 0.0, 0.0);
+        let sol = solve_ik_2bone(root, target, 1.0, 1.0, Vec3::Y);
+        assert!(sol.reachable);
+        // Triangle is isoceles → mid Y > 0
+        assert!(sol.mid.y() > 0.0);
+        // Distance from root to mid ≈ upper bone length
+        let dx = sol.mid - root;
+        assert!((dx.length() - 1.0).abs() < 1e-3);
+        // Distance from mid to target ≈ lower bone length
+        let dy = target - sol.mid;
+        assert!((dy.length() - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn ik_2bone_unreachable_straightens() {
+        let sol = solve_ik_2bone(Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), 1.0, 1.0, Vec3::Y);
+        assert!(!sol.reachable);
+        // Mid sits at upper-bone length along the direction to target.
+        assert!((sol.mid.x() - 1.0).abs() < 1e-3);
+        assert!(sol.mid.y().abs() < 1e-3);
+    }
+
+    #[test]
+    fn ik_2bone_pole_controls_bend_direction() {
+        let up_pole = solve_ik_2bone(Vec3::ZERO, Vec3::new(1.5, 0.0, 0.0), 1.0, 1.0, Vec3::Y);
+        let down_pole = solve_ik_2bone(
+            Vec3::ZERO,
+            Vec3::new(1.5, 0.0, 0.0),
+            1.0,
+            1.0,
+            Vec3::new(0.0, -1.0, 0.0),
+        );
+        assert!(up_pole.mid.y() > 0.0);
+        assert!(down_pole.mid.y() < 0.0);
+    }
+
+    #[test]
+    fn ik_2bone_too_close_target() {
+        // Target at root → distance 0, min_reach 0 (equal bones). Solver
+        // shouldn't NaN.
+        let sol = solve_ik_2bone(Vec3::ZERO, Vec3::ZERO, 1.0, 1.0, Vec3::Y);
+        assert!(sol.mid.x().is_finite() && sol.mid.y().is_finite());
+    }
+
+    // -----------------------------------------------------------------------
+    // BlendTree1D tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn blend_tree_empty_returns_none() {
+        let t = BlendTree1D::new();
+        assert!(t.sample(0.5).is_none());
+    }
+
+    #[test]
+    fn blend_tree_single_node() {
+        let mut t = BlendTree1D::new();
+        t.push("idle", 0.0);
+        let (a, b, w) = t.sample(5.0).unwrap();
+        assert_eq!(a, "idle");
+        assert_eq!(b, "idle");
+        assert!((w - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn blend_tree_interpolates_between_nodes() {
+        let mut t = BlendTree1D::new();
+        t.push("idle", 0.0).push("walk", 1.0).push("run", 4.0);
+        let (a, b, w) = t.sample(2.0).unwrap();
+        assert_eq!(a, "walk");
+        assert_eq!(b, "run");
+        assert!((w - 1.0 / 3.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn blend_tree_clamps_below_first() {
+        let mut t = BlendTree1D::new();
+        t.push("idle", 0.0).push("walk", 1.0);
+        let (a, b, w) = t.sample(-5.0).unwrap();
+        assert_eq!(a, "idle");
+        assert_eq!(b, "idle");
+        assert!((w - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn blend_tree_clamps_above_last() {
+        let mut t = BlendTree1D::new();
+        t.push("walk", 1.0).push("run", 4.0);
+        let (a, b, w) = t.sample(99.0).unwrap();
+        assert_eq!(a, "run");
+        assert_eq!(b, "run");
+        assert!((w - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn blend_tree_push_keeps_sorted() {
+        let mut t = BlendTree1D::new();
+        t.push("c", 4.0).push("a", 0.0).push("b", 1.0);
+        let ats: Vec<f32> = t.nodes.iter().map(|n| n.at).collect();
+        assert_eq!(ats, vec![0.0, 1.0, 4.0]);
     }
 }

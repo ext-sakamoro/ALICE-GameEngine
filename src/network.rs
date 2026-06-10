@@ -284,6 +284,73 @@ pub fn compute_delta(prev: &[EntitySnapshot], current: &[EntitySnapshot]) -> Vec
 }
 
 // ---------------------------------------------------------------------------
+// LoopbackTransport — in-memory pair, implements `bridge::NetworkTransport`
+// ---------------------------------------------------------------------------
+
+/// In-memory bidirectional transport pair — useful for local multi-peer
+/// simulation, deterministic tests, and bots-vs-host scenarios where no
+/// real network exists yet.
+///
+/// Use [`LoopbackTransport::pair`] to construct two linked endpoints; what
+/// one sends, the other receives on its next `recv()`.
+pub struct LoopbackTransport {
+    pub local_peer: u32,
+    inbox: std::sync::Arc<std::sync::Mutex<Vec<(u32, Vec<u8>)>>>,
+    peer_inbox: std::sync::Arc<std::sync::Mutex<Vec<(u32, Vec<u8>)>>>,
+    peer_id: u32,
+}
+
+impl LoopbackTransport {
+    /// Build two endpoints that talk to each other. `a` thinks the remote
+    /// peer is `b_id`, and vice versa.
+    #[must_use]
+    pub fn pair(a_id: u32, b_id: u32) -> (Self, Self) {
+        let inbox_a = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inbox_b = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let a = Self {
+            local_peer: a_id,
+            inbox: std::sync::Arc::clone(&inbox_a),
+            peer_inbox: std::sync::Arc::clone(&inbox_b),
+            peer_id: b_id,
+        };
+        let b = Self {
+            local_peer: b_id,
+            inbox: inbox_b,
+            peer_inbox: inbox_a,
+            peer_id: a_id,
+        };
+        (a, b)
+    }
+}
+
+impl crate::bridge::NetworkTransport for LoopbackTransport {
+    fn send_to(&mut self, peer_id: u32, data: &[u8]) -> Result<(), String> {
+        if peer_id != self.peer_id {
+            return Err(format!(
+                "peer {peer_id} not connected (loopback peer is {})",
+                self.peer_id
+            ));
+        }
+        self.peer_inbox
+            .lock()
+            .map_err(|e| format!("loopback lock: {e}"))?
+            .push((self.local_peer, data.to_vec()));
+        Ok(())
+    }
+
+    fn recv(&mut self) -> Vec<(u32, Vec<u8>)> {
+        match self.inbox.lock() {
+            Ok(mut g) => std::mem::take(&mut *g),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn connected_peers(&self) -> usize {
+        1
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -392,5 +459,57 @@ mod tests {
         let out = host.drain_outbox();
         assert_eq!(out[0].1.sequence, 0);
         assert_eq!(out[1].1.sequence, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // LoopbackTransport tests
+    // -----------------------------------------------------------------------
+
+    use crate::bridge::NetworkTransport;
+
+    #[test]
+    fn loopback_send_receives_on_peer() {
+        let (mut a, mut b) = LoopbackTransport::pair(1, 2);
+        a.send_to(2, b"hello").expect("send");
+        let inbox = b.recv();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].0, 1);
+        assert_eq!(inbox[0].1, b"hello".to_vec());
+    }
+
+    #[test]
+    fn loopback_bidirectional() {
+        let (mut a, mut b) = LoopbackTransport::pair(1, 2);
+        a.send_to(2, b"ping").expect("send a→b");
+        b.send_to(1, b"pong").expect("send b→a");
+        let to_a = a.recv();
+        let to_b = b.recv();
+        assert_eq!(to_a[0].1, b"pong".to_vec());
+        assert_eq!(to_b[0].1, b"ping".to_vec());
+    }
+
+    #[test]
+    fn loopback_rejects_unknown_peer() {
+        let (mut a, _b) = LoopbackTransport::pair(1, 2);
+        let r = a.send_to(99, b"x");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn loopback_drains_inbox() {
+        let (mut a, mut b) = LoopbackTransport::pair(1, 2);
+        a.send_to(2, b"x").unwrap();
+        a.send_to(2, b"y").unwrap();
+        a.send_to(2, b"z").unwrap();
+        let inbox = b.recv();
+        assert_eq!(inbox.len(), 3);
+        // Second recv is empty (we drained)
+        assert!(b.recv().is_empty());
+    }
+
+    #[test]
+    fn loopback_reports_one_connected_peer() {
+        let (a, _b) = LoopbackTransport::pair(1, 2);
+        assert_eq!(a.connected_peers(), 1);
     }
 }

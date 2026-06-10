@@ -1204,6 +1204,205 @@ impl EventCommand for LlmDialogueCommand {
 }
 
 // ---------------------------------------------------------------------------
+// Serializable Event Script Definitions (for no-code editors / hot reload)
+// ---------------------------------------------------------------------------
+
+/// A serializable description of an [`EventCommand`]. Editors can
+/// read/write these as JSON; [`Self::into_command`] reifies them into a
+/// live `Box<dyn EventCommand>`.
+///
+/// Closure-bearing commands (`Choice`, `Parallel`, `Repeat`, `LoopUntil`,
+/// `LlmDialogue`) are not included — those require runtime callbacks the
+/// editor can't serialize. Use them by composing scripts in code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EventCommandDef {
+    Message {
+        speaker: String,
+        text: String,
+    },
+    ChangeAttr {
+        attr: String,
+        delta: f32,
+    },
+    Wait {
+        ticks: u32,
+    },
+    GiveItem {
+        item: String,
+        count: i64,
+    },
+    TakeItem {
+        item: String,
+        count: i64,
+    },
+    HasItem {
+        item: String,
+        min_count: i64,
+        result_var: String,
+    },
+    BeginBattle {
+        encounter_id: String,
+    },
+    MapTransition {
+        destination_id: String,
+    },
+    SetSwitch {
+        switch: String,
+        value: bool,
+    },
+    SetVarInt {
+        var: String,
+        value: i64,
+    },
+    SetVarString {
+        var: String,
+        value: String,
+    },
+    Cutscene {
+        lines: Vec<CutsceneLineDef>,
+    },
+    Branch {
+        var: String,
+        if_true: Box<EventCommandDef>,
+        if_false: Box<EventCommandDef>,
+    },
+    IfVar {
+        var: String,
+        op: ComparisonDef,
+        rhs: i64,
+        if_true: Box<EventCommandDef>,
+        if_false: Box<EventCommandDef>,
+    },
+}
+
+/// Serializable form of [`CutsceneLine`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CutsceneLineDef {
+    pub speaker: String,
+    pub text: String,
+    pub wait_ticks: u32,
+}
+
+/// Serializable form of [`Comparison`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonDef {
+    Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+}
+
+impl From<ComparisonDef> for Comparison {
+    fn from(c: ComparisonDef) -> Self {
+        match c {
+            ComparisonDef::Eq => Self::Eq,
+            ComparisonDef::Ne => Self::Ne,
+            ComparisonDef::Gt => Self::Gt,
+            ComparisonDef::Lt => Self::Lt,
+            ComparisonDef::Ge => Self::Ge,
+            ComparisonDef::Le => Self::Le,
+        }
+    }
+}
+
+impl EventCommandDef {
+    /// Reify into a runtime `EventCommand`.
+    #[must_use]
+    pub fn into_command(self) -> Box<dyn EventCommand> {
+        match self {
+            Self::Message { speaker, text } => Box::new(MessageCommand::new(speaker, text)),
+            Self::ChangeAttr { attr, delta } => Box::new(ChangeAttrCommand::new(attr, delta)),
+            Self::Wait { ticks } => Box::new(WaitCommand::new(ticks)),
+            Self::GiveItem { item, count } => Box::new(GiveItemCommand::new(item, count)),
+            Self::TakeItem { item, count } => Box::new(TakeItemCommand::new(item, count)),
+            Self::HasItem {
+                item,
+                min_count,
+                result_var,
+            } => Box::new(HasItemCommand::new(item, min_count, result_var)),
+            Self::BeginBattle { encounter_id } => Box::new(BeginBattleCommand::new(encounter_id)),
+            Self::MapTransition { destination_id } => {
+                Box::new(MapTransitionCommand::new(destination_id))
+            }
+            Self::SetSwitch { switch, value } => Box::new(SetSwitchCommand::new(switch, value)),
+            Self::SetVarInt { var, value } => {
+                Box::new(SetVarCommand::new(var, VarValue::Int(value)))
+            }
+            Self::SetVarString { var, value } => {
+                Box::new(SetVarCommand::new(var, VarValue::String(value)))
+            }
+            Self::Cutscene { lines } => {
+                let lines = lines
+                    .into_iter()
+                    .map(|l| CutsceneLine::new(l.speaker, l.text, l.wait_ticks))
+                    .collect();
+                Box::new(CutsceneCommand::new(lines))
+            }
+            Self::Branch {
+                var,
+                if_true,
+                if_false,
+            } => Box::new(BranchCommand::new(
+                var,
+                if_true.into_command(),
+                if_false.into_command(),
+            )),
+            Self::IfVar {
+                var,
+                op,
+                rhs,
+                if_true,
+                if_false,
+            } => Box::new(IfVarCommand::new(
+                var,
+                op.into(),
+                rhs,
+                if_true.into_command(),
+                if_false.into_command(),
+            )),
+        }
+    }
+}
+
+/// Serializable form of an [`EventScript`].
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EventScriptDef {
+    pub commands: Vec<EventCommandDef>,
+}
+
+impl EventScriptDef {
+    #[must_use]
+    pub fn build(self) -> EventScript {
+        let mut script = EventScript::new();
+        for cmd in self.commands {
+            script.push(cmd.into_command());
+        }
+        script
+    }
+
+    /// Parse from JSON.
+    ///
+    /// # Errors
+    /// Returns a parse error if the JSON is malformed or doesn't match the
+    /// schema.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Serialize to JSON.
+    ///
+    /// # Errors
+    /// Should not normally fail; bubbles up serde errors if any.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // EventScript — sequence of commands
 // ---------------------------------------------------------------------------
 
@@ -1882,6 +2081,139 @@ mod tests {
             script.step(&mut ctx(&mut vars, None, &mut log));
         }
         assert_eq!(vars.get_bool("quest_active"), Some(true));
+    }
+
+    // -----------------------------------------------------------------------
+    // EventScriptDef (serialization for no-code editors / hot reload)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_script_def_message_roundtrip() {
+        let def = EventScriptDef {
+            commands: vec![
+                EventCommandDef::Message {
+                    speaker: "Lyra".into(),
+                    text: "Hello!".into(),
+                },
+                EventCommandDef::Wait { ticks: 3 },
+            ],
+        };
+        let json = def.to_json().unwrap();
+        let parsed: EventScriptDef = EventScriptDef::from_json(&json).unwrap();
+        assert_eq!(parsed.commands.len(), 2);
+        match &parsed.commands[0] {
+            EventCommandDef::Message { speaker, text } => {
+                assert_eq!(speaker, "Lyra");
+                assert_eq!(text, "Hello!");
+            }
+            other => panic!("expected Message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn event_script_def_builds_runnable_script() {
+        let def = EventScriptDef {
+            commands: vec![
+                EventCommandDef::Message {
+                    speaker: "Sage".into(),
+                    text: "Begin.".into(),
+                },
+                EventCommandDef::GiveItem {
+                    item: "coin".into(),
+                    count: 5,
+                },
+                EventCommandDef::HasItem {
+                    item: "coin".into(),
+                    min_count: 1,
+                    result_var: "has_coin".into(),
+                },
+            ],
+        };
+        let mut script = def.build();
+        let mut vars = ScriptVars::new();
+        let mut log = Vec::new();
+        while !script.is_done() {
+            let _ = script.step(&mut ctx(&mut vars, None, &mut log));
+        }
+        assert!(log.iter().any(|s| s.contains("Sage: Begin.")));
+        assert_eq!(vars.get_int("item:coin"), Some(5));
+        assert_eq!(vars.get_bool("has_coin"), Some(true));
+    }
+
+    #[test]
+    fn event_script_def_branch_serializes() {
+        let def = EventScriptDef {
+            commands: vec![EventCommandDef::Branch {
+                var: "flag".into(),
+                if_true: Box::new(EventCommandDef::Message {
+                    speaker: "T".into(),
+                    text: "yes".into(),
+                }),
+                if_false: Box::new(EventCommandDef::Message {
+                    speaker: "F".into(),
+                    text: "no".into(),
+                }),
+            }],
+        };
+        let json = def.to_json().unwrap();
+        assert!(json.contains("\"kind\": \"branch\""));
+        assert!(json.contains("if_true"));
+        let parsed = EventScriptDef::from_json(&json).unwrap();
+        assert_eq!(parsed.commands.len(), 1);
+    }
+
+    #[test]
+    fn event_script_def_cutscene_roundtrip() {
+        let def = EventScriptDef {
+            commands: vec![EventCommandDef::Cutscene {
+                lines: vec![
+                    CutsceneLineDef {
+                        speaker: "A".into(),
+                        text: "first".into(),
+                        wait_ticks: 2,
+                    },
+                    CutsceneLineDef {
+                        speaker: "B".into(),
+                        text: "second".into(),
+                        wait_ticks: 0,
+                    },
+                ],
+            }],
+        };
+        let json = def.to_json().unwrap();
+        let parsed = EventScriptDef::from_json(&json).unwrap();
+        match &parsed.commands[0] {
+            EventCommandDef::Cutscene { lines } => {
+                assert_eq!(lines.len(), 2);
+                assert_eq!(lines[0].speaker, "A");
+            }
+            _ => panic!("expected Cutscene"),
+        }
+    }
+
+    #[test]
+    fn event_script_def_if_var_with_comparison() {
+        let def = EventScriptDef {
+            commands: vec![EventCommandDef::IfVar {
+                var: "level".into(),
+                op: ComparisonDef::Ge,
+                rhs: 5,
+                if_true: Box::new(EventCommandDef::Message {
+                    speaker: "M".into(),
+                    text: "high".into(),
+                }),
+                if_false: Box::new(EventCommandDef::Message {
+                    speaker: "M".into(),
+                    text: "low".into(),
+                }),
+            }],
+        };
+        let mut vars = ScriptVars::new();
+        vars.set_int("level", 7);
+        let mut script = def.build();
+        let mut log = Vec::new();
+        script.step(&mut ctx(&mut vars, None, &mut log));
+        assert!(log.iter().any(|s| s.contains("high")));
     }
 
     // -----------------------------------------------------------------------
