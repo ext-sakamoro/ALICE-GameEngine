@@ -276,6 +276,90 @@ impl SkeletalAnimation {
 }
 
 // ---------------------------------------------------------------------------
+// Skinning WGSL — vertex stage that transforms a vertex by up to 4 bone
+// matrices weighted by their normalised influences. Pair with any
+// fragment stage; the renderer uploads `Skeleton::skin_matrices()` to the
+// `bones` storage buffer each frame.
+// ---------------------------------------------------------------------------
+
+/// Returns the standard skinning vertex shader. Skips the fragment stage —
+/// callers append their own. Layout:
+///
+/// ```text
+/// @group(0) binding(0): MvpUniforms { view_proj: mat4x4 }
+/// @group(1) binding(0): array<mat4x4<f32>> bones
+/// ```
+///
+/// Vertex inputs:
+///   `@location(0) position` (vec3)
+///   `@location(1) bone_indices` (vec4<u32>)
+///   `@location(2) bone_weights` (vec4<f32>)
+#[must_use]
+pub const fn skinning_vs_wgsl() -> &'static str {
+    r"
+struct Mvp { view_proj: mat4x4<f32> };
+
+@group(0) @binding(0) var<uniform> mvp: Mvp;
+@group(1) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
+
+struct VsIn {
+    @location(0) position:    vec3<f32>,
+    @location(1) bone_idx:    vec4<u32>,
+    @location(2) bone_weight: vec4<f32>,
+};
+
+struct VsOut {
+    @builtin(position) clip_pos: vec4<f32>,
+};
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    var skin_mat: mat4x4<f32> =
+          bones[in.bone_idx.x] * in.bone_weight.x
+        + bones[in.bone_idx.y] * in.bone_weight.y
+        + bones[in.bone_idx.z] * in.bone_weight.z
+        + bones[in.bone_idx.w] * in.bone_weight.w;
+    let world = skin_mat * vec4<f32>(in.position, 1.0);
+    var out: VsOut;
+    out.clip_pos = mvp.view_proj * world;
+    return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.8, 0.7, 0.6, 1.0);
+}
+"
+}
+
+/// Apply a skinning palette to a CPU-side vertex. Useful for unit tests
+/// and for the rare authoring scenarios that need a deterministic
+/// reference (e.g. snapshot comparisons against a GPU path).
+#[must_use]
+pub fn apply_skin_cpu(
+    position: crate::math::Vec3,
+    bone_indices: [u32; 4],
+    bone_weights: [f32; 4],
+    bone_matrices: &[crate::math::Mat4],
+) -> crate::math::Vec3 {
+    use crate::math::Vec3;
+    // Sum each bone's transformed point weighted by the bone's influence.
+    // Equivalent to `(Σ w_i * M_i) · p` because matrix-vector product is
+    // linear, and avoids needing Add/Mul on Mat4.
+    let mut acc = Vec3::ZERO;
+    for i in 0..4 {
+        let idx = bone_indices[i] as usize;
+        let weight = bone_weights[i];
+        if weight == 0.0 || idx >= bone_matrices.len() {
+            continue;
+        }
+        let p = bone_matrices[idx].transform_point3(position);
+        acc = acc + Vec3::new(p.x() * weight, p.y() * weight, p.z() * weight);
+    }
+    acc
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -387,5 +471,63 @@ mod tests {
         let bt = BoneTransform::default();
         assert_eq!(bt.translation, Vec3::ZERO);
         assert_eq!(bt.rotation, Quat::IDENTITY);
+    }
+
+    // -----------------------------------------------------------------------
+    // Skinning WGSL + CPU reference tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn skinning_vs_wgsl_parses_with_naga() {
+        let m = naga::front::wgsl::parse_str(skinning_vs_wgsl()).expect("parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&m)
+        .expect("validate");
+    }
+
+    #[test]
+    fn apply_skin_cpu_single_bone_identity() {
+        let mats = vec![Mat4::IDENTITY];
+        let p = apply_skin_cpu(
+            Vec3::new(1.0, 2.0, 3.0),
+            [0, 0, 0, 0],
+            [1.0, 0.0, 0.0, 0.0],
+            &mats,
+        );
+        assert!((p.x() - 1.0).abs() < 1e-5);
+        assert!((p.y() - 2.0).abs() < 1e-5);
+        assert!((p.z() - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_skin_cpu_blends_two_bones() {
+        // Bone 0 is identity; bone 1 translates +X by 10. Blend 50/50 →
+        // expect translation of +5 on X.
+        let mats = vec![
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+        ];
+        let p = apply_skin_cpu(Vec3::ZERO, [0, 1, 0, 0], [0.5, 0.5, 0.0, 0.0], &mats);
+        assert!((p.x() - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_skin_cpu_skips_zero_weights() {
+        let mats = vec![
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(99.0, 0.0, 0.0)),
+        ];
+        // bone 0 has 100 % weight, bone 1 has 0 → bone 1 shouldn't move
+        // the point even though its index is in the list.
+        let p = apply_skin_cpu(
+            Vec3::new(1.0, 1.0, 1.0),
+            [0, 1, 0, 0],
+            [1.0, 0.0, 0.0, 0.0],
+            &mats,
+        );
+        assert!((p.x() - 1.0).abs() < 1e-5);
     }
 }

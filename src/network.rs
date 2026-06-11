@@ -351,6 +351,132 @@ impl crate::bridge::NetworkTransport for LoopbackTransport {
 }
 
 // ---------------------------------------------------------------------------
+// Real UDP transport — implements `bridge::NetworkTransport` via tokio
+// `UdpSocket`. Each peer binds to its own local port; remote addresses
+// are configured up-front so `send_to(peer_id, ..)` can route to the
+// right socket. Bytes that arrive on the bound socket are returned by
+// `recv()` along with the originating peer id (reverse-mapped from
+// `SocketAddr`).
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "network_udp")]
+pub use udp_transport::UdpTransport;
+
+#[cfg(feature = "network_udp")]
+mod udp_transport {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use tokio::net::UdpSocket;
+    use tokio::sync::Mutex;
+
+    /// Configurable UDP transport. Spawns a background task on the
+    /// embedded tokio runtime that reads incoming datagrams into an
+    /// inbox; calls to [`UdpTransport::recv`] drain that inbox.
+    pub struct UdpTransport {
+        pub local_peer: u32,
+        runtime: tokio::runtime::Runtime,
+        socket: Arc<UdpSocket>,
+        peer_addrs: HashMap<u32, SocketAddr>,
+        addr_peers: HashMap<SocketAddr, u32>,
+        inbox: Arc<Mutex<Vec<(u32, Vec<u8>)>>>,
+    }
+
+    impl UdpTransport {
+        /// Bind a UDP socket and start reading incoming datagrams into
+        /// the inbox.
+        ///
+        /// `bind_addr` is what the socket binds to (e.g. `0.0.0.0:0`
+        /// for an ephemeral port). `peers` is the static peer table:
+        /// `peer_id → remote_addr`. Senders consult that table.
+        ///
+        /// # Errors
+        /// Returns the underlying I/O error if binding fails.
+        pub fn bind(
+            local_peer: u32,
+            bind_addr: SocketAddr,
+            peers: HashMap<u32, SocketAddr>,
+        ) -> Result<Self, String> {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .map_err(|e| format!("tokio runtime: {e}"))?;
+            let socket = runtime
+                .block_on(UdpSocket::bind(bind_addr))
+                .map_err(|e| format!("UDP bind {bind_addr}: {e}"))?;
+            let socket = Arc::new(socket);
+            let addr_peers: HashMap<SocketAddr, u32> =
+                peers.iter().map(|(&p, &a)| (a, p)).collect();
+            let inbox = Arc::new(Mutex::new(Vec::<(u32, Vec<u8>)>::new()));
+
+            let inbox_bg = Arc::clone(&inbox);
+            let addr_peers_bg = addr_peers.clone();
+            let socket_bg = Arc::clone(&socket);
+            runtime.spawn(async move {
+                let mut buf = vec![0u8; 1500];
+                loop {
+                    match socket_bg.recv_from(&mut buf).await {
+                        Ok((n, from)) => {
+                            let peer_id = addr_peers_bg.get(&from).copied().unwrap_or(0);
+                            inbox_bg.lock().await.push((peer_id, buf[..n].to_vec()));
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            });
+
+            Ok(Self {
+                local_peer,
+                runtime,
+                socket,
+                peer_addrs: peers,
+                addr_peers,
+                inbox,
+            })
+        }
+    }
+
+    impl crate::bridge::NetworkTransport for UdpTransport {
+        fn send_to(&mut self, peer_id: u32, data: &[u8]) -> Result<(), String> {
+            let Some(&addr) = self.peer_addrs.get(&peer_id) else {
+                return Err(format!("unknown peer {peer_id}"));
+            };
+            let socket = Arc::clone(&self.socket);
+            let payload = data.to_vec();
+            self.runtime
+                .block_on(async move { socket.send_to(&payload, addr).await })
+                .map_err(|e| format!("send_to: {e}"))?;
+            Ok(())
+        }
+
+        fn recv(&mut self) -> Vec<(u32, Vec<u8>)> {
+            self.runtime
+                .block_on(async { std::mem::take(&mut *self.inbox.lock().await) })
+        }
+
+        fn connected_peers(&self) -> usize {
+            self.peer_addrs.len()
+        }
+    }
+
+    // Keep the address-table accessible — the engine driver might want to
+    // log peer status.
+    impl UdpTransport {
+        #[must_use]
+        pub fn peer_addrs(&self) -> &HashMap<u32, SocketAddr> {
+            &self.peer_addrs
+        }
+
+        #[must_use]
+        pub fn addr_peers(&self) -> &HashMap<SocketAddr, u32> {
+            &self.addr_peers
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -511,5 +637,42 @@ mod tests {
     fn loopback_reports_one_connected_peer() {
         let (a, _b) = LoopbackTransport::pair(1, 2);
         assert_eq!(a.connected_peers(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // UDP transport tests
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "network_udp")]
+    #[test]
+    fn udp_two_peers_roundtrip() {
+        use crate::bridge::NetworkTransport;
+        use std::collections::HashMap;
+        use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
+
+        // Probe two free ephemeral ports via std (the OS picks them) so
+        // both peers can be configured with each other's addresses
+        // up-front. Drop the probes immediately; tokio will rebind the
+        // same ports a moment later.
+        let a_probe = StdUdpSocket::bind("127.0.0.1:0").unwrap();
+        let b_probe = StdUdpSocket::bind("127.0.0.1:0").unwrap();
+        let a_addr: SocketAddr = a_probe.local_addr().unwrap();
+        let b_addr: SocketAddr = b_probe.local_addr().unwrap();
+        drop(a_probe);
+        drop(b_probe);
+
+        let mut a_peers = HashMap::new();
+        a_peers.insert(2, b_addr);
+        let mut b_peers = HashMap::new();
+        b_peers.insert(1, a_addr);
+        let mut a = UdpTransport::bind(1, a_addr, a_peers).expect("a bind");
+        let mut b = UdpTransport::bind(2, b_addr, b_peers).expect("b bind");
+
+        a.send_to(2, b"hello b").expect("a → b");
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let inbox = b.recv();
+        assert!(!inbox.is_empty(), "no inbox on b");
+        assert_eq!(inbox[0].1, b"hello b".to_vec());
+        assert_eq!(inbox[0].0, 1);
     }
 }

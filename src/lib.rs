@@ -63,6 +63,8 @@ pub mod action_combat;
 pub mod animation;
 pub mod app;
 pub mod asset;
+#[cfg(feature = "audio_output")]
+pub mod audio_output;
 pub mod battle;
 pub mod bridge;
 pub mod camera_controller;
@@ -97,6 +99,8 @@ pub mod shader;
 pub mod simd_eval;
 pub mod skeleton;
 pub mod sky;
+#[cfg(feature = "gpu")]
+pub mod sprite_render;
 pub mod text;
 pub mod texture;
 pub mod verse;
