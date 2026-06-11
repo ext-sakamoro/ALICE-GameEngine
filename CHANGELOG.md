@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.6.0] - 2026-06-11
+
+Major content release: turn-based RPG, 3D action combat, hierarchical
+pathfinding, HD-2D post-process, multiplayer scaffolding, and 14 no-code
+event commands. 793 lib tests / 1,007 with `full` features.
+
+### New modules
+
+- **`battle`** — `TurnBattleRunner` with speed-ordered execution,
+  `Attack` / `Defend` / `Flee` / `UseAbility` / `Move`, `BattleAi` trait,
+  `RandomAi`, `GridCell` + Chebyshev attack range.
+- **`action_combat`** — `Hitbox` / `Hurtbox` (sphere + capsule),
+  `resolve_hits`, `ComboSystem` with input window, `LockOn` cone,
+  `HitStop`.
+- **`hd2d_postfx`** — `Sprite3D` billboard + WGSL templates for
+  `hd2d_sprite`, `ssgi`, `smaa`. naga-validated + GPU-loaded on Mac Metal.
+
+### Scripting
+
+- 13 serializable `EventCommand`s — `Message` / `ChangeAttr` / `Wait` /
+  `Branch` / `GiveItem` / `BeginBattle` / `Choice` / `SetVar` / `IfVar` /
+  `SetSwitch` / `HasItem` / `TakeItem` / `MapTransition`.
+- 5 advanced flow commands — `Cutscene` (multi-line dialogue),
+  `Parallel`, `Repeat`, `LoopUntil`, `LlmDialogue` (LLM-backed NPC).
+- `EventScriptDef` JSON form for no-code editors / hot reload.
+
+### Bridge
+
+- New `bridge::WorldProvider` trait — themed-world plug-in (zones,
+  weather, camera, teleport).
+- `network::LoopbackTransport` implementing `bridge::NetworkTransport`,
+  driving the new `multiplayer_battle` example.
+
+### Existing modules — additions
+
+- **`animation`** — 2-bone analytic IK solver, `BlendTree1D`.
+- **`audio`** — `MusicTrack` cross-fade BGM controller, `ReverbZone` with
+  4 presets (outdoor / room / cavern / underwater).
+- **`navmesh`** — Grid → NavMesh auto-generation, hierarchical A* with
+  cluster planning.
+- **`particle`** — Curl-noise force field, `TrailEmitter` with `max_len`.
+
+### Examples
+
+- `rpg` — full opening / choice / battle / reward flow.
+- `multiplayer_battle` — two peers over `LoopbackTransport` driving one
+  `TurnBattleRunner`.
+- `visual_novel` — branching dialogue + LLM line + heroine route, all
+  via `EventScript`.
+- `fps_combat` — `LockOn` + hitscan + `HitStop`.
+- `platformer_action` — sword hitbox + dash trail (Curl Noise) (requires
+  `--features particles`).
+
+### Quality
+
+- clippy (pedantic + nursery): 0 lib warnings (style allows justified at
+  the `lib.rs` top, see comments).
+- 793 unit tests / 1,007 with `full` features. CI 7-in-a-row green.
+- 6 WGSL shaders / pipelines verified end-to-end on Mac Metal (offscreen
+  triangle readback passes — green pixel confirmed).
+- New `tokio` dependency only in downstream consumers needing
+  `AliceSyncTransport`; the engine crate itself stays dep-free of
+  the ALICE-xxx stack.
+
 ## [0.5.0] - 2026-03-28
 
 Initial public release. 31 modules, 17,932 lines, 688 tests.

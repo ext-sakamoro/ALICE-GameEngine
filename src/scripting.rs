@@ -1264,15 +1264,15 @@ pub enum EventCommandDef {
     },
     Branch {
         var: String,
-        if_true: Box<EventCommandDef>,
-        if_false: Box<EventCommandDef>,
+        if_true: Box<Self>,
+        if_false: Box<Self>,
     },
     IfVar {
         var: String,
         op: ComparisonDef,
         rhs: i64,
-        if_true: Box<EventCommandDef>,
-        if_false: Box<EventCommandDef>,
+        if_true: Box<Self>,
+        if_false: Box<Self>,
     },
 }
 

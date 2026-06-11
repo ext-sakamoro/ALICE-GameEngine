@@ -420,7 +420,7 @@ pub fn solve_ik_2bone(
 
     let clamped_dist = dist.max(min_reach + 1e-4);
     // Law of cosines: cos(angle at root) = (u² + d² - l²) / (2 u d)
-    let cos_a = ((upper * upper + clamped_dist * clamped_dist - lower * lower)
+    let cos_a = (lower.mul_add(-lower, upper.mul_add(upper, clamped_dist * clamped_dist))
         / (2.0 * upper * clamped_dist))
         .clamp(-1.0, 1.0);
     let sin_a = (1.0 - cos_a * cos_a).max(0.0).sqrt();
@@ -453,9 +453,9 @@ pub fn solve_ik_2bone(
     let lateral = upper * sin_a;
     let mid = root
         + Vec3::new(
-            dir.x() * forward + perp.x() * lateral,
-            dir.y() * forward + perp.y() * lateral,
-            dir.z() * forward + perp.z() * lateral,
+            dir.x().mul_add(forward, perp.x() * lateral),
+            dir.y().mul_add(forward, perp.y() * lateral),
+            dir.z().mul_add(forward, perp.z() * lateral),
         );
     IkSolution {
         mid,

@@ -188,7 +188,7 @@ impl GridCell {
 
     /// Manhattan distance.
     #[must_use]
-    pub fn manhattan(self, other: Self) -> u32 {
+    pub const fn manhattan(self, other: Self) -> u32 {
         (self.x - other.x).unsigned_abs() + (self.y - other.y).unsigned_abs()
     }
 }

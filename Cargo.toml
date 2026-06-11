@@ -1,6 +1,6 @@
 [package]
 name = "alice-game-engine"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT OR LicenseRef-Commercial"
 description = "Hybrid mesh+SDF game engine — ECS, deferred renderer, spatial audio, UI, particles, navmesh"
@@ -21,8 +21,7 @@ navmesh = []
 ffi = []
 python = ["ffi"]
 godot = ["ffi"]
-alice-shaders = ["alice-shader"]
-full = ["window", "sdf", "audio", "ui", "particles", "navmesh", "alice-shaders"]
+full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
 
 [dependencies]
 glam = { version = "0.29", features = ["serde"] }
@@ -31,9 +30,6 @@ serde_json = "1.0"
 log = "0.4"
 rayon = "1.10"
 wide = "0.7"
-
-# ALICE ecosystem (optional)
-alice-shader = { git = "https://github.com/ext-sakamoro/ALICE-Shader.git", optional = true }
 
 # GPU renderer (optional)
 wgpu = { version = "25", optional = true }
@@ -80,6 +76,19 @@ path = "templates/rpg.rs"
 [[example]]
 name = "multiplayer_battle"
 path = "templates/multiplayer_battle.rs"
+
+[[example]]
+name = "visual_novel"
+path = "templates/visual_novel.rs"
+
+[[example]]
+name = "platformer_action"
+path = "templates/platformer_action.rs"
+required-features = ["particles"]
+
+[[example]]
+name = "fps_combat"
+path = "templates/fps_combat.rs"
 
 [profile.release]
 opt-level = 3

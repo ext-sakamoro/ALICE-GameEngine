@@ -3,6 +3,17 @@
     clippy::module_name_repetitions,
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
+    // Intentional in math / SDF code where short names match shader / paper
+    // notation.
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    // Bounded-non-negative cast patterns (e.g. usize from validated f32).
+    clippy::cast_sign_loss,
+    // Boxed closure types are intentional in scripting / network adapters
+    // (deferred closure dispatch with `Send` bounds).
+    clippy::type_complexity,
+    // Nursery-only style preference; if-let-else reads better in our flow.
+    clippy::option_if_let_else,
     clippy::struct_excessive_bools,
     clippy::missing_panics_doc,
     clippy::too_long_first_doc_paragraph,

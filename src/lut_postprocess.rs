@@ -88,10 +88,10 @@ impl Lut3DData {
 
         let mut out = [0.0f32; 3];
         for ch in 0..3 {
-            let c00 = c000[ch] * (1.0 - rf) + c100[ch] * rf;
-            let c01 = c001[ch] * (1.0 - rf) + c101[ch] * rf;
-            let c10 = c010[ch] * (1.0 - rf) + c110[ch] * rf;
-            let c11 = c011[ch] * (1.0 - rf) + c111[ch] * rf;
+            let c00 = c000[ch].mul_add(1.0 - rf, c100[ch] * rf);
+            let c01 = c001[ch].mul_add(1.0 - rf, c101[ch] * rf);
+            let c10 = c010[ch].mul_add(1.0 - rf, c110[ch] * rf);
+            let c11 = c011[ch].mul_add(1.0 - rf, c111[ch] * rf);
             let c0 = c00 * (1.0 - gf) + c10 * gf;
             let c1 = c01 * (1.0 - gf) + c11 * gf;
             out[ch] = (c0 * (1.0 - bf) + c1 * bf).clamp(0.0, 1.0);
@@ -235,7 +235,7 @@ impl LutPostProcess {
     }
 
     /// Sets the intensity.
-    pub fn set_intensity(&mut self, intensity: f32) {
+    pub const fn set_intensity(&mut self, intensity: f32) {
         self.intensity = intensity.clamp(0.0, 1.0);
     }
 
@@ -254,9 +254,9 @@ impl LutPostProcess {
         let t = self.intensity;
         let s = 1.0 - t;
         [
-            r * s + graded[0] * t,
-            g * s + graded[1] * t,
-            b * s + graded[2] * t,
+            r.mul_add(s, graded[0] * t),
+            g.mul_add(s, graded[1] * t),
+            b.mul_add(s, graded[2] * t),
         ]
     }
 
@@ -279,7 +279,7 @@ impl LutPostProcess {
 
     /// Returns the WGSL shader source for GPU integration.
     #[must_use]
-    pub fn shader_source() -> &'static str {
+    pub const fn shader_source() -> &'static str {
         LUT_POSTPROCESS_WGSL
     }
 }

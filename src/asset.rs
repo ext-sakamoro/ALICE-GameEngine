@@ -133,10 +133,10 @@ fn compute_face_normal(p0: [f32; 3], p1: [f32; 3], p2: [f32; 3]) -> [f32; 3] {
     let bx = p2[0] - p0[0];
     let by = p2[1] - p0[1];
     let bz = p2[2] - p0[2];
-    let nx = ay * bz - az * by;
-    let ny = az * bx - ax * bz;
-    let nz = ax * by - ay * bx;
-    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    let nx = ay.mul_add(bz, -(az * by));
+    let ny = az.mul_add(bx, -(ax * bz));
+    let nz = ax.mul_add(by, -(ay * bx));
+    let len = nz.mul_add(nz, nx.mul_add(nx, ny * ny)).sqrt();
     if len > 1e-8 {
         [nx * len.recip(), ny * len.recip(), nz * len.recip()]
     } else {

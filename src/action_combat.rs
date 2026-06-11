@@ -223,7 +223,7 @@ pub struct ComboMove {
     pub window_frames: u32,
     /// Optional next moves; if multiple share the same input, the first
     /// match wins (define more-specific branches earlier).
-    pub follow_ups: Vec<ComboMove>,
+    pub follow_ups: Vec<Self>,
 }
 
 impl ComboMove {
@@ -238,12 +238,12 @@ impl ComboMove {
     }
 
     #[must_use]
-    pub fn with_window(mut self, window_frames: u32) -> Self {
+    pub const fn with_window(mut self, window_frames: u32) -> Self {
         self.window_frames = window_frames;
         self
     }
 
-    pub fn follow_up(&mut self, m: ComboMove) -> &mut Self {
+    pub fn follow_up(&mut self, m: Self) -> &mut Self {
         self.follow_ups.push(m);
         self
     }
@@ -392,7 +392,7 @@ impl LockOn {
                 continue;
             }
             let score = dot / d.max(1e-3);
-            if best.map_or(true, |(b, _)| score > b) {
+            if best.is_none_or(|(b, _)| score > b) {
                 best = Some((score, c.entity));
             }
         }
@@ -400,7 +400,7 @@ impl LockOn {
         self.current
     }
 
-    pub fn release(&mut self) {
+    pub const fn release(&mut self) {
         self.current = None;
     }
 }
@@ -423,7 +423,7 @@ impl HitStop {
         self.remaining_frames = self.remaining_frames.max(frames);
     }
 
-    pub fn step(&mut self) {
+    pub const fn step(&mut self) {
         self.remaining_frames = self.remaining_frames.saturating_sub(1);
     }
 
@@ -435,7 +435,7 @@ impl HitStop {
     /// Returns the effective time-scale this frame: `0.0` while a stop is
     /// active, `1.0` otherwise.
     #[must_use]
-    pub fn time_scale(&self) -> f32 {
+    pub const fn time_scale(&self) -> f32 {
         if self.is_active() {
             0.0
         } else {

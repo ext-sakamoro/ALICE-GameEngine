@@ -95,7 +95,7 @@ impl Default for PostFxConfig {
 /// lighting in based on [`SpriteMode`] (passed as a uniform).
 #[must_use]
 pub const fn hd2d_sprite_wgsl() -> &'static str {
-    r#"
+    r"
 // HD-2D pbr-sprite — billboard sampler + lit/shaded mode mixer.
 //
 // Bindings (assumed by the renderer):
@@ -153,15 +153,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Mode 2: passthrough — deferred shading pass picks this up via GBuffer.
     return color;
 }
-"#
+"
 }
 
 /// SSGI screen-space global illumination WGSL — single-bounce, sphere-tap
-/// sampling against the depth + normal GBuffer. Returns colored AO/bounce
+/// sampling against the depth + normal `GBuffer`. Returns colored AO/bounce
 /// to be additively blended into the lighting buffer.
 #[must_use]
 pub const fn ssgi_wgsl() -> &'static str {
-    r#"
+    r"
 // SSGI — screen-space global illumination, single bounce.
 //
 // Bindings:
@@ -230,7 +230,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(acc * u.intensity, 1.0);
 }
-"#
+"
 }
 
 /// SMAA (Subpixel Morphological Anti-Aliasing) — edge-detection pass.
@@ -239,7 +239,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
 /// the renderer can chain after this one.
 #[must_use]
 pub const fn smaa_wgsl() -> &'static str {
-    r#"
+    r"
 // SMAA edge detection pass — luma-based, classic SMAA.
 //
 // Bindings:
@@ -283,7 +283,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let v = step(final_thr, edge_v);
     return vec4<f32>(h, v, 0.0, 1.0);
 }
-"#
+"
 }
 
 #[cfg(test)]
@@ -439,5 +439,166 @@ mod tests {
     #[ignore = "needs a working GPU adapter"]
     fn smaa_wgsl_loads_on_gpu() {
         smoke_load_shader(smaa_wgsl(), "smaa").unwrap();
+    }
+
+    /// End-to-end offscreen triangle draw — pipeline + render pass +
+    /// texture readback. Confirms the green our fragment shader emits
+    /// lands on the centre pixel.
+    #[cfg(feature = "gpu")]
+    #[test]
+    #[ignore = "needs a working GPU adapter"]
+    fn offscreen_triangle_draw() {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .expect("adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("offscreen"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+        }))
+        .expect("device");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("triangle"),
+            source: wgpu::ShaderSource::Wgsl(
+                r#"
+                @vertex
+                fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
+                    var p = array<vec2<f32>, 3>(
+                        vec2<f32>(-0.7, -0.7),
+                        vec2<f32>( 0.7, -0.7),
+                        vec2<f32>( 0.0,  0.7),
+                    );
+                    return vec4<f32>(p[vid], 0.0, 1.0);
+                }
+                @fragment
+                fn fs_main() -> @location(0) vec4<f32> {
+                    return vec4<f32>(0.2, 0.8, 0.3, 1.0);
+                }
+            "#
+                .into(),
+            ),
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("triangle"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("target"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("triangle"),
+        });
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rp"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.draw(0..3, 0..1);
+        }
+
+        let buf_size = 64 * 64 * 4;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: buf_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(64 * 4),
+                    rows_per_image: Some(64),
+                },
+            },
+            wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(std::iter::once(enc.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::Wait).unwrap();
+        let data = slice.get_mapped_range();
+
+        let off = (32 * 64 + 32) * 4;
+        let r = data[off];
+        let g = data[off + 1];
+        let b = data[off + 2];
+        drop(data);
+        readback.unmap();
+        assert!(
+            g > r && g > b,
+            "expected green-dominant pixel, got ({r}, {g}, {b})"
+        );
     }
 }

@@ -66,12 +66,12 @@ impl MockProvider {
     }
 
     /// Inject an HMD pose.
-    pub fn set_hmd_pose(&mut self, pose: XrPose) {
+    pub const fn set_hmd_pose(&mut self, pose: XrPose) {
         self.hmd = pose;
     }
 
     /// Force a session state for testing lifecycle transitions.
-    pub fn set_session_state(&mut self, state: XrSessionState) {
+    pub const fn set_session_state(&mut self, state: XrSessionState) {
         self.state = state;
     }
 
@@ -89,7 +89,7 @@ impl Default for MockProvider {
 }
 
 impl XrProvider for MockProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mock"
     }
 

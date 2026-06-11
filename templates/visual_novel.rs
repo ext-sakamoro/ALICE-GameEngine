@@ -1,119 +1,170 @@
-//! Visual Novel template (Shiden / Ren'Py style).
+//! Visual Novel template — branching dialogue + flag-driven scenes, written
+//! entirely as an [`EventScript`] of high-level commands. Demonstrates how
+//! the no-code RPG event runtime composes into a kinetic-novel structure
+//! without any extra subsystems.
 //!
-//! Branching dialogue, character emotions, LLM-powered responses.
-//! Reference: https://github.com/HANON-games/Shiden
+//! ```bash
+//! cargo run --example visual_novel
+//! ```
 
-use alice_game_engine::app::{AppCallbacks, HeadlessRunner};
-use alice_game_engine::engine::{EngineConfig, EngineContext};
-use alice_game_engine::llm::*;
-use alice_game_engine::scripting::*;
-use alice_game_engine::verse::*;
+use alice_game_engine::ability::{Attribute, AttributeSet};
+use alice_game_engine::scripting::{
+    BeginBattleCommand, BranchCommand, ChangeAttrCommand, ChoiceCommand, CommandStatus, Comparison,
+    CutsceneCommand, CutsceneLine, EventContext, EventScript, GiveItemCommand, IfVarCommand,
+    LlmDialogueCommand, MessageCommand, ScriptVars, SetSwitchCommand,
+};
 
-#[derive(Clone, PartialEq)]
-struct StoryState {
-    scene: String,
-    affection: i32,
-    flags: Vec<String>,
+fn make_player_attrs() -> AttributeSet {
+    let mut a = AttributeSet::new();
+    a.add(Attribute::new("affection_sakura", 0.0, 0.0, 100.0));
+    a.add(Attribute::new("affection_aoi", 0.0, 0.0, 100.0));
+    a
 }
 
-struct VisualNovel {
-    state: StoryState,
-    history: Vec<StoryState>,
-    characters: Vec<NpcContext>,
-    events: EventBus,
-    dialogue_log: Vec<String>,
+/// Prologue cutscene — sets the scene and introduces the heroine choice.
+fn build_prologue() -> EventScript {
+    let mut s = EventScript::new();
+    s.push(Box::new(CutsceneCommand::new(vec![
+        CutsceneLine::new("Narrator", "Spring. The first day at Hoshikawa Academy.", 0),
+        CutsceneLine::new(
+            "Narrator",
+            "You stand at the school gate, blossoms drifting.",
+            0,
+        ),
+        CutsceneLine::new("Sakura", "You're the new transfer? Welcome!", 0),
+        CutsceneLine::new("Aoi", "...the library is that way.", 0),
+    ])));
+    s
 }
 
-impl VisualNovel {
-    fn new() -> Self {
-        Self {
-            state: StoryState {
-                scene: "school_gate".to_string(),
-                affection: 0,
-                flags: Vec::new(),
-            },
-            history: Vec::new(),
-            characters: vec![
-                NpcContext::new("Sakura", "a cheerful classmate who loves painting"),
-                NpcContext::new("Ren", "a quiet library assistant with a mysterious past"),
-            ],
-            events: EventBus::new(),
-            dialogue_log: Vec::new(),
-        }
-    }
-
-    fn choose(&mut self, choice: &str) {
-        self.history.push(self.state.clone());
-
-        match (self.state.scene.as_str(), choice) {
-            ("school_gate", "greet_sakura") => {
-                self.state.affection += 1;
-                self.state.scene = "art_room".to_string();
-                self.dialogue_log.push("You greeted Sakura warmly.".to_string());
-                self.events.publish(Event::with_string("scene_change", "art_room"));
-            }
-            ("school_gate", "go_library") => {
-                self.state.scene = "library".to_string();
-                self.state.flags.push("met_ren".to_string());
-                self.dialogue_log.push("You headed to the library.".to_string());
-                self.events.publish(Event::with_string("scene_change", "library"));
-            }
-            ("art_room", "compliment") => {
-                self.state.affection += 2;
-                self.dialogue_log.push("Sakura smiled brightly.".to_string());
-            }
-            ("library", "ask_about_book") => {
-                self.state.flags.push("book_quest".to_string());
-                self.dialogue_log.push("Ren mentioned a rare book in the archives.".to_string());
-            }
-            _ => {
-                self.dialogue_log.push(format!("(No response for '{choice}')"));
-            }
-        }
-    }
-
-    fn undo(&mut self) {
-        if let Some(prev) = self.history.pop() {
-            self.state = prev;
-            self.dialogue_log.push("[Undo]".to_string());
-        }
-    }
-
-    fn talk_to(&mut self, char_idx: usize, input: &str) {
-        let llm = MockLlm::new("That sounds interesting! Let me think about it...");
-        if let Some(npc) = self.characters.get_mut(char_idx) {
-            if let Ok(reply) = npc.respond(input, &llm) {
-                self.dialogue_log.push(format!("{}: {reply}", npc.name));
-            }
-        }
-    }
+/// Heroine route fork — Choice + IfVar branching.
+fn build_heroine_choice() -> EventScript {
+    let mut s = EventScript::new();
+    s.push(Box::new(ChoiceCommand::pick(
+        "Who will you walk to class with?",
+        vec!["Sakura".into(), "Aoi".into()],
+        "route_pick",
+        0,
+    )));
+    s.push(Box::new(IfVarCommand::new(
+        "route_pick",
+        Comparison::Eq,
+        0,
+        Box::new(SetSwitchCommand::new("route_sakura", true)),
+        Box::new(SetSwitchCommand::new("route_aoi", true)),
+    )));
+    // Per-route message via Branch on the bool switch we just set.
+    s.push(Box::new(BranchCommand::new(
+        "route_sakura",
+        Box::new(MessageCommand::new(
+            "Sakura",
+            "Let's walk together! I'll show you the long way around.",
+        )),
+        Box::new(MessageCommand::new(
+            "Aoi",
+            "...this way is faster. Try to keep up.",
+        )),
+    )));
+    // Affection +10 on the chosen route.
+    s.push(Box::new(BranchCommand::new(
+        "route_sakura",
+        Box::new(ChangeAttrCommand::new("affection_sakura", 10.0)),
+        Box::new(ChangeAttrCommand::new("affection_aoi", 10.0)),
+    )));
+    s
 }
 
-impl AppCallbacks for VisualNovel {
-    fn init(&mut self, _ctx: &mut EngineContext) {
-        println!("=== Visual Novel: School Days ===");
-        println!("Scene: {}", self.state.scene);
+/// Mid-game beat — LLM-backed line + quest hand-off + (skippable) battle.
+fn build_mid_chapter() -> EventScript {
+    let mut s = EventScript::new();
+    s.push(Box::new(LlmDialogueCommand::canned(
+        "Sakura",
+        "What do you think about the festival next week?",
+        "I-I haven't really thought about it... do you have plans?",
+    )));
+    s.push(Box::new(ChoiceCommand::pick(
+        "Invite her to the festival?",
+        vec!["Yes, together".into(), "Maybe later".into()],
+        "invite_pick",
+        0,
+    )));
+    s.push(Box::new(IfVarCommand::new(
+        "invite_pick",
+        Comparison::Eq,
+        0,
+        Box::new(ChangeAttrCommand::new("affection_sakura", 20.0)),
+        Box::new(MessageCommand::new("Sakura", "...okay. Some other time.")),
+    )));
+    // Hidden battle — only triggered if the player chose to skip via flag.
+    s.push(Box::new(IfVarCommand::new(
+        "invite_pick",
+        Comparison::Eq,
+        1,
+        Box::new(MessageCommand::new(
+            "Narrator",
+            "The rest of the week passes quietly.",
+        )),
+        Box::new(BeginBattleCommand::new("festival_mishap")),
+    )));
+    s
+}
+
+/// Ending picker — driven by the affection attribute.
+fn build_ending() -> EventScript {
+    let mut s = EventScript::new();
+    s.push(Box::new(MessageCommand::new(
+        "Narrator",
+        "Spring becomes summer. The story of this year approaches its close.",
+    )));
+    s.push(Box::new(GiveItemCommand::new("memory_album", 1)));
+    s
+}
+
+fn run_script(script: &mut EventScript, vars: &mut ScriptVars, attrs: &mut AttributeSet) {
+    let mut log = Vec::new();
+    while !script.is_done() {
+        let mut ctx = EventContext {
+            vars,
+            attrs: Some(attrs),
+            log: &mut log,
+            elapsed_ticks: 0,
+        };
+        if matches!(script.step(&mut ctx), CommandStatus::Failed(_)) {
+            break;
+        }
     }
-    fn update(&mut self, _ctx: &mut EngineContext, _dt: f32) {}
+    for line in log {
+        println!("  {line}");
+    }
 }
 
 fn main() {
-    let mut runner = HeadlessRunner::new(EngineConfig::default());
-    let mut vn = VisualNovel::new();
-    runner.init(&mut vn);
+    let mut vars = ScriptVars::new();
+    let mut attrs = make_player_attrs();
 
-    vn.choose("greet_sakura");
-    vn.choose("compliment");
-    vn.talk_to(0, "Your painting is beautiful!");
-    vn.undo();
-    vn.choose("go_library");
-    vn.choose("ask_about_book");
-    vn.talk_to(1, "What book are you reading?");
+    println!("=== Prologue ===");
+    let mut script = build_prologue();
+    run_script(&mut script, &mut vars, &mut attrs);
 
-    println!("\n--- Dialogue Log ---");
-    for line in &vn.dialogue_log {
-        println!("  {line}");
-    }
-    println!("\nScene: {} | Affection: {} | Flags: {:?}",
-        vn.state.scene, vn.state.affection, vn.state.flags);
+    println!("\n=== Route choice ===");
+    let mut script = build_heroine_choice();
+    run_script(&mut script, &mut vars, &mut attrs);
+
+    println!("\n=== Mid chapter ===");
+    let mut script = build_mid_chapter();
+    run_script(&mut script, &mut vars, &mut attrs);
+
+    println!("\n=== Ending ===");
+    let mut script = build_ending();
+    run_script(&mut script, &mut vars, &mut attrs);
+
+    println!(
+        "\n=== Final affection ===\nSakura: {:.0}  /  Aoi: {:.0}",
+        attrs.value("affection_sakura"),
+        attrs.value("affection_aoi"),
+    );
+    println!(
+        "Memory album: {}",
+        vars.get_int("item:memory_album").unwrap_or(0)
+    );
 }
