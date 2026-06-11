@@ -383,4 +383,61 @@ mod tests {
         assert_ne!(SpriteMode::Unlit, SpriteMode::Lit);
         assert_ne!(SpriteMode::Lit, SpriteMode::Shaded);
     }
+
+    // GPU smoke tests — create a wgpu Device on the host backend
+    // (Metal on macOS, Vulkan elsewhere) and load each WGSL as a
+    // ShaderModule. Catches backend-specific issues naga's generic
+    // validator misses. `#[ignore]` by default because some CI runners
+    // lack a usable adapter; run locally with
+    // `cargo test --features gpu -- --ignored gpu`.
+    #[cfg(feature = "gpu")]
+    fn smoke_load_shader(wgsl: &str, label: &str) -> Result<(), String> {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .map_err(|e| format!("no adapter: {e:?}"))?;
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some(label),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            }))
+            .map_err(|e| format!("device: {e:?}"))?;
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+        let err = pollster::block_on(device.pop_error_scope());
+        match err {
+            Some(e) => Err(format!("{label} GPU validation: {e:?}")),
+            None => Ok(()),
+        }
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    #[ignore = "needs a working GPU adapter"]
+    fn hd2d_sprite_wgsl_loads_on_gpu() {
+        smoke_load_shader(hd2d_sprite_wgsl(), "hd2d_sprite").unwrap();
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    #[ignore = "needs a working GPU adapter"]
+    fn ssgi_wgsl_loads_on_gpu() {
+        smoke_load_shader(ssgi_wgsl(), "ssgi").unwrap();
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    #[ignore = "needs a working GPU adapter"]
+    fn smaa_wgsl_loads_on_gpu() {
+        smoke_load_shader(smaa_wgsl(), "smaa").unwrap();
+    }
 }
