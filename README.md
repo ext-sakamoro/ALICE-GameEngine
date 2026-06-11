@@ -1,8 +1,38 @@
 # ALICE-GameEngine
 
-Hybrid mesh + SDF game engine in Rust. 44 modules, **793 tests** (default) / **1007** (full features) + 24 doc-tests, wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU), **turn-based RPG + 3D action combat + no-code event scripting**.
+**v0.6.0** — Hybrid mesh + SDF game engine in Rust. 44 modules,
+**793 lib tests** (default) / **1,007** (full features), wgpu deferred
+renderer (Vulkan / Metal / DX12 / WebGPU), turn-based RPG runtime, 3D
+action combat, no-code event scripting, hierarchical pathfinding, HD-2D
+post-process (naga-validated + offscreen draw verified on Mac Metal).
 
-[日本語ドキュメント](README.ja.md)
+[日本語ドキュメント](README.ja.md) · [Changelog](CHANGELOG.md)
+
+## Install
+
+```toml
+# Cargo.toml
+[dependencies]
+alice-game-engine = "0.6"
+
+# Or for the whole renderer + windowing + everything:
+alice-game-engine = { version = "0.6", features = ["full"] }
+```
+
+Feature flags pick what you compile:
+
+| Feature | What you get |
+|---------|--------------|
+| (default) | ECS, scene graph, math, scripting, battle, action combat, animation, ability, navmesh stubs |
+| `window` | winit window + wgpu render loop (implies `gpu`) |
+| `gpu` | wgpu device + shader pipeline |
+| `sdf` | SDF primitives + Marching Cubes |
+| `audio` | HRTF + bus effects + MusicTrack / ReverbZone |
+| `ui` | retained-mode widgets |
+| `particles` | CPU emitter + curl noise + TrailEmitter |
+| `navmesh` | A*, hierarchical A*, grid → NavMesh |
+| `full` | everything above |
+| `ffi` / `python` / `godot` | FFI bindings |
 
 ## What's in the box
 
@@ -27,7 +57,9 @@ Hybrid mesh + SDF game engine in Rust. 44 modules, **793 tests** (default) / **1
   ALICE-Audio, ALICE-Text and your own back-ends
 - **XR layer** (pure-Rust, no OpenXR dep) with MockProvider + StereoWindow
 
-## Quick Start (5 lines)
+## Quick Start
+
+### Five-line headless game
 
 ```rust
 use alice_game_engine::easy::*;
@@ -40,7 +72,42 @@ game.add_light(0.0, 10.0, 0.0);
 game.run_headless(300);
 ```
 
-Or use the prelude for full control:
+### Tiny RPG turn — copy / paste / run
+
+```rust
+use alice_game_engine::ability::{Attribute, AttributeSet};
+use alice_game_engine::battle::{
+    BattleAction, BattleCommand, BattleResult, Battler, Party, RandomAi, Team,
+    TurnBattleRunner,
+};
+
+fn battler(name: &str, hp: f32, atk: f32, spd: f32, team: Team) -> Battler {
+    let mut a = AttributeSet::new();
+    a.add(Attribute::new("hp", hp, 0.0, hp));
+    a.add(Attribute::new("atk", atk, 0.0, 999.0));
+    a.add(Attribute::new("def", 0.0, 0.0, 999.0));
+    a.add(Attribute::new("speed", spd, 0.0, 999.0));
+    Battler::new(name, a, team)
+}
+
+fn main() {
+    let allies = Party::new(vec![battler("Hero", 60.0, 12.0, 10.0, Team::Ally)]);
+    let enemies = Party::new(vec![battler("Slime", 25.0, 4.0, 4.0, Team::Enemy)]);
+    let mut runner = TurnBattleRunner::new(allies, enemies);
+    let mut ai = RandomAi::new(1);
+
+    while runner.result() == BattleResult::Ongoing {
+        let cmds = vec![BattleCommand {
+            actor_idx: 0,
+            action: BattleAction::Attack { target_idx: 0 },
+        }];
+        runner.run_turn(cmds, &mut ai);
+    }
+    assert_eq!(runner.result(), BattleResult::Win);
+}
+```
+
+### Full control with the prelude
 
 ```rust
 use alice_game_engine::prelude::*;
@@ -54,9 +121,25 @@ cargo run --example spinning_cube --features full
 
 Opens a window with a rotating colored cube rendered via wgpu. Press Escape to exit.
 
+## Examples — what runs out of the box
+
+```bash
+cargo run --example rpg                # turn-based: NPC choice → battle → reward
+cargo run --example multiplayer_battle # two peers via LoopbackTransport
+cargo run --example visual_novel       # EventScript-driven branching story
+cargo run --example fps_combat         # LockOn cone + hitscan + HitStop
+cargo run --example platformer_action --features particles
+                                       # sword Hitbox + Curl-Noise dash trail
+cargo run --example spinning_cube --features full
+cargo run --example physics_sandbox --features full
+```
+
+Every example fits on one screen — copy `templates/<name>.rs` and rename
+the example entry in `Cargo.toml` to start a new project.
+
 ## Turn-Based RPG
 
-A full RPG starter (`templates/rpg.rs`) is registered as an example:
+The full RPG starter (`templates/rpg.rs`):
 
 ```bash
 cargo run --example rpg
@@ -134,6 +217,116 @@ impl AppCallbacks for MyGame {
 fn main() {
     run_windowed(WindowConfig::default(), EngineConfig::default(), Box::new(MyGame)).unwrap();
 }
+```
+
+## Cookbook — frequent recipes
+
+### Run a no-code event script
+
+```rust
+use alice_game_engine::scripting::*;
+use alice_game_engine::ability::AttributeSet;
+
+let mut script = EventScript::new();
+script.push(Box::new(MessageCommand::new("Elder", "Welcome.")));
+script.push(Box::new(ChoiceCommand::pick(
+    "Accept the quest?",
+    vec!["Yes".into(), "No".into()],
+    "answer", 0,
+)));
+script.push(Box::new(IfVarCommand::new(
+    "answer", Comparison::Eq, 0,
+    Box::new(GiveItemCommand::new("compass", 1)),
+    Box::new(MessageCommand::new("Elder", "Some other time then.")),
+)));
+
+let mut vars = ScriptVars::new();
+let mut attrs = AttributeSet::new();
+let mut log = Vec::new();
+while !script.is_done() {
+    let mut ctx = EventContext { vars: &mut vars, attrs: Some(&mut attrs),
+        log: &mut log, elapsed_ticks: 0 };
+    script.step(&mut ctx);
+}
+```
+
+### Serialize a quest to JSON for editor / hot reload
+
+```rust
+use alice_game_engine::scripting::{EventCommandDef, EventScriptDef};
+
+let def = EventScriptDef { commands: vec![
+    EventCommandDef::Message { speaker: "Lyra".into(), text: "Welcome.".into() },
+    EventCommandDef::GiveItem { item: "compass".into(), count: 1 },
+]};
+let json = def.to_json().unwrap();
+let parsed = EventScriptDef::from_json(&json).unwrap();
+let mut script = parsed.build();   // ready to step()
+```
+
+### Wire a custom themed world
+
+```rust
+use alice_game_engine::bridge::{WorldProvider, WorldEnvironment, ZoneId,
+                                 SpawnPose, TeleportResult};
+use alice_game_engine::engine::EngineContext;
+use alice_game_engine::math::Vec3;
+
+struct MyWorld { pos: Vec3, day: f32 }
+impl WorldProvider for MyWorld {
+    fn step(&mut self, dt: f32) { self.day = (self.day + dt * 0.01).fract(); }
+    fn camera_position(&self) -> Vec3 { self.pos }
+    fn camera_yaw(&self) -> f32 { 0.0 }
+    fn camera_pitch(&self) -> f32 { 0.0 }
+    fn look_delta(&mut self, _: f32, _: f32) {}
+    fn move_intent(&mut self, dir: Vec3, _: bool) { self.pos = self.pos + dir; }
+    fn environment(&self) -> WorldEnvironment {
+        WorldEnvironment { day_phase: self.day, ..Default::default() }
+    }
+    fn current_zone(&self) -> ZoneId { ZoneId(0) }
+    fn zone_spawn(&self, _: ZoneId) -> Option<SpawnPose> { None }
+    fn teleport_to(&mut self, _: ZoneId) -> TeleportResult { TeleportResult::Started }
+}
+
+let mut ctx = EngineContext::default();
+ctx.set_world_provider(Box::new(MyWorld { pos: Vec3::ZERO, day: 0.0 }));
+```
+
+### Add 3D action-combat hit feedback
+
+```rust
+use alice_game_engine::action_combat::{
+    resolve_hits, ColliderShape, HitStop, Hitbox, Hurtbox,
+};
+use alice_game_engine::math::Vec3;
+
+let mut hits = vec![{
+    let mut h = Hitbox::new(1, 100,
+        ColliderShape::Sphere { center: Vec3::ZERO, radius: 1.0 },
+        "heavy_swipe");
+    h.damage = 22.0;
+    h.hitstop_frames = 4;  // "weight" on impact
+    h
+}];
+let mut hurts = vec![Hurtbox::new(2, 200,
+    ColliderShape::Sphere { center: Vec3::new(0.5, 0.0, 0.0), radius: 1.0 })];
+
+let events = resolve_hits(&mut hits, &mut hurts);
+let mut hit_stop = HitStop::default();
+hit_stop.trigger(events.iter().map(|e| e.hitstop_frames).max().unwrap_or(0));
+// While hit_stop.is_active(), hit_stop.time_scale() == 0.0 → pause sim.
+```
+
+### Multiplayer via the LoopbackTransport (or any `NetworkTransport`)
+
+```rust
+use alice_game_engine::network::LoopbackTransport;
+use alice_game_engine::bridge::NetworkTransport;
+
+let (mut host, mut client) = LoopbackTransport::pair(1, 2);
+client.send_to(1, b"hello host").unwrap();
+let inbox = host.recv();
+assert_eq!(inbox[0].1, b"hello host".to_vec());
 ```
 
 ## Usage Guide
@@ -808,10 +1001,45 @@ let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
 ## Quality
 
 ```bash
-cargo test --features full        # 1,007 lib tests + 24 doc-tests
-cargo clippy -- -W clippy::all    # 0 lib warnings on engine code
+cargo test --features full        # 1,007 lib tests
+cargo clippy --lib -- -W clippy::all -W clippy::pedantic -W clippy::nursery
+                                  # 0 lib warnings (see lib.rs allow list)
 cargo fmt -- --check              # 0 diffs
+# Optional, with a working GPU adapter:
+cargo test --features gpu -- --ignored gpu
+                                  # 3 WGSL shaders load + offscreen draw verified
 ```
+
+## FAQ
+
+### Why two `bridge::` audio providers?
+
+`AudioSampleProvider` is the engine's trait. Downstream consumers (e.g. a
+private themed-world crate) can implement it with **ALICE-Audio**
+(procedural BGM via `gen_sine` / `gen_noise`) or **ALICE-Voice**
+(formant-synthesised dialogue). The engine itself stays dep-free; only
+the consumer crate pulls those backends in.
+
+### Is `bridge::WorldProvider` a public extension point?
+
+Yes. Implement it once for your world's camera / weather / zones /
+teleport, inject with `EngineContext::set_world_provider(Box::new(...))`,
+and reuse the same battle / event / animation runtime across any
+setting.
+
+### How do I add a new EventCommand?
+
+Implement `EventCommand` (a sync `execute(&mut self, ctx)
+-> CommandStatus`) and push it into your `EventScript`. For editor /
+hot-reload support, also add a variant to `EventCommandDef` and wire
+`into_command()`.
+
+### How do I run multiplayer over a real network?
+
+Replace `LoopbackTransport::pair` with any other implementation of
+`bridge::NetworkTransport`. Async transports can be wrapped behind a
+private tokio runtime in a downstream adapter crate (see ALICE-Sync
+integration sketches in `templates/multiplayer_battle.rs`).
 
 ## License
 

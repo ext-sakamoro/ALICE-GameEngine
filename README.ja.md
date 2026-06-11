@@ -1,8 +1,38 @@
 # ALICE-GameEngine
 
-メッシュ + SDF ハイブリッドゲームエンジン (Rust 製)。44 モジュール、**793 テスト** (default) / **1,007** (full features) + 24 doc-test、wgpu deferred renderer (Vulkan/Metal/DX12/WebGPU)、**ターン制 RPG + 3D アクション戦闘 + ノーコードイベントスクリプト** で本格ゲームが作れます。
+**v0.6.0** — メッシュ + SDF ハイブリッドゲームエンジン (Rust 製)。44 モジュール、
+**793 lib テスト** (default) / **1,007** (full features)、wgpu deferred renderer
+(Vulkan / Metal / DX12 / WebGPU)、ターン制 RPG ランタイム、3D アクション戦闘、
+ノーコードイベントスクリプト、階層 A* 経路探索、HD-2D 後処理 (naga 検証 +
+Mac Metal で offscreen draw 確認済)。
 
-[English](README.md)
+[English](README.md) · [Changelog](CHANGELOG.md)
+
+## インストール
+
+```toml
+# Cargo.toml
+[dependencies]
+alice-game-engine = "0.6"
+
+# レンダラ + ウィンドウ + 全部入りで使うなら:
+alice-game-engine = { version = "0.6", features = ["full"] }
+```
+
+機能フラグでコンパイル対象を選択:
+
+| Feature | 内容 |
+|---------|------|
+| (default) | ECS、シーングラフ、math、scripting、battle、action_combat、animation、ability、navmesh stub |
+| `window` | winit ウィンドウ + wgpu レンダループ (`gpu` 自動有効) |
+| `gpu` | wgpu device + シェーダパイプライン |
+| `sdf` | SDF プリミティブ + Marching Cubes |
+| `audio` | HRTF + bus 効果 + MusicTrack / ReverbZone |
+| `ui` | retained-mode ウィジェット |
+| `particles` | CPU emitter + Curl Noise + TrailEmitter |
+| `navmesh` | A*、階層 A*、grid → NavMesh |
+| `full` | 上記すべて |
+| `ffi` / `python` / `godot` | FFI bindings |
 
 ## 主な機能
 
@@ -26,7 +56,9 @@
   等を差し替え可能な抽象境界で接続
 - **XR レイヤー** (Pure-Rust、openxr 依存なし) MockProvider + StereoWindow
 
-## クイックスタート (5 行)
+## クイックスタート
+
+### 5 行で headless ゲーム
 
 ```rust
 use alice_game_engine::easy::*;
@@ -39,10 +71,171 @@ game.add_light(0.0, 10.0, 0.0);
 game.run_headless(300);
 ```
 
-全型を一行でインポート:
+### コピペで動くミニ RPG ターン
+
+```rust
+use alice_game_engine::ability::{Attribute, AttributeSet};
+use alice_game_engine::battle::{
+    BattleAction, BattleCommand, BattleResult, Battler, Party, RandomAi, Team,
+    TurnBattleRunner,
+};
+
+fn battler(name: &str, hp: f32, atk: f32, spd: f32, team: Team) -> Battler {
+    let mut a = AttributeSet::new();
+    a.add(Attribute::new("hp", hp, 0.0, hp));
+    a.add(Attribute::new("atk", atk, 0.0, 999.0));
+    a.add(Attribute::new("def", 0.0, 0.0, 999.0));
+    a.add(Attribute::new("speed", spd, 0.0, 999.0));
+    Battler::new(name, a, team)
+}
+
+fn main() {
+    let allies = Party::new(vec![battler("勇者", 60.0, 12.0, 10.0, Team::Ally)]);
+    let enemies = Party::new(vec![battler("スライム", 25.0, 4.0, 4.0, Team::Enemy)]);
+    let mut runner = TurnBattleRunner::new(allies, enemies);
+    let mut ai = RandomAi::new(1);
+
+    while runner.result() == BattleResult::Ongoing {
+        let cmds = vec![BattleCommand {
+            actor_idx: 0,
+            action: BattleAction::Attack { target_idx: 0 },
+        }];
+        runner.run_turn(cmds, &mut ai);
+    }
+    assert_eq!(runner.result(), BattleResult::Win);
+}
+```
+
+### prelude で全型一括インポート
 
 ```rust
 use alice_game_engine::prelude::*;
+```
+
+## サンプル — すぐ動く 8 種
+
+```bash
+cargo run --example rpg                # ターン制: NPC 選択 → 戦闘 → 報酬
+cargo run --example multiplayer_battle # LoopbackTransport で 2 peer 同期
+cargo run --example visual_novel       # EventScript ベース分岐ストーリー
+cargo run --example fps_combat         # LockOn + hitscan + HitStop
+cargo run --example platformer_action --features particles
+                                       # 剣の Hitbox + Curl Noise dash trail
+cargo run --example spinning_cube --features full
+cargo run --example physics_sandbox --features full
+```
+
+各 example は 1 画面に収まる短さ。`templates/<name>.rs` をコピーして
+`Cargo.toml` の `[[example]]` を別名にすれば新プロジェクトの土台に。
+
+## レシピ集 — よく使う書き方
+
+### ノーコード EventScript を実行
+
+```rust
+use alice_game_engine::scripting::*;
+use alice_game_engine::ability::AttributeSet;
+
+let mut script = EventScript::new();
+script.push(Box::new(MessageCommand::new("長老", "ようこそ。")));
+script.push(Box::new(ChoiceCommand::pick(
+    "依頼を受ける?",
+    vec!["はい".into(), "いいえ".into()],
+    "answer", 0,
+)));
+script.push(Box::new(IfVarCommand::new(
+    "answer", Comparison::Eq, 0,
+    Box::new(GiveItemCommand::new("compass", 1)),
+    Box::new(MessageCommand::new("長老", "また今度ね。")),
+)));
+
+let mut vars = ScriptVars::new();
+let mut attrs = AttributeSet::new();
+let mut log = Vec::new();
+while !script.is_done() {
+    let mut ctx = EventContext { vars: &mut vars, attrs: Some(&mut attrs),
+        log: &mut log, elapsed_ticks: 0 };
+    script.step(&mut ctx);
+}
+```
+
+### クエストを JSON 化 (エディタ / hot reload 用)
+
+```rust
+use alice_game_engine::scripting::{EventCommandDef, EventScriptDef};
+
+let def = EventScriptDef { commands: vec![
+    EventCommandDef::Message { speaker: "Lyra".into(), text: "ようこそ。".into() },
+    EventCommandDef::GiveItem { item: "compass".into(), count: 1 },
+]};
+let json = def.to_json().unwrap();
+let parsed = EventScriptDef::from_json(&json).unwrap();
+let mut script = parsed.build();   // すぐ step() 可能
+```
+
+### カスタム世界 (`WorldProvider`) を engine に注入
+
+```rust
+use alice_game_engine::bridge::{WorldProvider, WorldEnvironment, ZoneId,
+                                 SpawnPose, TeleportResult};
+use alice_game_engine::engine::EngineContext;
+use alice_game_engine::math::Vec3;
+
+struct MyWorld { pos: Vec3, day: f32 }
+impl WorldProvider for MyWorld {
+    fn step(&mut self, dt: f32) { self.day = (self.day + dt * 0.01).fract(); }
+    fn camera_position(&self) -> Vec3 { self.pos }
+    fn camera_yaw(&self) -> f32 { 0.0 }
+    fn camera_pitch(&self) -> f32 { 0.0 }
+    fn look_delta(&mut self, _: f32, _: f32) {}
+    fn move_intent(&mut self, dir: Vec3, _: bool) { self.pos = self.pos + dir; }
+    fn environment(&self) -> WorldEnvironment {
+        WorldEnvironment { day_phase: self.day, ..Default::default() }
+    }
+    fn current_zone(&self) -> ZoneId { ZoneId(0) }
+    fn zone_spawn(&self, _: ZoneId) -> Option<SpawnPose> { None }
+    fn teleport_to(&mut self, _: ZoneId) -> TeleportResult { TeleportResult::Started }
+}
+
+let mut ctx = EngineContext::default();
+ctx.set_world_provider(Box::new(MyWorld { pos: Vec3::ZERO, day: 0.0 }));
+```
+
+### 3D アクション戦闘の打撃フィードバック
+
+```rust
+use alice_game_engine::action_combat::{
+    resolve_hits, ColliderShape, HitStop, Hitbox, Hurtbox,
+};
+use alice_game_engine::math::Vec3;
+
+let mut hits = vec![{
+    let mut h = Hitbox::new(1, 100,
+        ColliderShape::Sphere { center: Vec3::ZERO, radius: 1.0 },
+        "heavy_swipe");
+    h.damage = 22.0;
+    h.hitstop_frames = 4;  // 打撃の "重さ" 演出
+    h
+}];
+let mut hurts = vec![Hurtbox::new(2, 200,
+    ColliderShape::Sphere { center: Vec3::new(0.5, 0.0, 0.0), radius: 1.0 })];
+
+let events = resolve_hits(&mut hits, &mut hurts);
+let mut hit_stop = HitStop::default();
+hit_stop.trigger(events.iter().map(|e| e.hitstop_frames).max().unwrap_or(0));
+// hit_stop.is_active() が true の間、hit_stop.time_scale() == 0.0 で sim 凍結
+```
+
+### マルチプレイ (`NetworkTransport` 経由)
+
+```rust
+use alice_game_engine::network::LoopbackTransport;
+use alice_game_engine::bridge::NetworkTransport;
+
+let (mut host, mut client) = LoopbackTransport::pair(1, 2);
+client.send_to(1, b"hello host").unwrap();
+let inbox = host.recv();
+assert_eq!(inbox[0].1, b"hello host".to_vec());
 ```
 
 ## ウィンドウ表示
@@ -258,11 +451,43 @@ let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
 | `godot` | Godot GDExtensionバインディング |
 | `full` | 全ランタイム機能 (ffi/python/godot を除く) |
 
+## FAQ
+
+### `bridge::` audio provider が複数ある理由は?
+
+`AudioSampleProvider` は engine の trait。ダウンストリームクレートが
+**ALICE-Audio** (`gen_sine` / `gen_noise` で procedural BGM) や
+**ALICE-Voice** (formant 合成のダイアログ) で実装できる。engine 本体は
+依存しないので、必要な裏側だけ consumer crate が引いてくる構造。
+
+### `bridge::WorldProvider` は本当に拡張ポイントとして使える?
+
+はい。あなたの世界の camera / weather / zones / teleport を一度実装すれば
+`EngineContext::set_world_provider(Box::new(...))` で注入し、戦闘 / event /
+animation ランタイムをどんな世界観でも再利用できます。
+
+### 新しい EventCommand を追加するには?
+
+`EventCommand` trait (sync の `execute(&mut self, ctx) -> CommandStatus`)
+を実装して `EventScript::push` するだけ。エディタ / hot reload 対応も
+したい場合は `EventCommandDef` に variant 追加 + `into_command()` 配線。
+
+### 本物のネットワークでマルチプレイするには?
+
+`LoopbackTransport::pair` を別の `bridge::NetworkTransport` 実装に差し替え。
+async transport は private tokio runtime で wrap して sync 化する設計
+(ALICE-Sync 連携スケッチは `templates/multiplayer_battle.rs` 参照)。
+
 ## 品質
 
 ```bash
-cargo test --features full        # 843 テスト
+cargo test --features full        # 1,007 lib テスト
+cargo clippy --lib -- -W clippy::all -W clippy::pedantic -W clippy::nursery
+                                  # 0 lib warning (lib.rs の allow 一覧参照)
 cargo fmt -- --check              # 0 差分
+# GPU adapter があれば:
+cargo test --features gpu -- --ignored gpu
+                                  # 3 WGSL ロード + offscreen 描画検証
 ```
 
 ## ALICE Eco-System 連携
