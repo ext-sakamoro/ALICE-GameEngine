@@ -39,7 +39,7 @@ pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1.21", features = ["derive"], optional = true }
 
 # Audio output device (optional, requires `audio_output` feature).
-cpal = { version = "0.16", optional = true }
+cpal = { version = "0.18", optional = true }
 
 # Async UDP transport (optional, requires `network_udp` feature).
 tokio = { version = "1.0", features = ["rt-multi-thread", "net", "sync"], optional = true }
