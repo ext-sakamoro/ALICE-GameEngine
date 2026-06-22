@@ -27,7 +27,20 @@ jobs:
         run: cargo test
       - name: Test (full features)
         run: cargo test --features full
-      - name: Doc check
+      - name: Doc check (RUSTDOCFLAGS=-Dwarnings)
         run: cargo doc --no-deps --features full
+        env:
+          RUSTDOCFLAGS: "-Dwarnings"
       - name: Doc-tests
         run: cargo test --doc --features full
+
+  actionlint:
+    name: actionlint (workflow YAML 検証)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+          reporter: github-check

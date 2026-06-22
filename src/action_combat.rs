@@ -212,7 +212,7 @@ pub fn resolve_hits(hitboxes: &mut [Hitbox], hurtboxes: &mut [Hurtbox]) -> Vec<H
 // ComboSystem — input-buffered move tree
 // ---------------------------------------------------------------------------
 
-/// A single move in a [`ComboTree`].
+/// A single move in a [`ComboSystem`].
 #[derive(Debug, Clone)]
 pub struct ComboMove {
     pub name: String,

@@ -409,7 +409,7 @@ impl XrProvider for StereoWindowProvider {
 }
 
 impl StereoWindowProvider {
-    /// Has [`request_exit`] been called?
+    /// Has `request_exit` been called?
     #[must_use]
     pub const fn exit_requested(&self) -> bool {
         self.exit_requested

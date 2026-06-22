@@ -292,8 +292,8 @@ impl SkeletalAnimation {
 ///
 /// Vertex inputs:
 ///   `@location(0) position` (vec3)
-///   `@location(1) bone_indices` (vec4<u32>)
-///   `@location(2) bone_weights` (vec4<f32>)
+///   `@location(1) bone_indices` (`vec4<u32>`)
+///   `@location(2) bone_weights` (`vec4<f32>`)
 #[must_use]
 pub const fn skinning_vs_wgsl() -> &'static str {
     r"
