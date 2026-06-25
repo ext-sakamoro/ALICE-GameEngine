@@ -78,6 +78,7 @@ pub mod fix128;
 pub mod gpu_mesh;
 pub mod hair;
 pub mod hd2d_postfx;
+pub mod humanoid;
 pub mod image_decode;
 pub mod import;
 pub mod input;
@@ -169,6 +170,7 @@ pub use env_probe::{
 pub use fix128::{Fix128, Fix128Vec3};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
 pub use hair::{HairConfig, HairStrand, HairSystem};
+pub use humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};
 pub use image_decode::{decode_bmp, DecodedImage, ImageDecoder};
 pub use import::{detect_format, ProjectFormat};
 pub use input::{ActionMap, InputState, Key, MouseButton};

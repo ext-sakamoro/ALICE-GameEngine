@@ -73,6 +73,9 @@ Feature flags pick what you compile:
 - **Volumetric clouds** — `VolumetricCloudConfig` + `march_cloud_ray`
   with FBM noise, height window, Beer-HG scattering. `cargo run
   --example volumetric_clouds_demo`
+- **Humanoid (VRM 1.0)** — 25-bone canonical mapping + expression
+  channels (visemes + emotion presets + custom). `cargo run
+  --example humanoid_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -164,6 +167,7 @@ cargo run --example ocean_demo         # Tessendorf FFT ocean ASCII heightmap (n
 cargo run --example env_probe_demo     # Cubemap + irradiance/radiance prefilter
 cargo run --example hair_demo          # 64 grass strands swayed by wind
 cargo run --example volumetric_clouds_demo # ASCII sky with FBM clouds
+cargo run --example humanoid_demo      # VRM humanoid binding + lip-sync expression
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

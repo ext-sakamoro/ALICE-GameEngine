@@ -48,6 +48,7 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | EnvProbe / IBL | `let cube = Cubemap::new_with_color(32, color); let irr = prefilter_irradiance(&cube, 8); scene.add(Node::new("p", NodeKind::EnvProbe(EnvProbeData::default())))` |
 | Hair / grass strands | `let mut h = HairSystem::new(HairConfig::default()); h.add_strand(Vec3::ZERO, Vec3::Y); h.simulate(dt, wind_velocity);` — Verlet + length constraint + LOD |
 | Volumetric clouds | `let r = march_cloud_ray(origin, dir, time, &VolumetricCloudConfig::default()); r.transmittance` — FBM + Beer-HG scattering |
+| Humanoid (VRM 1.0) | `let mut h = Humanoid::new(); h.bind(HumanoidBone::head, idx); h.meets_required(); let mut e = ExpressionSet::new(); e.set(ExpressionChannel::Aa, 0.8);` |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

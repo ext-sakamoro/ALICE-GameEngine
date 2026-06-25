@@ -23,6 +23,16 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`humanoid`** — VRM 1.0-style humanoid skeleton mapping +
+  expression channels. `HumanoidBone` enum (25 canonical VRM bones),
+  `Humanoid::bind` / `get` / `meets_required` / `missing_required`,
+  `ExpressionChannel` (5 visemes + 7 emotion presets + `Custom`),
+  `ExpressionSet::set` / `weight` / `remove` / `reset` /
+  `set_visemes` lip-sync helper. Renderer-agnostic — owns mappings
+  and weights, not transforms. Demo:
+  `cargo run --example humanoid_demo` (4-frame lip-sync + blink +
+  happy overlay).
+
 - **`volumetric_clouds`** — Raymarched volumetric cloud module
   (Horizon Zero Dawn / Wicked Engine style). `VolumetricCloudConfig`
   (coverage / density / wind / altitude band / step count / sun),

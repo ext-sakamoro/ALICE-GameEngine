@@ -131,6 +131,10 @@ path = "templates/hair_demo.rs"
 name = "volumetric_clouds_demo"
 path = "templates/volumetric_clouds_demo.rs"
 
+[[example]]
+name = "humanoid_demo"
+path = "templates/humanoid_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"
