@@ -56,7 +56,11 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | GPU compute (DDGI) | `let p = DdgiVolumeGpu::new(&device); /* bind probe + samples */ pass.dispatch_workgroups(probe_count, 1, 1);` |
 | Cubemap from sky | `let cube = capture_sky_to_cubemap(32, &AtmosphereParams::default());` |
 | Mobile touch camera | `let mut cam = TouchCamera::new(target); cam.handle_touch(&TouchEvent { id: 0, phase: TouchPhase::Began, position: (x, y) });` |
-| Editor scene CRUD | `let mut e = Editor::new(); e.apply(&mut scene, EditorCommand::Translate { node, delta });` |
+| Editor scene CRUD | `let mut e = Editor::new(); e.apply(&mut scene, EditorCommand::Translate { node, delta }); e.undo(&mut scene); e.redo(&mut scene);` |
+| Editor websocket dispatch | `let reply = dispatch_client_message(&mut editor, &mut scene, EditorClientMessage::Apply { command });` |
+| GPU compute one-shot | `ctx.dispatch_compute_once(&pipeline, &bind_group, (workgroups, 1, 1), Some((&output_buf, size)))` |
+| Cubemap GPU targets (`gpu` feat) | `let targets = CubemapCaptureTargets::new(&device, position, 256, 0.1, 100.0); /* render 6 times into targets.face_views[i] */` |
+| Mobile target detect | `if MobileTarget::current().is_mobile() { /* iOS or Android */ }` |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

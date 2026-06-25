@@ -34,6 +34,8 @@ pub enum EditorCommand {
     /// Add a fully-formed node and parent it under `parent` (use
     /// `NodeId::NONE` for the root).
     AddNode { parent: NodeId, node: Node },
+    /// Remove a node from the scene. Reverse of `AddNode`.
+    RemoveNode { node: NodeId },
     /// Mark a node invisible. Reversible via `SetVisible`.
     Hide { node: NodeId },
     /// Mark a node visible.
@@ -132,71 +134,152 @@ impl Editor {
     }
 
     /// Apply a command to `scene`. On success returns an
-    /// [`EditorOutcome`] and pushes the inverse onto the undo stack;
-    /// further calls to redo are cleared (= the standard editor
-    /// convention).
+    /// [`EditorOutcome`] and pushes the inverse onto the undo stack so
+    /// [`Self::undo`] can roll the scene back. Forward redo state is
+    /// dropped (= the standard editor convention).
     pub fn apply(
         &mut self,
         scene: &mut SceneGraph,
         command: EditorCommand,
     ) -> Result<EditorOutcome, EditorError> {
-        let outcome = match &command {
-            EditorCommand::AddNode { parent, node } => {
-                if !parent.is_none() && scene.get(*parent).is_none() {
-                    return Err(EditorError::InvalidParent(*parent));
-                }
-                let id = if parent.is_none() {
-                    scene.add(node.clone())
-                } else {
-                    scene.add_child(*parent, node.clone())
-                };
-                EditorOutcome::Added { node: id }
-            }
-            EditorCommand::Hide { node } => {
-                set_visibility(scene, *node, false)?;
-                EditorOutcome::Modified { node: *node }
-            }
-            EditorCommand::Show { node } => {
-                set_visibility(scene, *node, true)?;
-                EditorOutcome::Modified { node: *node }
-            }
-            EditorCommand::Translate { node, delta } => {
-                let n = scene
-                    .get_mut(*node)
-                    .ok_or(EditorError::NodeNotFound(*node))?;
-                n.local_transform.position = n.local_transform.position + *delta;
-                EditorOutcome::Modified { node: *node }
-            }
-            EditorCommand::SetScale { node, scale } => {
-                let n = scene
-                    .get_mut(*node)
-                    .ok_or(EditorError::NodeNotFound(*node))?;
-                n.local_transform.scale = *scale;
-                EditorOutcome::Modified { node: *node }
-            }
-            EditorCommand::SetRotation { node, rotation } => {
-                let n = scene
-                    .get_mut(*node)
-                    .ok_or(EditorError::NodeNotFound(*node))?;
-                n.local_transform.rotation = *rotation;
-                EditorOutcome::Modified { node: *node }
-            }
-            EditorCommand::Rename { node, name } => {
-                let n = scene
-                    .get_mut(*node)
-                    .ok_or(EditorError::NodeNotFound(*node))?;
-                n.name = name.clone();
-                EditorOutcome::Modified { node: *node }
-            }
-        };
-
-        // Drop the redo stack now that history has diverged.
+        let inverse_pre = self.compute_inverse(scene, &command)?;
+        let outcome = self.execute(scene, command)?;
+        let inverse = patch_inverse_for_add(inverse_pre, &outcome);
         self.history.redo_stack.clear();
-        self.history.undo_stack.push(command);
+        self.history.undo_stack.push(inverse);
         if self.history.undo_stack.len() > self.history.capacity {
             self.history.undo_stack.remove(0);
         }
         Ok(outcome)
+    }
+
+    /// Roll the scene back by one step. Returns `None` when the undo
+    /// stack is empty. The reverted command is pushed onto the redo
+    /// stack so it can be re-applied via [`Self::redo`].
+    pub fn undo(&mut self, scene: &mut SceneGraph) -> Option<EditorOutcome> {
+        let inverse = self.history.undo_stack.pop()?;
+        let redo = self.compute_inverse(scene, &inverse).ok()?;
+        let outcome = self.execute(scene, inverse).ok()?;
+        let redo_patched = patch_inverse_for_add(redo, &outcome);
+        self.history.redo_stack.push(redo_patched);
+        Some(outcome)
+    }
+
+    /// Re-apply a previously undone command. Returns `None` when the
+    /// redo stack is empty.
+    pub fn redo(&mut self, scene: &mut SceneGraph) -> Option<EditorOutcome> {
+        let cmd = self.history.redo_stack.pop()?;
+        let inverse = self.compute_inverse(scene, &cmd).ok()?;
+        let outcome = self.execute(scene, cmd).ok()?;
+        let inverse_patched = patch_inverse_for_add(inverse, &outcome);
+        self.history.undo_stack.push(inverse_patched);
+        Some(outcome)
+    }
+
+    fn execute(
+        &mut self,
+        scene: &mut SceneGraph,
+        command: EditorCommand,
+    ) -> Result<EditorOutcome, EditorError> {
+        let outcome = match command {
+            EditorCommand::AddNode { parent, node } => {
+                if !parent.is_none() && scene.get(parent).is_none() {
+                    return Err(EditorError::InvalidParent(parent));
+                }
+                let id = if parent.is_none() {
+                    scene.add(node)
+                } else {
+                    scene.add_child(parent, node)
+                };
+                EditorOutcome::Added { node: id }
+            }
+            EditorCommand::RemoveNode { node } => {
+                if scene.get(node).is_none() {
+                    return Err(EditorError::NodeNotFound(node));
+                }
+                scene.remove(node);
+                EditorOutcome::Modified { node }
+            }
+            EditorCommand::Hide { node } => {
+                set_visibility(scene, node, false)?;
+                EditorOutcome::Modified { node }
+            }
+            EditorCommand::Show { node } => {
+                set_visibility(scene, node, true)?;
+                EditorOutcome::Modified { node }
+            }
+            EditorCommand::Translate { node, delta } => {
+                let n = scene.get_mut(node).ok_or(EditorError::NodeNotFound(node))?;
+                n.local_transform.position = n.local_transform.position + delta;
+                EditorOutcome::Modified { node }
+            }
+            EditorCommand::SetScale { node, scale } => {
+                let n = scene.get_mut(node).ok_or(EditorError::NodeNotFound(node))?;
+                n.local_transform.scale = scale;
+                EditorOutcome::Modified { node }
+            }
+            EditorCommand::SetRotation { node, rotation } => {
+                let n = scene.get_mut(node).ok_or(EditorError::NodeNotFound(node))?;
+                n.local_transform.rotation = rotation;
+                EditorOutcome::Modified { node }
+            }
+            EditorCommand::Rename { node, name } => {
+                let n = scene.get_mut(node).ok_or(EditorError::NodeNotFound(node))?;
+                n.name = name;
+                EditorOutcome::Modified { node }
+            }
+        };
+        Ok(outcome)
+    }
+
+    /// Build the command that exactly reverses `command` against the
+    /// current scene state.
+    fn compute_inverse(
+        &self,
+        scene: &SceneGraph,
+        command: &EditorCommand,
+    ) -> Result<EditorCommand, EditorError> {
+        match command {
+            EditorCommand::AddNode { .. } => {
+                // We can't know the new id until execute(); the inverse
+                // is patched up after the fact in apply().
+                Ok(EditorCommand::RemoveNode { node: NodeId::NONE })
+            }
+            EditorCommand::RemoveNode { node } => {
+                let n = scene.get(*node).ok_or(EditorError::NodeNotFound(*node))?;
+                Ok(EditorCommand::AddNode {
+                    parent: n.parent,
+                    node: n.clone(),
+                })
+            }
+            EditorCommand::Hide { node } => Ok(EditorCommand::Show { node: *node }),
+            EditorCommand::Show { node } => Ok(EditorCommand::Hide { node: *node }),
+            EditorCommand::Translate { node, delta } => Ok(EditorCommand::Translate {
+                node: *node,
+                delta: Vec3::new(-delta.x(), -delta.y(), -delta.z()),
+            }),
+            EditorCommand::SetScale { node, .. } => {
+                let n = scene.get(*node).ok_or(EditorError::NodeNotFound(*node))?;
+                Ok(EditorCommand::SetScale {
+                    node: *node,
+                    scale: n.local_transform.scale,
+                })
+            }
+            EditorCommand::SetRotation { node, .. } => {
+                let n = scene.get(*node).ok_or(EditorError::NodeNotFound(*node))?;
+                Ok(EditorCommand::SetRotation {
+                    node: *node,
+                    rotation: n.local_transform.rotation,
+                })
+            }
+            EditorCommand::Rename { node, .. } => {
+                let n = scene.get(*node).ok_or(EditorError::NodeNotFound(*node))?;
+                Ok(EditorCommand::Rename {
+                    node: *node,
+                    name: n.name.clone(),
+                })
+            }
+        }
     }
 
     /// Snapshot the entire scene as JSON. Useful for "Save As" UIs.
@@ -216,6 +299,99 @@ fn set_visibility(scene: &mut SceneGraph, id: NodeId, visible: bool) -> Result<(
     let n = scene.get_mut(id).ok_or(EditorError::NodeNotFound(id))?;
     n.visible = visible;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Websocket / MCP transport protocol
+// ---------------------------------------------------------------------------
+
+/// Message a browser editor sends to the engine over its websocket
+/// channel (or MCP `tools/call` payload).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EditorClientMessage {
+    /// Initial handshake. The client tells the server which protocol
+    /// version it speaks.
+    Hello { protocol_version: u32 },
+    /// Apply one command (= the engine pushes the inverse onto undo).
+    Apply { command: EditorCommand },
+    /// Ask the engine to roll back one step.
+    Undo,
+    /// Re-apply the most recently undone step.
+    Redo,
+    /// Request a full scene snapshot for "Save As" / state sync.
+    Snapshot,
+}
+
+/// Engine → client message. JSON-encoded so the same envelope works
+/// for websockets and MCP tool responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EditorServerMessage {
+    /// Handshake reply with the negotiated protocol version (= min
+    /// of client + server).
+    Welcome { protocol_version: u32 },
+    /// Successful `Apply` / `Undo` / `Redo`.
+    Outcome { outcome: EditorOutcome },
+    /// Result of `Snapshot` — JSON-encoded scene graph.
+    Snapshot { scene_json: String },
+    /// Any error surface (= invalid command, missing node, etc.).
+    Error { message: String },
+}
+
+/// Highest editor protocol revision the engine understands. Bumped
+/// whenever [`EditorCommand`] gains a new variant.
+pub const EDITOR_PROTOCOL_VERSION: u32 = 1;
+
+/// Dispatch one [`EditorClientMessage`] against the editor + scene
+/// pair, returning the matching [`EditorServerMessage`]. Pure
+/// function so the same logic drives both axum websockets and the
+/// MCP tool entry point.
+pub fn dispatch_client_message(
+    editor: &mut Editor,
+    scene: &mut SceneGraph,
+    message: EditorClientMessage,
+) -> EditorServerMessage {
+    match message {
+        EditorClientMessage::Hello { protocol_version } => EditorServerMessage::Welcome {
+            protocol_version: protocol_version.min(EDITOR_PROTOCOL_VERSION),
+        },
+        EditorClientMessage::Apply { command } => match editor.apply(scene, command) {
+            Ok(outcome) => EditorServerMessage::Outcome { outcome },
+            Err(e) => EditorServerMessage::Error {
+                message: e.to_string(),
+            },
+        },
+        EditorClientMessage::Undo => match editor.undo(scene) {
+            Some(outcome) => EditorServerMessage::Outcome { outcome },
+            None => EditorServerMessage::Error {
+                message: "undo stack empty".to_string(),
+            },
+        },
+        EditorClientMessage::Redo => match editor.redo(scene) {
+            Some(outcome) => EditorServerMessage::Outcome { outcome },
+            None => EditorServerMessage::Error {
+                message: "redo stack empty".to_string(),
+            },
+        },
+        EditorClientMessage::Snapshot => EditorServerMessage::Snapshot {
+            scene_json: editor.snapshot(scene),
+        },
+    }
+}
+
+/// `compute_inverse` cannot know the id assigned by an [`EditorCommand::AddNode`]
+/// until execute() has run; patch the corresponding `RemoveNode` here
+/// with the freshly-allocated id.
+fn patch_inverse_for_add(inverse: EditorCommand, outcome: &EditorOutcome) -> EditorCommand {
+    match (&inverse, outcome) {
+        (EditorCommand::RemoveNode { node }, EditorOutcome::Added { node: new_id })
+            if node.is_none() =>
+        {
+            EditorCommand::RemoveNode { node: *new_id }
+        }
+        _ => inverse,
+    }
 }
 
 // Avoid unused-import warning in trivial scaffold.
@@ -388,6 +564,197 @@ mod tests {
         let s = scene();
         let json = editor.snapshot(&s);
         assert!(!json.is_empty());
+    }
+
+    #[test]
+    fn undo_translate_restores_position() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let id = s.add(Node::new("cube", NodeKind::Mesh(MeshData::default())));
+        let original = s.get(id).unwrap().local_transform.position;
+        editor
+            .apply(
+                &mut s,
+                EditorCommand::Translate {
+                    node: id,
+                    delta: Vec3::new(5.0, 0.0, 0.0),
+                },
+            )
+            .unwrap();
+        assert!(editor.undo(&mut s).is_some());
+        let after = s.get(id).unwrap().local_transform.position;
+        assert!((after - original).length() < 1e-5);
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history.redo_depth(), 1);
+    }
+
+    #[test]
+    fn redo_after_undo_reapplies_command() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let id = s.add(Node::new("cube", NodeKind::Mesh(MeshData::default())));
+        editor
+            .apply(
+                &mut s,
+                EditorCommand::Translate {
+                    node: id,
+                    delta: Vec3::new(5.0, 0.0, 0.0),
+                },
+            )
+            .unwrap();
+        editor.undo(&mut s).unwrap();
+        editor.redo(&mut s).unwrap();
+        let after = s.get(id).unwrap().local_transform.position;
+        assert!((after.x() - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn undo_add_node_removes_it() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let initial = s.node_count();
+        editor
+            .apply(
+                &mut s,
+                EditorCommand::AddNode {
+                    parent: NodeId::NONE,
+                    node: Node::new("cube", NodeKind::Mesh(MeshData::default())),
+                },
+            )
+            .unwrap();
+        assert_eq!(s.node_count(), initial + 1);
+        editor.undo(&mut s).unwrap();
+        assert_eq!(s.node_count(), initial);
+    }
+
+    #[test]
+    fn undo_rename_restores_previous_name() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let id = s.add(Node::new("cube", NodeKind::Mesh(MeshData::default())));
+        editor
+            .apply(
+                &mut s,
+                EditorCommand::Rename {
+                    node: id,
+                    name: "hero".into(),
+                },
+            )
+            .unwrap();
+        editor.undo(&mut s).unwrap();
+        assert_eq!(s.get(id).unwrap().name, "cube");
+    }
+
+    #[test]
+    fn apply_after_undo_clears_redo_stack() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let id = s.add(Node::new("cube", NodeKind::Mesh(MeshData::default())));
+        editor
+            .apply(
+                &mut s,
+                EditorCommand::Translate {
+                    node: id,
+                    delta: Vec3::new(1.0, 0.0, 0.0),
+                },
+            )
+            .unwrap();
+        editor.undo(&mut s).unwrap();
+        assert_eq!(editor.history.redo_depth(), 1);
+        // New apply drops the redo stack.
+        editor
+            .apply(
+                &mut s,
+                EditorCommand::Translate {
+                    node: id,
+                    delta: Vec3::new(0.0, 1.0, 0.0),
+                },
+            )
+            .unwrap();
+        assert_eq!(editor.history.redo_depth(), 0);
+    }
+
+    #[test]
+    fn dispatch_hello_negotiates_protocol_version() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let reply = dispatch_client_message(
+            &mut editor,
+            &mut s,
+            EditorClientMessage::Hello {
+                protocol_version: 99,
+            },
+        );
+        match reply {
+            EditorServerMessage::Welcome { protocol_version } => {
+                assert_eq!(protocol_version, EDITOR_PROTOCOL_VERSION);
+            }
+            _ => panic!("expected Welcome"),
+        }
+    }
+
+    #[test]
+    fn dispatch_apply_translates_node() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let id = s.add(Node::new("cube", NodeKind::Mesh(MeshData::default())));
+        let reply = dispatch_client_message(
+            &mut editor,
+            &mut s,
+            EditorClientMessage::Apply {
+                command: EditorCommand::Translate {
+                    node: id,
+                    delta: Vec3::new(2.0, 0.0, 0.0),
+                },
+            },
+        );
+        match reply {
+            EditorServerMessage::Outcome { outcome } => {
+                assert!(matches!(outcome, EditorOutcome::Modified { .. }));
+            }
+            other => panic!("expected Outcome, got {other:?}"),
+        }
+        assert!((s.get(id).unwrap().local_transform.position.x() - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn dispatch_undo_on_empty_returns_error() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let reply = dispatch_client_message(&mut editor, &mut s, EditorClientMessage::Undo);
+        match reply {
+            EditorServerMessage::Error { message } => assert!(message.contains("undo")),
+            _ => panic!("expected Error"),
+        }
+    }
+
+    #[test]
+    fn dispatch_snapshot_returns_scene_json() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        let reply = dispatch_client_message(&mut editor, &mut s, EditorClientMessage::Snapshot);
+        match reply {
+            EditorServerMessage::Snapshot { scene_json } => assert!(!scene_json.is_empty()),
+            _ => panic!("expected Snapshot"),
+        }
+    }
+
+    #[test]
+    fn protocol_messages_round_trip_through_json() {
+        let cmd = EditorClientMessage::Apply {
+            command: EditorCommand::Hide { node: NodeId(3) },
+        };
+        let j = serde_json::to_string(&cmd).unwrap();
+        let back: EditorClientMessage = serde_json::from_str(&j).unwrap();
+        assert!(matches!(back, EditorClientMessage::Apply { .. }));
+    }
+
+    #[test]
+    fn undo_on_empty_stack_returns_none() {
+        let mut editor = Editor::new();
+        let mut s = scene();
+        assert!(editor.undo(&mut s).is_none());
+        assert!(editor.redo(&mut s).is_none());
     }
 
     #[test]

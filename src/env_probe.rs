@@ -132,6 +132,106 @@ pub fn cubemap_face_views(position: crate::math::Vec3) -> [crate::math::Mat4; 6]
     ]
 }
 
+/// Perspective + view matrix pair for one cube face, useful when
+/// driving the GPU 6-face render pipeline. The projection is a 90-deg
+/// FOV square frustum (= the standard cubemap capture rig).
+#[derive(Debug, Clone, Copy)]
+pub struct CubemapFaceCamera {
+    pub view: crate::math::Mat4,
+    pub projection: crate::math::Mat4,
+}
+
+/// Build the six per-face cameras for a probe at `position`. Pair with
+/// the engine renderer to render the scene six times into a
+/// `wgpu::TextureView` array (= the GPU-side companion to
+/// [`capture_sky_to_cubemap`]).
+#[must_use]
+pub fn cubemap_face_cameras(
+    position: crate::math::Vec3,
+    near: f32,
+    far: f32,
+) -> [CubemapFaceCamera; 6] {
+    let views = cubemap_face_views(position);
+    let projection = crate::math::Mat4::perspective(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+    std::array::from_fn(|i| CubemapFaceCamera {
+        view: views[i],
+        projection,
+    })
+}
+
+/// Description of the GPU side of a 6-face cubemap capture. Wraps a
+/// `wgpu::Texture` (= 6-layer 2D texture in `Cube` array layout), one
+/// `TextureView` per face, plus the per-face cameras.
+///
+/// Application code drives the capture by:
+/// 1. Calling [`CubemapCaptureTargets::new`] once when the probe is
+///    spawned (= allocates the GPU resources).
+/// 2. Each frame the renderer should run the existing deferred pass
+///    once per face, attaching the matching `face_views[i]` as the
+///    color target and using `cameras[i].view` /
+///    `cameras[i].projection` as the camera state.
+/// 3. The completed cubemap is sampled via `texture_view` as a
+///    `texture_cube<f32>` binding.
+#[cfg(feature = "gpu")]
+pub struct CubemapCaptureTargets {
+    pub texture: wgpu::Texture,
+    pub texture_view: wgpu::TextureView,
+    pub face_views: [wgpu::TextureView; 6],
+    pub cameras: [CubemapFaceCamera; 6],
+    pub resolution: u32,
+}
+
+#[cfg(feature = "gpu")]
+impl CubemapCaptureTargets {
+    /// Allocate the GPU resources for a probe at `position`.
+    #[must_use]
+    pub fn new(
+        device: &wgpu::Device,
+        position: crate::math::Vec3,
+        resolution: u32,
+        near: f32,
+        far: f32,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("alice-env-probe-cubemap"),
+            size: wgpu::Extent3d {
+                width: resolution,
+                height: resolution,
+                depth_or_array_layers: 6,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("alice-env-probe-cubemap-view"),
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            ..Default::default()
+        });
+        let face_views: [wgpu::TextureView; 6] = std::array::from_fn(|i| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("alice-env-probe-face-view"),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: i as u32,
+                array_layer_count: Some(1),
+                ..Default::default()
+            })
+        });
+        Self {
+            texture,
+            texture_view,
+            face_views,
+            cameras: cubemap_face_cameras(position, near, far),
+            resolution,
+        }
+    }
+}
+
 /// Captures the [`sky_color`](crate::sky::sky_color) atmosphere into a
 /// six-face cubemap. Used to seed an environment probe before the full
 /// GPU 6-face render pass lands.
@@ -558,6 +658,23 @@ mod tests {
         for i in 0..6 {
             for j in (i + 1)..6 {
                 assert!(views[i] != views[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn cubemap_face_cameras_uses_90deg_fov() {
+        let cams = cubemap_face_cameras(Vec3::ZERO, 0.1, 100.0);
+        // All projections are identical (same near/far/fov).
+        for cam in &cams[1..] {
+            assert_eq!(cam.projection, cams[0].projection);
+        }
+        // Views differ per face.
+        for (i, cam) in cams.iter().enumerate() {
+            for (j, other) in cams.iter().enumerate() {
+                if i != j {
+                    assert!(cam.view != other.view);
+                }
             }
         }
     }

@@ -23,6 +23,40 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 2 — 4-region depth
+
+- **`editor`** undo/redo wired through — `Editor::undo` /
+  `Editor::redo` mutate the scene, push/pop the inverse on the
+  appropriate stack, and a new `apply` clears the redo stack
+  per the standard editor convention. New `EditorCommand::RemoveNode`
+  variant + post-execute `patch_inverse_for_add` so `AddNode` /
+  `RemoveNode` round-trip with the correct node id.
+
+- **`editor`** websocket / MCP protocol enums — `EditorClientMessage`
+  (`Hello` / `Apply` / `Undo` / `Redo` / `Snapshot`),
+  `EditorServerMessage` (`Welcome` / `Outcome` / `Snapshot` /
+  `Error`), `EDITOR_PROTOCOL_VERSION = 1`, `dispatch_client_message`
+  pure-function dispatcher. Ready for both axum websocket transports
+  and MCP `tools/call` adapters in a follow-up PR.
+
+- **`gpu`** compute helpers — `GpuContext::create_storage_buffer`,
+  `create_empty_storage_buffer`, and `dispatch_compute_once`
+  (one-shot compute submit + readback) so module-side `*Gpu`
+  pipelines can be exercised from unit tests / offline tools without
+  every caller duplicating the encoder + map_async boilerplate.
+
+- **`env_probe`** GPU cubemap targets — `CubemapFaceCamera` +
+  `cubemap_face_cameras(position, near, far)` + (under feature
+  `gpu`) `CubemapCaptureTargets::new(device, ...)` which allocates a
+  6-layer `Rgba16Float` cube texture, the cube-array view, and one
+  face-level view per face so the existing deferred renderer can run
+  6 face passes into the same target.
+
+- **`mobile`** target descriptor — `MobileTarget` enum (Ios /
+  Android / Other), `MobileTarget::current()` resolves at compile
+  time from `cfg(target_os)`, plus `mobile_build_hints()` and stub
+  `android` / `ios` submodules (= placeholders for platform glue).
+
 ### v0.7 wave 1 — 4-region expansion
 
 - **GPU compute shaders** — `LIGHT_CULLING_COMPUTE_WGSL`

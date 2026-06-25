@@ -259,6 +259,123 @@ impl GpuContext {
         self.queue.write_buffer(buffer, 0, data);
     }
 
+    /// Creates a storage buffer suitable for compute shader I/O.
+    /// The `usage` parameter lets callers add `COPY_SRC` for readback
+    /// or `COPY_DST` for staging uploads.
+    #[must_use]
+    pub fn create_storage_buffer(
+        &self,
+        data: &[u8],
+        usage: wgpu::BufferUsages,
+        label: &str,
+    ) -> wgpu::Buffer {
+        use wgpu::util::DeviceExt;
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: data,
+                usage: wgpu::BufferUsages::STORAGE | usage,
+            })
+    }
+
+    /// Allocates an empty storage buffer of `size` bytes. Useful for
+    /// scratch / output buffers that will be populated by a compute
+    /// shader.
+    #[must_use]
+    pub fn create_empty_storage_buffer(
+        &self,
+        size: u64,
+        usage: wgpu::BufferUsages,
+        label: &str,
+    ) -> wgpu::Buffer {
+        self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | usage,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Submits a single compute dispatch and waits for the GPU to
+    /// finish, then returns the contents of `readback_target` (if any)
+    /// as a `Vec<u8>`.
+    ///
+    /// This is the smallest one-shot helper for unit tests / offline
+    /// tools that want to "run a compute shader once and read the
+    /// result"; production code that dispatches every frame should
+    /// build the encoder + bind group directly to avoid the copy +
+    /// `map_async` round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the buffer map fails.
+    pub fn dispatch_compute_once(
+        &self,
+        pipeline: &wgpu::ComputePipeline,
+        bind_group: &wgpu::BindGroup,
+        workgroups: (u32, u32, u32),
+        readback_target: Option<(&wgpu::Buffer, u64)>,
+    ) -> Result<Vec<u8>, String> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("alice-compute-once"),
+            });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("alice-compute-once-pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.dispatch_workgroups(workgroups.0, workgroups.1, workgroups.2);
+        }
+
+        let staging = readback_target.map(|(target, size)| {
+            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("alice-compute-once-staging"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(target, 0, &staging, 0, size);
+            (staging, size)
+        });
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        if let Some((staging, size)) = staging {
+            let slice = staging.slice(..);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+            self.device
+                .poll(wgpu::PollType::Wait)
+                .map_err(|e| e.to_string())?;
+            receiver
+                .recv()
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            let data = slice.get_mapped_range().to_vec();
+            drop(data);
+            let _ = size;
+            let copy = {
+                let view = staging.slice(..).get_mapped_range();
+                view.to_vec()
+            };
+            staging.unmap();
+            Ok(copy)
+        } else {
+            // No readback requested: still poll so the queue drains.
+            self.device
+                .poll(wgpu::PollType::Wait)
+                .map_err(|e| e.to_string())?;
+            Ok(Vec::new())
+        }
+    }
+
     /// Creates a `wgpu::Texture` from raw RGBA8 pixel data.
     #[must_use]
     pub fn create_texture_rgba8(

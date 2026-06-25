@@ -90,8 +90,12 @@ Feature flags pick what you compile:
   for seeding env probes from sky atmosphere
 - **Mobile (iOS / Android)** — `TouchPhase` / `TouchEvent` / `TouchCamera`
   (single-finger orbit + two-finger pinch zoom)
-- **Editor scaffold** — `Editor::apply(EditorCommand)` for
-  declarative scene CRUD with capacity-bounded undo history
+- **Editor** — `Editor::apply` / `undo` / `redo` declarative scene
+  CRUD with capacity-bounded history + `EditorClientMessage` /
+  `EditorServerMessage` websocket / MCP protocol enums +
+  `dispatch_client_message` pure-function dispatcher
+- **GPU compute helpers** — `GpuContext::dispatch_compute_once` +
+  `create_storage_buffer` (+ readback) for one-shot compute submit
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

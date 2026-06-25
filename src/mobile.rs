@@ -204,6 +204,81 @@ impl TouchCamera {
 }
 
 // ---------------------------------------------------------------------------
+// Platform target info + build guidance
+// ---------------------------------------------------------------------------
+
+/// Compile-time platform target descriptor. Useful for runtime
+/// branching (e.g. "load this codec on iOS but not on Android").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobileTarget {
+    Ios,
+    Android,
+    Other,
+}
+
+impl MobileTarget {
+    /// Resolved at compile time from `cfg(target_os = ...)`.
+    #[must_use]
+    pub const fn current() -> Self {
+        #[cfg(target_os = "ios")]
+        {
+            Self::Ios
+        }
+        #[cfg(target_os = "android")]
+        {
+            Self::Android
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        {
+            Self::Other
+        }
+    }
+
+    #[must_use]
+    pub const fn is_mobile(self) -> bool {
+        matches!(self, Self::Ios | Self::Android)
+    }
+}
+
+/// Build configuration hints. Returned from `mobile_build_hints()` so
+/// downstream apps can print a startup banner.
+///
+/// To ship the engine as an iOS / Android library, the **app's**
+/// `Cargo.toml` (not the engine's) should add the dynamic / static
+/// library kinds:
+///
+/// ```toml
+/// [lib]
+/// crate-type = ["cdylib", "staticlib", "rlib"]
+/// ```
+///
+/// On Android the recommended companion crate is
+/// `android-activity` together with `winit` (`android-native-activity`
+/// feature). On iOS use `winit` with the default backends and link
+/// the produced `.a` from Xcode.
+#[must_use]
+pub const fn mobile_build_hints() -> &'static str {
+    "Add `crate-type = [\"cdylib\", \"staticlib\", \"rlib\"]` to the app \
+     crate's [lib] table. Pair with `winit + android-activity` on Android, \
+     or link the `.a` from Xcode on iOS."
+}
+
+#[cfg(target_os = "android")]
+pub mod android {
+    //! Android-specific glue. Currently a placeholder — winit's
+    //! `android_main` macro is the canonical entry point and lives in
+    //! the application crate.
+    pub const PLATFORM_NAME: &str = "android";
+}
+
+#[cfg(target_os = "ios")]
+pub mod ios {
+    //! iOS-specific glue. Currently a placeholder; the app crate
+    //! provides the UIApplicationDelegate via `winit`'s iOS support.
+    pub const PLATFORM_NAME: &str = "ios";
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -329,6 +404,26 @@ mod tests {
             });
         }
         assert!(cam.pitch <= 0.5 + 1e-3);
+    }
+
+    #[test]
+    fn mobile_target_current_resolves_at_compile_time() {
+        let t = MobileTarget::current();
+        // On a host build (Mac / Linux / Windows dev box) the target is
+        // Other; iOS / Android cross-builds will return their variant.
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        assert_eq!(t, MobileTarget::Other);
+        assert!(!MobileTarget::Other.is_mobile());
+        assert!(MobileTarget::Ios.is_mobile());
+        assert!(MobileTarget::Android.is_mobile());
+        let _ = t;
+    }
+
+    #[test]
+    fn mobile_build_hints_returns_configuration_string() {
+        let h = mobile_build_hints();
+        assert!(h.contains("cdylib"));
+        assert!(h.contains("staticlib"));
     }
 
     #[test]
