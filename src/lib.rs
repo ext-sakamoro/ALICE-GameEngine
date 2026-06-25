@@ -109,6 +109,7 @@ pub mod sprite_render;
 pub mod text;
 pub mod texture;
 pub mod verse;
+pub mod volumetric_clouds;
 
 // ---------------------------------------------------------------------------
 // Feature-gated modules
@@ -196,6 +197,9 @@ pub use text::{BitmapFont, TextLayout};
 pub use texture::{GpuTextureDesc, TextureAsset};
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
+};
+pub use volumetric_clouds::{
+    cloud_density, march_cloud_ray, CloudRayResult, VolumetricCloudConfig,
 };
 pub use xr::{
     MockProvider, XrAction, XrActionSet, XrAppCallbacks, XrBlendMode, XrConfig, XrError,

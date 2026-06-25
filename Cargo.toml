@@ -127,6 +127,10 @@ path = "templates/env_probe_demo.rs"
 name = "hair_demo"
 path = "templates/hair_demo.rs"
 
+[[example]]
+name = "volumetric_clouds_demo"
+path = "templates/volumetric_clouds_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

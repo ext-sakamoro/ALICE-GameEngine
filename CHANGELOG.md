@@ -23,6 +23,15 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`volumetric_clouds`** — Raymarched volumetric cloud module
+  (Horizon Zero Dawn / Wicked Engine style). `VolumetricCloudConfig`
+  (coverage / density / wind / altitude band / step count / sun),
+  `cloud_density(world_pos, time, config)` (FBM base + detail erosion
+  + height window), `march_cloud_ray(origin, dir, time, config) →
+  CloudRayResult` (Beer's-law transmittance + HG scattering). Demo:
+  `cargo run --example volumetric_clouds_demo` (ASCII sky at three
+  coverage levels + wind advection).
+
 - **`hair`** — CPU hair / grass strand simulator. `HairConfig`
   (segments / length / wind_strength / gravity / stiffness / LOD),
   `HairSystem::add_strand` + `simulate(dt, wind)` does Verlet

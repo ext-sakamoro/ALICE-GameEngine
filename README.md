@@ -70,6 +70,9 @@ Feature flags pick what you compile:
 - **Hair / grass strands** — `HairSystem` Verlet strand integrator
   with wind sway, length constraint, per-strand seed, LOD cutoff.
   `cargo run --example hair_demo`
+- **Volumetric clouds** — `VolumetricCloudConfig` + `march_cloud_ray`
+  with FBM noise, height window, Beer-HG scattering. `cargo run
+  --example volumetric_clouds_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -160,6 +163,7 @@ cargo run --example light_culling_demo --features gpu  # tiled cull: 128 lights 
 cargo run --example ocean_demo         # Tessendorf FFT ocean ASCII heightmap (no deps)
 cargo run --example env_probe_demo     # Cubemap + irradiance/radiance prefilter
 cargo run --example hair_demo          # 64 grass strands swayed by wind
+cargo run --example volumetric_clouds_demo # ASCII sky with FBM clouds
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full
