@@ -51,6 +51,7 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | Humanoid (VRM 1.0) | `let mut h = Humanoid::new(); h.bind(HumanoidBone::head, idx); h.meets_required(); let mut e = ExpressionSet::new(); e.set(ExpressionChannel::Aa, 0.8);` |
 | 3D Gaussian Splatting | `let mut c = GaussianCloud::new(); c.add(Splat::isotropic(pos, 0.05, color, 0.8)); let projected = c.prepare_frame(view, proj);` |
 | DDGI volume | `let mut v = DdgiVolume::new(DdgiConfig::default()); v.update_probe_irradiance(idx, &samples); v.sample_irradiance(world, dir);` |
+| GPU BVH + radix sort | `let bvh = Bvh::build(&aabbs, 4); morton3_unit(p); radix_sort_u32_pairs(&mut pairs);` |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

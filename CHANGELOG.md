@@ -23,6 +23,14 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`gpu_bvh`** — CPU-side BVH + Morton-code radix sort. `Aabb`
+  (union / centre / surface_area), `morton3_unit(xyz)` (30-bit
+  Z-curve code in unit cube), `radix_sort_u32_pairs` (stable LSD
+  3-pass × 11-bit, payload-preserving), `Bvh::build(aabbs, leaf_size)`
+  (Morton-sorted, median-split top-down build). Same radix sort
+  feeds Gaussian splat tile bins and particle / collision broadphase.
+  Demo: `cargo run --example gpu_bvh_demo`.
+
 - **`ddgi`** — Dynamic Diffuse Global Illumination (Majercik et al.
   2019). `DdgiConfig` (grid / spacing / resolution / hysteresis),
   `DdgiVolume::update_probe_irradiance` (low-pass filter blending),

@@ -81,6 +81,9 @@ Feature flags pick what you compile:
   run --example gaussian_splat_demo`
 - **DDGI** — `DdgiVolume` probe grid + octahedral irradiance +
   trilinear 8-probe blend. `cargo run --example ddgi_demo`
+- **GPU BVH + radix sort** — `Bvh::build` (Morton-sorted, median-
+  split), reusable `radix_sort_u32_pairs`. `cargo run --example
+  gpu_bvh_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -175,6 +178,7 @@ cargo run --example volumetric_clouds_demo # ASCII sky with FBM clouds
 cargo run --example humanoid_demo      # VRM humanoid binding + lip-sync expression
 cargo run --example gaussian_splat_demo  # 200 splats projected + depth sorted
 cargo run --example ddgi_demo          # 4×4×4 DDGI probe volume + trilinear sample
+cargo run --example gpu_bvh_demo       # Morton-sorted BVH over 64 AABBs + radix sort
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full
