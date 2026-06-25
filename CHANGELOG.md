@@ -23,6 +23,38 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 7 — end-to-end demos + Android app
+
+- **virtual_shadow caster demo** —
+  `templates/virtual_shadow_demo.rs` allocates one atlas page,
+  runs a depth-only render pass through
+  `VirtualShadowGpu::render_caster_to_page` writing a fixed depth
+  (`0.42`), then reads back the centre + a foreign-page texel to
+  prove the viewport restriction. Verified on Apple M3
+  (= inside `0.420`, outside `1.000`).
+
+- **Android Studio sample app** — new `android/` directory ships
+  a complete minimum-viable Android Studio project:
+  `settings.gradle.kts` / `build.gradle.kts` / `app/build.gradle.kts`
+  + `AndroidManifest.xml` + `AliceGameEngine.java` (JNI wrapper,
+  `AutoCloseable`, opaque `long` handle, phase constants) +
+  `MainActivity.java` (Choreographer-driven tick + touch
+  forwarding). Native build path documented in `android/README.md`
+  (= `cargo-ndk` 一発で `libalice_game_engine.so` ⇒
+  `jniLibs/arm64-v8a/`).
+
+- **Cubemap sky GPU demo** —
+  `templates/cubemap_sky_demo.rs` runs
+  `render_sky_to_faces` on a real GPU, reads back all 6 faces of
+  the `Rgba16Float` cube texture, decodes the centre half-float
+  texel per face, and asserts the procedural sky filled the texture
+  with the expected gradient. Verified on Apple M3 (= +Y zenith
+  blue / -Y horizon warm / sides smooth gradient).
+
+- **`virtual_shadow` atlas texture usage** — `COPY_SRC` added so
+  shadow data can be read back to host memory (= unit tests, screen
+  capture, debug overlays).
+
 ### v0.7 wave 6 — driver demos + JNI bridge
 
 Closes the four residual items from Wave 5.

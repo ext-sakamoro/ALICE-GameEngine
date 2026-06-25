@@ -177,6 +177,16 @@ name = "gpu_bvh_refit_demo"
 path = "templates/gpu_bvh_refit_demo.rs"
 required-features = ["gpu"]
 
+[[example]]
+name = "virtual_shadow_demo"
+path = "templates/virtual_shadow_demo.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "cubemap_sky_demo"
+path = "templates/cubemap_sky_demo.rs"
+required-features = ["gpu"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"

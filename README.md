@@ -130,6 +130,12 @@ Feature flags pick what you compile:
 - **VRM → Humanoid bind** — `Humanoid::bind_from_vrm(&VrmExtract)`
 - **Android JNI scaffold** — `alice_ge_create` /
   `alice_ge_tick` / `alice_ge_touch` / `alice_ge_destroy` C ABI
+- **Android Studio sample app** — `android/` 直下に Gradle
+  プロジェクト一式、`cargo-ndk` で .so 生成 → APK build 可能
+- **virtual_shadow caster demo** — Apple M3 で 1 page depth
+  write + viewport restriction 検証済
+- **Cubemap sky GPU demo** — Apple M3 で 6 face 全てに sky 描画
+  済 (+Y zenith, -Y horizon, sides gradient)
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
