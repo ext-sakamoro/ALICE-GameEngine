@@ -117,6 +117,9 @@ pub mod gpu;
 #[cfg(feature = "gpu")]
 pub mod renderer;
 
+#[cfg(feature = "gpu")]
+pub mod light_culling;
+
 #[cfg(feature = "window")]
 pub mod ui_renderer;
 
@@ -163,6 +166,8 @@ pub use import::{detect_format, ProjectFormat};
 pub use input::{ActionMap, InputState, Key, MouseButton};
 pub use jobs::{dispatch, execute, wait, JobArgs, JobContext};
 pub use joint::{solve_joints, Joint, JointKind, RagdollDef};
+#[cfg(feature = "gpu")]
+pub use light_culling::{LightCullingConfig, TileLightList, TiledLightCuller};
 pub use llm::{LlmProvider, LlmRequest, LlmResponse, MockLlm, NpcContext};
 pub use lod::{LodGroup, LodLevel, LodSelection};
 pub use lut_postprocess::{load_cube_file, Lut3DData, LutPostProcess};

@@ -43,6 +43,7 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | Slider (prismatic) joint | `Joint::slider(a, b, axis, min_offset, max_offset)` — 1-axis slide, perpendicular lock + min/max clamp |
 | Fixed (weld) joint | `Joint::fixed(a, b, offset)` — holds `B - A == offset` |
 | Cone twist (humanoid) joint | `Joint::cone_twist(a, b, twist_axis, swing_half_angle, twist_half_angle)` — swing clamp; twist limit reserved for future angular solver |
+| Tiled light culling (`gpu` feature) | `let culler = TiledLightCuller::new(LightCullingConfig::default(), w, h); let tiles = culler.cull(&lights, view, proj);` — 16-px tiles, max 64 lights/tile, directional listed separately |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

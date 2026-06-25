@@ -110,6 +110,11 @@ path = "templates/job_system_demo.rs"
 name = "constraint_demo"
 path = "templates/constraint_demo.rs"
 
+[[example]]
+name = "light_culling_demo"
+path = "templates/light_culling_demo.rs"
+required-features = ["gpu"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"

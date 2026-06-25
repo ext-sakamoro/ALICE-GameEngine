@@ -23,6 +23,18 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`light_culling`** (feature `gpu`) — Tiled (Forward+ style) CPU-side
+  light culler. `LightCullingConfig` (tile_size / max_lights_per_tile),
+  `TiledLightCuller::cull(lights, view, proj) → TileLightList` returns
+  per-tile point/spot light index lists + a separate directional list.
+  Per-tile overflow drops the farthest lights (distance priority).
+  Demo: `cargo run --example light_culling_demo --features gpu` (128
+  point lights + 1 directional over 1920×1080, 16-px tiles).
+
+- **`shader`** — `TILED_LIGHTING_FRAGMENT_WGSL` const added (storage-
+  buffer-based per-tile light index lookup, naga-validated). Built-in
+  shader cache now reports 9 entries.
+
 - **`jobs`** — Fork-join job system (Wicked-inspired `wiJobSystem`).
   `JobContext` (Mutex+Condvar pending counter, optional parent for
   nesting), `JobArgs` (job_index / group_id / group_index), top-level

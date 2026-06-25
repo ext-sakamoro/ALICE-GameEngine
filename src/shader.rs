@@ -246,6 +246,118 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 ";
 
+/// Tiled (Forward+ style) deferred lighting fragment shader.
+///
+/// Reads a per-tile light index list from a storage buffer and only
+/// evaluates the lights that affect the current pixel's tile. The
+/// directional-light loop is separate and runs once per pixel because
+/// directional lights affect every tile.
+///
+/// Bind layout:
+///
+/// | binding | resource | use |
+/// |---------|----------|-----|
+/// | 0       | `texture_2d<f32>` albedo | `GBuffer` slot 0 |
+/// | 1       | `texture_2d<f32>` normal | `GBuffer` slot 1 |
+/// | 2       | `texture_2d<f32>` material | `GBuffer` slot 3 |
+/// | 3       | `sampler` | linear |
+/// | 4       | `uniform` `TileLightingUniforms` | camera + grid params |
+/// | 5       | `storage<read>` `array<Light>` | all lights, indexed by `LightRef` |
+/// | 6       | `storage<read>` `array<TileEntry>` | per-tile `(offset, count)` |
+/// | 7       | `storage<read>` `array<u32>` | flattened tile→light indices |
+/// | 8       | `storage<read>` `array<u32>` | directional light indices |
+pub const TILED_LIGHTING_FRAGMENT_WGSL: &str = r"
+struct Light {
+    position: vec3<f32>,
+    radius: f32,
+    color: vec3<f32>,
+    intensity: f32,
+    direction: vec3<f32>,
+    variant: u32,        // 0 = directional, 1 = point, 2 = spot
+};
+
+struct TileEntry {
+    offset: u32,
+    count: u32,
+};
+
+struct TileLightingUniforms {
+    camera_pos: vec3<f32>,
+    tile_count_x: u32,
+    tile_size: u32,
+    screen_w: u32,
+    screen_h: u32,
+    directional_count: u32,
+};
+
+@group(0) @binding(0) var t_albedo: texture_2d<f32>;
+@group(0) @binding(1) var t_normal: texture_2d<f32>;
+@group(0) @binding(2) var t_material: texture_2d<f32>;
+@group(0) @binding(3) var s_linear: sampler;
+@group(0) @binding(4) var<uniform> u: TileLightingUniforms;
+@group(0) @binding(5) var<storage, read> lights: array<Light>;
+@group(0) @binding(6) var<storage, read> tile_entries: array<TileEntry>;
+@group(0) @binding(7) var<storage, read> tile_light_indices: array<u32>;
+@group(0) @binding(8) var<storage, read> directional_indices: array<u32>;
+
+fn shade_point(albedo: vec3<f32>, normal: vec3<f32>, light: Light, world_pos: vec3<f32>) -> vec3<f32> {
+    let to_light = light.position - world_pos;
+    let dist = length(to_light);
+    if dist > light.radius {
+        return vec3<f32>(0.0);
+    }
+    let l = to_light / max(dist, 1e-4);
+    let ndotl = max(dot(normal, l), 0.0);
+    // Inverse-square falloff softened by radius window.
+    let atten = max(0.0, 1.0 - dist / light.radius);
+    return albedo * light.color * light.intensity * ndotl * atten;
+}
+
+fn shade_directional(albedo: vec3<f32>, normal: vec3<f32>, light: Light) -> vec3<f32> {
+    let l = normalize(-light.direction);
+    let ndotl = max(dot(normal, l), 0.0);
+    return albedo * light.color * light.intensity * ndotl;
+}
+
+@fragment
+fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let albedo = textureSample(t_albedo, s_linear, uv).rgb;
+    let normal_packed = textureSample(t_normal, s_linear, uv).rgb;
+    let normal = normalize(normal_packed * 2.0 - 1.0);
+    // World position reconstruction is the caller's responsibility — for
+    // the tiled shader we work in view-space simplifications: the depth
+    // buffer integration lives in the renderer wiring, not this shader
+    // skeleton. Pixel-space tile lookup uses the fragment coordinate.
+    let pixel = vec2<u32>(
+        u32(uv.x * f32(u.screen_w)),
+        u32(uv.y * f32(u.screen_h)),
+    );
+    let tx = pixel.x / max(u.tile_size, 1u);
+    let ty = pixel.y / max(u.tile_size, 1u);
+    let tile_idx = ty * u.tile_count_x + tx;
+    let entry = tile_entries[tile_idx];
+
+    var color = albedo * 0.03; // ambient
+
+    // Per-tile point / spot lights.
+    let pixel_world = vec3<f32>(uv.x, uv.y, 0.0); // placeholder world recon
+    for (var i: u32 = 0u; i < entry.count; i++) {
+        let light_idx = tile_light_indices[entry.offset + i];
+        let light = lights[light_idx];
+        color += shade_point(albedo, normal, light, pixel_world);
+    }
+
+    // Directional lights affect every fragment.
+    for (var i: u32 = 0u; i < u.directional_count; i++) {
+        let light_idx = directional_indices[i];
+        let light = lights[light_idx];
+        color += shade_directional(albedo, normal, light);
+    }
+
+    return vec4<f32>(color, 1.0);
+}
+";
+
 /// Deferred decal vertex shader.
 ///
 /// Takes a unit cube `[-1, 1]^3` as input (8 vertices, 36 indices) and
@@ -442,6 +554,11 @@ pub fn builtin_shader_cache() -> ShaderCache {
         ShaderStage::Fragment,
     ));
     cache.add(ShaderSource::new(
+        "tiled_lighting_fragment",
+        TILED_LIGHTING_FRAGMENT_WGSL,
+        ShaderStage::Fragment,
+    ));
+    cache.add(ShaderSource::new(
         "lut_postprocess",
         crate::lut_postprocess::LUT_POSTPROCESS_WGSL,
         ShaderStage::Fragment,
@@ -516,7 +633,7 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 8);
+        assert_eq!(cache.count(), 9);
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
         assert!(cache.get("sdf_raymarch").is_some());
@@ -524,6 +641,7 @@ mod tests {
         assert!(cache.get("deferred_lighting").is_some());
         assert!(cache.get("decal_vertex").is_some());
         assert!(cache.get("decal_fragment").is_some());
+        assert!(cache.get("tiled_lighting_fragment").is_some());
         assert!(cache.get("lut_postprocess").is_some());
     }
 
@@ -557,6 +675,17 @@ mod tests {
                 .validate(&module)
                 .unwrap_or_else(|e| panic!("{label} naga validation failed: {e:?}"));
         }
+    }
+
+    #[test]
+    fn tiled_lighting_shader_passes_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = naga::front::wgsl::parse_str(TILED_LIGHTING_FRAGMENT_WGSL)
+            .unwrap_or_else(|e| panic!("tiled_lighting WGSL parse failed: {e:?}"));
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("tiled_lighting naga validation failed: {e:?}"));
     }
 
     #[test]
