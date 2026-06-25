@@ -23,6 +23,42 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 5 — production drivers (residual gap)
+
+Closes the four "scaffold あり / driver 未着" items left over from
+Wave 4.
+
+- **TLAS interior refit driver** —
+  `Bvh::levels_bottom_up()` returns node indices grouped by tree
+  level (leaves first, root last) for the GPU dispatcher.
+  `shader::GPU_BVH_INTERIOR_REFIT_COMPUTE_WGSL` unions each interior
+  node's children bounds (one workgroup invocation per node in the
+  current level). The bottom-up dispatch sequence is now a one-loop
+  driver: iterate over `levels_bottom_up()` and dispatch
+  `gpu_bvh_interior_refit_compute` per level.
+
+- **Cubemap sky render driver** —
+  `CubemapCaptureTargets::render_sky_to_faces(device, queue,
+  atmosphere)` builds a full wgpu render pipeline against
+  `CUBEMAP_SKY_FRAGMENT_WGSL`, allocates per-face uniform buffers
+  (= inverse view-projection + sun + horizon / zenith colors), and
+  submits a fullscreen-triangle draw into every face. The probe is
+  now populated with the procedural sky in one call.
+
+- **VRM full extract** — `parse_vrm_full(json) → VrmExtract` now
+  returns the full humanoid bone binding list and expression preset
+  weights, not just the meta block. Includes `VrmBoneBinding`
+  (`bone_name`, `node_index`) + `VrmExpressionBinding` (`preset`,
+  `weight`) and gracefully handles VRMs that omit either section.
+
+- **`virtual_shadow` GPU pipeline** —
+  `VirtualShadowGpu::new(device, atlas_pages_per_side, page_size)`
+  allocates a `Depth32Float` atlas texture + view + comparison
+  sampler (= the residency that the existing
+  `VirtualShadowMap` page table indexes into). `page_uv_offset`
+  converts a `PhysicalPageHandle` into the atlas UV offset shader
+  code reads from.
+
 ### v0.7 wave 4 — evaluation report follow-through
 
 Closes the 10 residual items from the v0.6 evaluation report (E.

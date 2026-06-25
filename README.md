@@ -116,6 +116,14 @@ Feature flags pick what you compile:
 - **Asset I/O** — VRM 1.x meta + FBX binary header + USD ASCII
   recognisers (scaffold)
 - **TUTORIAL.md** — five-step getting started
+- **TLAS bottom-up driver** — `Bvh::levels_bottom_up()` +
+  `gpu_bvh_interior_refit_compute` for one-loop GPU refit
+- **Cubemap sky render driver** —
+  `CubemapCaptureTargets::render_sky_to_faces` populates the probe
+- **VRM full extract** — `parse_vrm_full` returns bones +
+  expressions, not just meta
+- **`virtual_shadow` GPU atlas** — `VirtualShadowGpu` allocates the
+  Depth32Float atlas + comparison sampler
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

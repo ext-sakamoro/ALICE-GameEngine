@@ -172,6 +172,29 @@ pub struct Bvh {
 }
 
 impl Bvh {
+    /// Group node indices by tree level — leaf-only level first, root
+    /// last. Used as the dispatch driver for the interior-refit
+    /// compute pass: the GPU side runs one dispatch per returned slot
+    /// (bottom-up) so each interior node finds its children already
+    /// refit.
+    #[must_use]
+    pub fn levels_bottom_up(&self) -> Vec<Vec<u32>> {
+        if self.nodes.is_empty() {
+            return Vec::new();
+        }
+        let mut depth = vec![0_u32; self.nodes.len()];
+        compute_depth(&self.nodes, 0, &mut depth);
+        let max_depth = *depth.iter().max().unwrap_or(&0);
+        let mut levels: Vec<Vec<u32>> = vec![Vec::new(); (max_depth + 1) as usize];
+        for (i, d) in depth.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            levels[*d as usize].push(i as u32);
+        }
+        // depth = 0 (leaves) sits at index 0, root (max depth) at the
+        // last index — natural bottom-up dispatch order.
+        levels
+    }
+
     /// Build a leaf-only BVH from per-primitive AABBs. Sorts the
     /// primitives by Morton code first so siblings are spatially
     /// adjacent. `leaf_size` controls how many primitives end up in
@@ -244,6 +267,9 @@ impl Bvh {
         }
     }
 
+    #[allow(dead_code)]
+    fn _depth_marker() {}
+
     fn build_recursive(
         primitive_order: &[u32],
         primitive_aabbs: &[Aabb],
@@ -295,6 +321,27 @@ impl Bvh {
         nodes[node_idx as usize].right = right;
         node_idx
     }
+}
+
+fn compute_depth(nodes: &[BvhNode], idx: u32, depth: &mut [u32]) -> u32 {
+    let node = &nodes[idx as usize];
+    if node.is_leaf() {
+        depth[idx as usize] = 0;
+        return 0;
+    }
+    let l = if node.left == BvhNode::INVALID {
+        0
+    } else {
+        compute_depth(nodes, node.left, depth) + 1
+    };
+    let r = if node.right == BvhNode::INVALID {
+        0
+    } else {
+        compute_depth(nodes, node.right, depth) + 1
+    };
+    let d = l.max(r);
+    depth[idx as usize] = d;
+    d
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +459,29 @@ mod tests {
         // Root must enclose every primitive.
         assert!(root.bounds.min.x() <= 0.0);
         assert!(root.bounds.max.x() >= 8.0);
+    }
+
+    #[test]
+    fn levels_bottom_up_returns_deepest_first() {
+        // 8 cubes spread along x with leaf_size 2 → multi-level BVH.
+        let aabbs: Vec<Aabb> = (0..8)
+            .map(|i| Aabb::point(Vec3::new(i as f32, 0.0, 0.0)))
+            .collect();
+        let bvh = Bvh::build(&aabbs, 2);
+        let levels = bvh.levels_bottom_up();
+        // At least 2 levels (= leaves + root).
+        assert!(levels.len() >= 2);
+        // Final entry contains the root index 0.
+        assert!(levels.last().unwrap().contains(&0));
+        // Total nodes across levels matches bvh.nodes.len().
+        let total: usize = levels.iter().map(Vec::len).sum();
+        assert_eq!(total, bvh.nodes.len());
+    }
+
+    #[test]
+    fn levels_bottom_up_empty_tree_returns_empty() {
+        let bvh = Bvh::build(&[], 4);
+        assert!(bvh.levels_bottom_up().is_empty());
     }
 
     #[test]

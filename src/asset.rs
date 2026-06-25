@@ -233,6 +233,88 @@ pub fn parse_vrm_json(json: &str) -> Option<VrmHeader> {
     })
 }
 
+/// Bone mapping entry extracted from a VRM 1.x `humanoid.humanBones`
+/// table. `bone_name` is the canonical VRM bone identifier (e.g.
+/// `"head"`, `"leftUpperArm"`); `node_index` is the GLTF node index
+/// the bone is attached to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VrmBoneBinding {
+    pub bone_name: String,
+    pub node_index: u32,
+}
+
+/// Expression preset → blendshape morph weight pair. VRM 1.x lists
+/// these under `expressions.preset.<name>.morphTargetBinds[]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VrmExpressionBinding {
+    pub preset: String,
+    pub weight: f32,
+}
+
+/// Full VRM 1.x extract: meta + bones + expressions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VrmExtract {
+    pub header: VrmHeader,
+    pub bones: Vec<VrmBoneBinding>,
+    pub expressions: Vec<VrmExpressionBinding>,
+}
+
+/// Parse the full humanoid + expression data out of a VRM JSON chunk.
+/// Missing sections are returned as empty `Vec`s, not errors.
+#[must_use]
+pub fn parse_vrm_full(json: &str) -> Option<VrmExtract> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let header = parse_vrm_json(json)?;
+    let vrm = v.get("extensions")?.get("VRMC_vrm")?;
+
+    let bones: Vec<VrmBoneBinding> = vrm
+        .get("humanoid")
+        .and_then(|h| h.get("humanBones"))
+        .and_then(|hb| hb.as_object())
+        .map(|map| {
+            map.iter()
+                .filter_map(|(name, value)| {
+                    let node = value.get("node")?.as_u64()?;
+                    #[allow(clippy::cast_possible_truncation)]
+                    Some(VrmBoneBinding {
+                        bone_name: name.clone(),
+                        node_index: node as u32,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let expressions: Vec<VrmExpressionBinding> = vrm
+        .get("expressions")
+        .and_then(|e| e.get("preset"))
+        .and_then(|p| p.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(preset, value)| {
+                    let weight = value
+                        .get("morphTargetBinds")
+                        .and_then(|b| b.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|first| first.get("weight"))
+                        .and_then(|w| w.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    VrmExpressionBinding {
+                        preset: preset.clone(),
+                        weight,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(VrmExtract {
+        header,
+        bones,
+        expressions,
+    })
+}
+
 /// FBX binary header. Scaffold recogniser only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FbxHeader {

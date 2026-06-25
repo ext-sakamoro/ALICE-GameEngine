@@ -115,6 +115,79 @@ impl VirtualShadowMap {
 }
 
 // ---------------------------------------------------------------------------
+// GPU resources
+// ---------------------------------------------------------------------------
+
+/// GPU side of a virtual shadow map: a single 2D atlas texture sized
+/// `atlas_pages_per_side² × page_size` and shared by every probe /
+/// light. The CPU-side [`VirtualShadowMap`] owns the page table; this
+/// struct owns the `wgpu::Texture` + view used for shadow sampling.
+#[cfg(feature = "gpu")]
+pub struct VirtualShadowGpu {
+    pub atlas_texture: wgpu::Texture,
+    pub atlas_view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    pub atlas_pages_per_side: u32,
+    pub page_size: u32,
+}
+
+#[cfg(feature = "gpu")]
+impl VirtualShadowGpu {
+    /// Allocate the atlas. `atlas_pages_per_side` × `atlas_pages_per_side`
+    /// physical pages, each `page_size × page_size` texels.
+    #[must_use]
+    pub fn new(device: &wgpu::Device, atlas_pages_per_side: u32, page_size: u32) -> Self {
+        let edge = atlas_pages_per_side * page_size;
+        let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("alice-virtual-shadow-atlas"),
+            size: wgpu::Extent3d {
+                width: edge,
+                height: edge,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let atlas_view = atlas_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("alice-virtual-shadow-atlas-view"),
+            ..Default::default()
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("alice-virtual-shadow-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        Self {
+            atlas_texture,
+            atlas_view,
+            sampler,
+            atlas_pages_per_side,
+            page_size,
+        }
+    }
+
+    /// Translate a [`PhysicalPageHandle`] into the (u, v) offset of
+    /// the page's top-left corner inside the atlas, in normalised
+    /// `[0, 1]` UVs.
+    #[must_use]
+    pub fn page_uv_offset(&self, handle: PhysicalPageHandle) -> (f32, f32) {
+        let per_side = self.atlas_pages_per_side.max(1);
+        let x = handle.index % per_side;
+        let y = handle.index / per_side;
+        let inv = (per_side as f32).recip();
+        (x as f32 * inv, y as f32 * inv)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

@@ -246,6 +246,49 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 ";
 
+/// GPU BVH interior-node refit compute shader. Dispatched
+/// bottom-up: callers pass in a slice of node indices belonging to
+/// one tree level via `level_indices`, and each invocation unions
+/// the bounds of its two children.
+pub const GPU_BVH_INTERIOR_REFIT_COMPUTE_WGSL: &str = r"
+struct BvhNode {
+    bounds_min: vec3<f32>,
+    left: u32,
+    bounds_max: vec3<f32>,
+    right: u32,
+    primitive_start: u32,
+    primitive_count: u32,
+    _pad: vec2<u32>,
+};
+
+struct InteriorParams {
+    level_count: u32,
+    _pad: vec3<u32>,
+};
+
+@group(0) @binding(0) var<uniform> params: InteriorParams;
+@group(0) @binding(1) var<storage, read> level_indices: array<u32>;
+@group(0) @binding(2) var<storage, read_write> nodes: array<BvhNode>;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if i >= params.level_count {
+        return;
+    }
+    let node_idx = level_indices[i];
+    let node = nodes[node_idx];
+    // Leaves keep their bounds (already refit by gpu_bvh_refit_compute).
+    if node.primitive_count > 0u {
+        return;
+    }
+    let left = nodes[node.left];
+    let right = nodes[node.right];
+    nodes[node_idx].bounds_min = min(left.bounds_min, right.bounds_min);
+    nodes[node_idx].bounds_max = max(left.bounds_max, right.bounds_max);
+}
+";
+
 /// GPU BVH refit compute shader scaffold. Reads a flat `BvhNode`
 /// storage buffer + per-primitive `Aabb` buffer, and re-computes each
 /// internal node's bounding box bottom-up. Pair with
@@ -860,6 +903,11 @@ pub fn builtin_shader_cache() -> ShaderCache {
         ShaderStage::Compute,
     ));
     cache.add(ShaderSource::new(
+        "gpu_bvh_interior_refit_compute",
+        GPU_BVH_INTERIOR_REFIT_COMPUTE_WGSL,
+        ShaderStage::Compute,
+    ));
+    cache.add(ShaderSource::new(
         "light_culling_compute",
         LIGHT_CULLING_COMPUTE_WGSL,
         ShaderStage::Compute,
@@ -944,11 +992,12 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 14);
+        assert_eq!(cache.count(), 15);
         assert!(cache.get("light_culling_compute").is_some());
         assert!(cache.get("ddgi_update_compute").is_some());
         assert!(cache.get("cubemap_sky_fragment").is_some());
         assert!(cache.get("gpu_bvh_refit_compute").is_some());
+        assert!(cache.get("gpu_bvh_interior_refit_compute").is_some());
         assert!(cache.get("ibl_lookup").is_some());
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
@@ -991,6 +1040,17 @@ mod tests {
                 .validate(&module)
                 .unwrap_or_else(|e| panic!("{label} naga validation failed: {e:?}"));
         }
+    }
+
+    #[test]
+    fn gpu_bvh_interior_refit_shader_passes_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = naga::front::wgsl::parse_str(GPU_BVH_INTERIOR_REFIT_COMPUTE_WGSL)
+            .unwrap_or_else(|e| panic!("gpu_bvh_interior_refit_compute parse failed: {e:?}"));
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("gpu_bvh_interior_refit_compute validation failed: {e:?}"));
     }
 
     #[test]

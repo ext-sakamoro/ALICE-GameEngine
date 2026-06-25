@@ -183,6 +183,149 @@ pub struct CubemapCaptureTargets {
 
 #[cfg(feature = "gpu")]
 impl CubemapCaptureTargets {
+    /// Render the procedural sky shader
+    /// (`shader::CUBEMAP_SKY_FRAGMENT_WGSL`) into every face. Returns
+    /// the compute pipeline + uniform layout the caller can reuse
+    /// across frames; recreates the per-face dispatch on each call.
+    ///
+    /// Sun colour + horizon / zenith colours come from
+    /// `atmosphere`; the per-face inverse view-projection matrix
+    /// is computed from `cameras[i]` so each face sees the right
+    /// world directions.
+    ///
+    /// Returns the byte size of the uniform buffer it allocated, for
+    /// diagnostics only — the actual rendering is committed to
+    /// `queue` before this function returns.
+    pub fn render_sky_to_faces(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        atmosphere: &crate::sky::AtmosphereParams,
+    ) -> u64 {
+        use wgpu::util::DeviceExt;
+
+        // Build the fragment + fullscreen vertex shader modules.
+        let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("alice-cubemap-sky-vs"),
+            source: wgpu::ShaderSource::Wgsl(crate::shader::FULLSCREEN_VERTEX_WGSL.into()),
+        });
+        let fs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("alice-cubemap-sky-fs"),
+            source: wgpu::ShaderSource::Wgsl(crate::shader::CUBEMAP_SKY_FRAGMENT_WGSL.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("alice-cubemap-sky-bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("alice-cubemap-sky-pl"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("alice-cubemap-sky-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &vs_module,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &fs_module,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
+
+        // Build the per-face uniform buffer once with a max size of
+        // 192 bytes (= mat4 (64) + 4 vec3-with-pad (16 × 4 = 64) =
+        // 128 actually used + headroom). One buffer per face for
+        // simplicity; could be replaced by a dynamic offset uniform
+        // in a more optimised path.
+        let mut total_bytes = 0_u64;
+        for face in 0..6 {
+            let inv_vp = (self.cameras[face].projection * self.cameras[face].view).inverse();
+            let inv_cols = inv_vp.0.to_cols_array();
+            let mut bytes: Vec<u8> = Vec::with_capacity(112);
+            for f in inv_cols.iter() {
+                bytes.extend_from_slice(&f.to_ne_bytes());
+            }
+            let sun = atmosphere.sun_direction;
+            for v in [sun.x(), sun.y(), sun.z(), 0.0] {
+                bytes.extend_from_slice(&v.to_ne_bytes());
+            }
+            // Horizon = warmer; zenith = cooler. Derived from day_phase.
+            let day = atmosphere.day_phase.clamp(0.0, 1.0);
+            let horizon = [0.85 * day, 0.65 * day, 0.5 * day, 0.0];
+            for v in horizon.iter() {
+                bytes.extend_from_slice(&v.to_ne_bytes());
+            }
+            let zenith = [0.2 * day, 0.4 * day, 0.7 * day, 0.0];
+            for v in zenith.iter() {
+                bytes.extend_from_slice(&v.to_ne_bytes());
+            }
+            total_bytes += bytes.len() as u64;
+            let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("alice-cubemap-sky-uniform"),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("alice-cubemap-sky-bind"),
+                layout: &bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                }],
+            });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("alice-cubemap-sky-encoder"),
+            });
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("alice-cubemap-sky-face-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.face_views[face],
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+        total_bytes
+    }
+
     /// Submit a clear-only render pass into each face. The simplest
     /// possible "render driver" — useful as a sanity check that the
     /// 6 face views are wired up correctly. Production code replaces

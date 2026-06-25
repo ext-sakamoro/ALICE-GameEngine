@@ -162,6 +162,10 @@ pub mod xr;
 pub use ability::{Ability, AbilitySystem, AttributeSet, GameplayEffect};
 pub use animation::{AnimationClip, AnimationPlayer, Keyframe, StateMachine, Track};
 pub use app::{AppCallbacks, HeadlessRunner};
+pub use asset::{
+    parse_fbx_header, parse_vrm_full, parse_vrm_json, FbxHeader, VrmBoneBinding,
+    VrmExpressionBinding, VrmExtract, VrmHeader,
+};
 pub use bridge::{AudioSampleProvider, CollisionProvider, Plugin, PluginRegistry, SdfEvaluator};
 pub use camera_controller::{FpsCamera, OrbitCamera};
 pub use cloth::{ClothConfig, ClothParticle, ClothSim};
@@ -221,6 +225,8 @@ pub use texture::{GpuTextureDesc, TextureAsset};
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
 };
+#[cfg(feature = "gpu")]
+pub use virtual_shadow::VirtualShadowGpu;
 pub use virtual_shadow::{
     PhysicalPageHandle, VirtualPageId, VirtualShadowConfig, VirtualShadowMap,
 };
