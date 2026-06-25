@@ -136,6 +136,12 @@ Feature flags pick what you compile:
   write + viewport restriction 検証済
 - **Cubemap sky GPU demo** — Apple M3 で 6 face 全てに sky 描画
   済 (+Y zenith, -Y horizon, sides gradient)
+- **SDF: Adaptive MC + Dual Contouring + Shell + MC volume/area**
+  (ALICE-SDF compatible)
+- **2D SDF module** — Circle / Box / RoundedBox / Segment /
+  Triangle + 4 boolean ops + grid sampler
+- **SDF heatmap** — slice → RGBA with 4 colormaps (CoolWarm /
+  Binary / Viridis / Magma) for debug overlays
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

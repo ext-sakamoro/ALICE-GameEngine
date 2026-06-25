@@ -83,6 +83,7 @@ pub mod gpu_bvh;
 pub mod gpu_mesh;
 pub mod hair;
 pub mod hd2d_postfx;
+pub mod heatmap;
 pub mod humanoid;
 pub mod image_decode;
 pub mod import;
@@ -106,6 +107,8 @@ pub mod scene2d;
 pub mod scene_graph;
 pub mod scene_io;
 pub mod scripting;
+#[cfg(feature = "sdf")]
+pub mod sdf2d;
 pub mod sdf_assets;
 pub mod shader;
 pub mod simd_eval;
@@ -191,6 +194,7 @@ pub use gaussian_splat::{evaluate_sh_band1, GaussianCloud, ProjectedSplat, Splat
 pub use gpu_bvh::{morton3_unit, radix_sort_u32_pairs, Aabb as BvhAabb, Bvh, BvhNode};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
 pub use hair::{HairConfig, HairStrand, HairSystem};
+pub use heatmap::{heatmap_slice, Axis as SdfAxis, Colormap as SdfColormap};
 pub use humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};
 pub use image_decode::{decode_bmp, DecodedImage, ImageDecoder};
 pub use import::{detect_format, ProjectFormat};

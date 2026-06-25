@@ -23,6 +23,36 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 8 — ALICE-SDF feature port
+
+Adopts six high-value features from `ALICE-SDF` so the engine's
+in-tree SDF support catches up to the standalone crate without
+adding it as a dependency.
+
+- **Adaptive Marching Cubes** (`sdf::adaptive_marching_cubes`) —
+  octree refinement on top of the existing MC: skips empty octants,
+  subdivides only where corner-vs-centre error exceeds a threshold,
+  falls back to the standard `marching_cubes` at the leaves.
+- **Dual Contouring** (`sdf::dual_contouring`) — one vertex per cell
+  placed at the average surface intersection plus stitched quads
+  across sign-changing edges. Sharp edges survive better than MC;
+  QEF refinement omitted for now (= still close to ALICE-SDF
+  output for organic shapes).
+- **`sdf::shell_offset`** — `(eval(p) + offset).abs() - thickness/2`
+  turns any SDF into a hollow shell, with optional offset shift.
+- **Volume / Surface Area Monte Carlo** (`sdf::volume_monte_carlo`,
+  `sdf::surface_area_monte_carlo`) — deterministic PRNG samples a
+  bounding box and returns `(estimate, standard_error)`. Validated
+  against the unit sphere's known volume and area.
+- **`sdf2d` module** — 5 primitives (`Circle`, `Box`, `RoundedBox`,
+  `Segment`, `Triangle`) + 4 boolean ops (Union / Intersect /
+  Subtract / SmoothUnion) + `sample_grid` for icon / font /
+  UI-mask rasterisation.
+- **`heatmap` module** — `heatmap_slice(node, axis, depth, ...)`
+  samples an SDF slice and returns an RGBA buffer ready to upload
+  to `Rgba8Unorm`. Four scientific colormaps (CoolWarm, Binary,
+  Viridis, Magma).
+
 ### v0.7 wave 7 — end-to-end demos + Android app
 
 - **virtual_shadow caster demo** —

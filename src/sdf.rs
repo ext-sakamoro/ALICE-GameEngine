@@ -859,6 +859,350 @@ pub fn marching_cubes_parallel(
 // Tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Wave 8: ALICE-SDF-inspired extensions
+// ---------------------------------------------------------------------------
+
+/// `Self::eval(p) + offset).abs() - thickness * 0.5` — turns a solid
+/// SDF into a hollow shell of the configured thickness around its
+/// surface, optionally shifted by `offset` along the normal. Mirrors
+/// the ALICE-SDF `shell` modifier.
+#[must_use]
+pub fn shell_offset(node: &SdfNode, p: Vec3, thickness: f32, offset: f32) -> f32 {
+    (node.eval(p) + offset).abs() - thickness * 0.5
+}
+
+/// Monte-Carlo volume estimate by sampling uniform random points
+/// inside `[min, max]^3` and counting interior hits. Returns
+/// `(volume, standard_error)` in the same units as `(max - min)^3`.
+#[must_use]
+pub fn volume_monte_carlo(
+    node: &SdfNode,
+    min: Vec3,
+    max: Vec3,
+    samples: u32,
+    seed: u32,
+) -> (f32, f32) {
+    let extent = max - min;
+    let box_volume = extent.x() * extent.y() * extent.z();
+    if samples == 0 || box_volume <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let mut state = seed.max(1);
+    let mut hits = 0_u32;
+    let inv_max = 1.0 / (u32::MAX as f32 + 1.0);
+    for _ in 0..samples {
+        let x = next_rand_01(&mut state, inv_max);
+        let y = next_rand_01(&mut state, inv_max);
+        let z = next_rand_01(&mut state, inv_max);
+        let p = min + Vec3::new(extent.x() * x, extent.y() * y, extent.z() * z);
+        if node.eval(p) <= 0.0 {
+            hits += 1;
+        }
+    }
+    let p_hit = (hits as f32) / (samples as f32);
+    let volume = p_hit * box_volume;
+    // Standard error of a Bernoulli estimator times box volume.
+    let stderr = box_volume * (p_hit * (1.0 - p_hit) / (samples as f32)).sqrt();
+    (volume, stderr)
+}
+
+/// Monte-Carlo surface area estimate via a narrow band around the
+/// zero level set: counts points whose SDF magnitude is below `band`
+/// and divides by `2 * band` to get a length × box-volume estimate.
+#[must_use]
+pub fn surface_area_monte_carlo(
+    node: &SdfNode,
+    min: Vec3,
+    max: Vec3,
+    samples: u32,
+    band: f32,
+    seed: u32,
+) -> (f32, f32) {
+    let extent = max - min;
+    let box_volume = extent.x() * extent.y() * extent.z();
+    if samples == 0 || box_volume <= 0.0 || band <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let mut state = seed.max(1);
+    let mut hits = 0_u32;
+    let inv_max = 1.0 / (u32::MAX as f32 + 1.0);
+    for _ in 0..samples {
+        let x = next_rand_01(&mut state, inv_max);
+        let y = next_rand_01(&mut state, inv_max);
+        let z = next_rand_01(&mut state, inv_max);
+        let p = min + Vec3::new(extent.x() * x, extent.y() * y, extent.z() * z);
+        if node.eval(p).abs() <= band {
+            hits += 1;
+        }
+    }
+    let p_hit = (hits as f32) / (samples as f32);
+    // band * 2 wide slab -> area = (volume of slab) / (2 * band).
+    let area = p_hit * box_volume / (2.0 * band);
+    let stderr = box_volume * (p_hit * (1.0 - p_hit) / (samples as f32)).sqrt() / (2.0 * band);
+    (area, stderr)
+}
+
+fn next_rand_01(state: &mut u32, inv_max: f32) -> f32 {
+    *state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+    (*state as f32) * inv_max
+}
+
+/// Adaptive Marching Cubes (ALICE-SDF style): recursively subdivides
+/// the input box into octants and runs the standard MC on each
+/// octant. Cells whose interior is uniformly inside or outside
+/// (= `|sdf at center| > diag`) are skipped entirely; cells whose
+/// gradient changes a lot (= `error > threshold`) are subdivided up
+/// to `max_subdivision` times. Falls back to the standard
+/// `marching_cubes` at the leaves.
+#[must_use]
+pub fn adaptive_marching_cubes(
+    node: &SdfNode,
+    min: Vec3,
+    max: Vec3,
+    base_resolution: u32,
+    max_subdivision: u32,
+    error_threshold: f32,
+) -> SdfMesh {
+    let mut acc = SdfMesh {
+        vertices: Vec::new(),
+        indices: Vec::new(),
+    };
+    refine_octant(
+        node,
+        min,
+        max,
+        base_resolution,
+        max_subdivision,
+        error_threshold,
+        &mut acc,
+    );
+    acc
+}
+
+fn refine_octant(
+    node: &SdfNode,
+    min: Vec3,
+    max: Vec3,
+    base_resolution: u32,
+    levels_left: u32,
+    threshold: f32,
+    acc: &mut SdfMesh,
+) {
+    let centre = (min + max) * 0.5;
+    let half = (max - min) * 0.5;
+    let diag = (half.x() * half.x() + half.y() * half.y() + half.z() * half.z()).sqrt();
+    let centre_d = node.eval(centre);
+    // Conservative empty / full octant skip — Lipschitz-1 SDF
+    // assumption (= classic raymarcher precondition).
+    if centre_d.abs() > diag {
+        return;
+    }
+    // Estimate error as max corner deviation from the centre value.
+    let mut max_corner_diff = 0.0_f32;
+    for sx in [-1.0_f32, 1.0] {
+        for sy in [-1.0_f32, 1.0] {
+            for sz in [-1.0_f32, 1.0] {
+                let corner = centre + Vec3::new(sx * half.x(), sy * half.y(), sz * half.z());
+                let d = node.eval(corner);
+                let diff = (d - centre_d).abs();
+                if diff > max_corner_diff {
+                    max_corner_diff = diff;
+                }
+            }
+        }
+    }
+    if levels_left == 0 || max_corner_diff < threshold {
+        let part = marching_cubes(node, min, max, base_resolution);
+        let base = acc.vertices.len() as u32;
+        acc.vertices.extend(part.vertices);
+        for idx in part.indices {
+            acc.indices.push(base + idx);
+        }
+        return;
+    }
+    for sx in 0..2 {
+        for sy in 0..2 {
+            for sz in 0..2 {
+                let sub_min = Vec3::new(
+                    if sx == 0 { min.x() } else { centre.x() },
+                    if sy == 0 { min.y() } else { centre.y() },
+                    if sz == 0 { min.z() } else { centre.z() },
+                );
+                let sub_max = Vec3::new(
+                    if sx == 0 { centre.x() } else { max.x() },
+                    if sy == 0 { centre.y() } else { max.y() },
+                    if sz == 0 { centre.z() } else { max.z() },
+                );
+                refine_octant(
+                    node,
+                    sub_min,
+                    sub_max,
+                    base_resolution,
+                    levels_left - 1,
+                    threshold,
+                    acc,
+                );
+            }
+        }
+    }
+}
+
+/// Dual Contouring (simplified): one vertex per cell, placed at the
+/// average of the surface intersections along the 12 cube edges.
+/// Sharp edges survive better than Marching Cubes because every
+/// cell contributes its own vertex; this implementation omits the
+/// QEF step (= the ALICE-SDF full DC) for brevity.
+#[must_use]
+pub fn dual_contouring(node: &SdfNode, min: Vec3, max: Vec3, res: u32) -> SdfMesh {
+    let res = res.max(2);
+    let step = Vec3::new(
+        (max.x() - min.x()) / res as f32,
+        (max.y() - min.y()) / res as f32,
+        (max.z() - min.z()) / res as f32,
+    );
+    let cell = |i: u32, j: u32, k: u32| -> Vec3 {
+        Vec3::new(
+            min.x() + step.x() * i as f32,
+            min.y() + step.y() * j as f32,
+            min.z() + step.z() * k as f32,
+        )
+    };
+    let edges = [
+        ([0_u32, 0, 0], [1_u32, 0, 0]),
+        ([0, 0, 0], [0, 1, 0]),
+        ([0, 0, 0], [0, 0, 1]),
+        ([1, 0, 0], [1, 1, 0]),
+        ([1, 0, 0], [1, 0, 1]),
+        ([0, 1, 0], [1, 1, 0]),
+        ([0, 1, 0], [0, 1, 1]),
+        ([0, 0, 1], [1, 0, 1]),
+        ([0, 0, 1], [0, 1, 1]),
+        ([1, 1, 0], [1, 1, 1]),
+        ([1, 0, 1], [1, 1, 1]),
+        ([0, 1, 1], [1, 1, 1]),
+    ];
+
+    let cell_idx = |i: u32, j: u32, k: u32| (k * res * res + j * res + i) as usize;
+    let mut vertices: Vec<MeshVertex> = Vec::new();
+    let mut vertex_at_cell: Vec<i32> = vec![-1; (res * res * res) as usize];
+
+    for k in 0..res {
+        for j in 0..res {
+            for i in 0..res {
+                let base = cell(i, j, k);
+                let mut acc = Vec3::ZERO;
+                let mut count = 0_u32;
+                for ([a0, a1, a2], [b0, b1, b2]) in edges {
+                    let a = base
+                        + Vec3::new(
+                            step.x() * a0 as f32,
+                            step.y() * a1 as f32,
+                            step.z() * a2 as f32,
+                        );
+                    let b = base
+                        + Vec3::new(
+                            step.x() * b0 as f32,
+                            step.y() * b1 as f32,
+                            step.z() * b2 as f32,
+                        );
+                    let da = node.eval(a);
+                    let db = node.eval(b);
+                    if (da > 0.0) == (db > 0.0) {
+                        continue;
+                    }
+                    let t = da / (da - db);
+                    let p = a + (b - a) * t.clamp(0.0, 1.0);
+                    acc = acc + p;
+                    count += 1;
+                }
+                if count > 0 {
+                    let pos = acc * (count as f32).recip();
+                    let n = sample_normal(node, pos, 1e-3);
+                    vertex_at_cell[cell_idx(i, j, k)] = vertices.len() as i32;
+                    vertices.push(MeshVertex {
+                        position: pos,
+                        normal: n,
+                    });
+                }
+            }
+        }
+    }
+
+    // Stitch quads across each grid edge that has a sign change.
+    let mut indices = Vec::new();
+    for k in 0..res.saturating_sub(1) {
+        for j in 0..res.saturating_sub(1) {
+            for i in 0..res.saturating_sub(1) {
+                for axis in 0..3 {
+                    let a = [i, j, k];
+                    let mut b = [i, j, k];
+                    b[axis] += 1;
+                    let pa = cell(a[0], a[1], a[2]);
+                    let pb = cell(b[0], b[1], b[2]);
+                    let da = node.eval(pa);
+                    let db = node.eval(pb);
+                    if (da > 0.0) == (db > 0.0) {
+                        continue;
+                    }
+                    let neighbours = match axis {
+                        0 => [
+                            [i, j, k],
+                            [i, j, k.saturating_sub(1)],
+                            [i, j.saturating_sub(1), k.saturating_sub(1)],
+                            [i, j.saturating_sub(1), k],
+                        ],
+                        1 => [
+                            [i, j, k],
+                            [i, j, k.saturating_sub(1)],
+                            [i.saturating_sub(1), j, k.saturating_sub(1)],
+                            [i.saturating_sub(1), j, k],
+                        ],
+                        _ => [
+                            [i, j, k],
+                            [i.saturating_sub(1), j, k],
+                            [i.saturating_sub(1), j.saturating_sub(1), k],
+                            [i, j.saturating_sub(1), k],
+                        ],
+                    };
+                    let mut quad = [-1_i32; 4];
+                    for (slot, n) in neighbours.iter().enumerate() {
+                        let v = vertex_at_cell[cell_idx(n[0], n[1], n[2])];
+                        quad[slot] = v;
+                    }
+                    if quad.iter().any(|v| *v < 0) {
+                        continue;
+                    }
+                    indices.push(quad[0] as u32);
+                    indices.push(quad[1] as u32);
+                    indices.push(quad[2] as u32);
+                    indices.push(quad[0] as u32);
+                    indices.push(quad[2] as u32);
+                    indices.push(quad[3] as u32);
+                }
+            }
+        }
+    }
+
+    let _ = vertex_at_cell;
+    SdfMesh { vertices, indices }
+}
+
+fn sample_normal(node: &SdfNode, p: Vec3, eps: f32) -> Vec3 {
+    let dx = node.eval(Vec3::new(p.x() + eps, p.y(), p.z()))
+        - node.eval(Vec3::new(p.x() - eps, p.y(), p.z()));
+    let dy = node.eval(Vec3::new(p.x(), p.y() + eps, p.z()))
+        - node.eval(Vec3::new(p.x(), p.y() - eps, p.z()));
+    let dz = node.eval(Vec3::new(p.x(), p.y(), p.z() + eps))
+        - node.eval(Vec3::new(p.x(), p.y(), p.z() - eps));
+    let n = Vec3::new(dx, dy, dz);
+    if n.length() < 1e-8 {
+        Vec3::new(0.0, 1.0, 0.0)
+    } else {
+        n.normalize()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1225,6 +1569,72 @@ mod tests {
             Vec3::new(2.0, 2.0, 2.0),
             8,
         );
+        assert!(mesh.vertex_count() > 0);
+        assert!(mesh.triangle_count() > 0);
+    }
+
+    #[test]
+    fn shell_offset_around_sphere_surface_is_near_zero() {
+        let n = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let d = shell_offset(&n, Vec3::new(1.0, 0.0, 0.0), 0.1, 0.0);
+        // Surface of sphere → eval = 0 → |0| - 0.05 = -0.05 (inside shell).
+        assert!(d.abs() < 0.06, "got {d}");
+    }
+
+    #[test]
+    fn volume_monte_carlo_estimates_unit_sphere() {
+        let n = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let (v, err) = volume_monte_carlo(
+            &n,
+            Vec3::new(-1.5, -1.5, -1.5),
+            Vec3::new(1.5, 1.5, 1.5),
+            5000,
+            7,
+        );
+        let expected = (4.0 / 3.0) * std::f32::consts::PI;
+        assert!(
+            (v - expected).abs() < 0.5,
+            "volume = {v}, expected ≈ {expected}, err = {err}"
+        );
+    }
+
+    #[test]
+    fn surface_area_monte_carlo_estimates_unit_sphere() {
+        let n = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let (a, _) = surface_area_monte_carlo(
+            &n,
+            Vec3::new(-1.5, -1.5, -1.5),
+            Vec3::new(1.5, 1.5, 1.5),
+            20000,
+            0.05,
+            42,
+        );
+        let expected = 4.0 * std::f32::consts::PI;
+        assert!(
+            (a - expected).abs() < 4.0,
+            "area = {a}, expected ≈ {expected}"
+        );
+    }
+
+    #[test]
+    fn adaptive_mc_produces_some_geometry_for_sphere() {
+        let n = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let mesh = adaptive_marching_cubes(
+            &n,
+            Vec3::new(-1.5, -1.5, -1.5),
+            Vec3::new(1.5, 1.5, 1.5),
+            4,
+            2,
+            0.4,
+        );
+        assert!(mesh.vertex_count() > 0);
+        assert!(mesh.triangle_count() > 0);
+    }
+
+    #[test]
+    fn dual_contouring_produces_geometry_for_sphere() {
+        let n = SdfNode::Primitive(SdfPrimitive::Sphere { radius: 1.0 });
+        let mesh = dual_contouring(&n, Vec3::new(-1.5, -1.5, -1.5), Vec3::new(1.5, 1.5, 1.5), 8);
         assert!(mesh.vertex_count() > 0);
         assert!(mesh.triangle_count() > 0);
     }
