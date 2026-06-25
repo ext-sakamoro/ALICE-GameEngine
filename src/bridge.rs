@@ -421,6 +421,106 @@ impl Default for PluginRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// Wave 11: ALICE-xxx eco-system bridges
+// ---------------------------------------------------------------------------
+
+/// Topic-based publish/subscribe + scene state mirror. Implementors
+/// connect to ALICE-Sync (or any other multiplayer / cross-process
+/// sync backend) and expose a uniform API the engine can call from
+/// its frame loop.
+pub trait SyncProvider: Send + Sync {
+    fn publish(&mut self, topic: &str, payload: &[u8]);
+    fn poll(&mut self) -> Vec<SyncMessage>;
+    fn subscribed_topics(&self) -> Vec<String>;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncMessage {
+    pub topic: String,
+    pub payload: Vec<u8>,
+}
+
+/// AI / NPC decision-making backend. Implementors plug ALICE-Cognitive
+/// (or any custom behaviour tree / utility-AI / LLM-driven brain)
+/// into the engine's gameplay loop.
+pub trait CognitiveProvider: Send + Sync {
+    fn perceive(&mut self, observation: &str);
+    fn decide(&mut self) -> CognitiveAction;
+    fn learn(&mut self, reward: f32);
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CognitiveAction {
+    Idle,
+    Move {
+        target_x: f32,
+        target_y: f32,
+        target_z: f32,
+    },
+    Speak {
+        utterance: String,
+    },
+    UseAbility {
+        ability_id: u32,
+    },
+    Custom {
+        name: String,
+        payload: String,
+    },
+}
+
+/// Audio / video codec backend. Implementors expose ALICE-Codec
+/// (or any custom encoder) so the engine can capture replays and
+/// stream cinematics without statically depending on a specific
+/// codec crate.
+pub trait MediaCodec: Send + Sync {
+    fn encode_frame(&mut self, pixels: &[u8], width: u32, height: u32) -> Vec<u8>;
+    fn decode_frame(&mut self, encoded: &[u8]) -> Option<DecodedMediaFrame>;
+    fn format_name(&self) -> &str;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedMediaFrame {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// ALICE-LOL DSL compiler. Implementors translate LOL source code
+/// (or compiled bytecode) into the engine's SDF JSON so authors can
+/// drive scenes from natural-language-like declarations.
+pub trait LolScriptProvider: Send + Sync {
+    /// Compile `source` into a JSON string that the engine feeds into
+    /// `sdf_assets::load_asdf` or `asset::load_sdf_json`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when the LOL source fails to compile.
+    fn compile_lol(&mut self, source: &str) -> Result<String, String>;
+}
+
+/// VFX provider (ALICE-Visual). Lets the engine spawn higher-level
+/// effects (impact bursts, weather, scripted cinematics) without
+/// depending on a specific VFX implementation.
+pub trait VfxProvider: Send + Sync {
+    fn spawn_effect(&mut self, name: &str, position_x: f32, position_y: f32, position_z: f32);
+    fn active_effect_count(&self) -> usize;
+}
+
+/// Asset cache provider (ALICE-Cache). The engine queries this for
+/// streamed / network-loaded resources and offloads eviction to the
+/// implementor.
+pub trait AssetCacheProvider: Send + Sync {
+    fn get(&self, key: &str) -> Option<Vec<u8>>;
+    fn put(&mut self, key: &str, value: Vec<u8>);
+    fn remove(&mut self, key: &str);
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -440,6 +540,166 @@ mod tests {
         let sdf = TestSdf;
         assert!(sdf.eval(Vec3::ZERO) < 0.0);
         assert!(sdf.eval(Vec3::new(2.0, 0.0, 0.0)) > 0.0);
+    }
+
+    // --- Wave 11 bridge tests ---
+
+    struct MockSync {
+        outbox: Vec<SyncMessage>,
+    }
+    impl SyncProvider for MockSync {
+        fn publish(&mut self, topic: &str, payload: &[u8]) {
+            self.outbox.push(SyncMessage {
+                topic: topic.to_string(),
+                payload: payload.to_vec(),
+            });
+        }
+        fn poll(&mut self) -> Vec<SyncMessage> {
+            std::mem::take(&mut self.outbox)
+        }
+        fn subscribed_topics(&self) -> Vec<String> {
+            vec!["scene".into()]
+        }
+    }
+
+    #[test]
+    fn sync_provider_round_trip() {
+        let mut s = MockSync { outbox: Vec::new() };
+        s.publish("scene", b"hi");
+        let polled = s.poll();
+        assert_eq!(polled.len(), 1);
+        assert_eq!(polled[0].topic, "scene");
+        assert_eq!(s.subscribed_topics(), vec!["scene".to_string()]);
+    }
+
+    struct MockBrain {
+        memory: Vec<String>,
+        reward_sum: f32,
+    }
+    impl CognitiveProvider for MockBrain {
+        fn perceive(&mut self, o: &str) {
+            self.memory.push(o.to_string());
+        }
+        fn decide(&mut self) -> CognitiveAction {
+            if self.memory.iter().any(|m| m.contains("enemy")) {
+                CognitiveAction::UseAbility { ability_id: 7 }
+            } else {
+                CognitiveAction::Idle
+            }
+        }
+        fn learn(&mut self, r: f32) {
+            self.reward_sum += r;
+        }
+    }
+
+    #[test]
+    fn cognitive_provider_branches_on_observation() {
+        let mut b = MockBrain {
+            memory: Vec::new(),
+            reward_sum: 0.0,
+        };
+        b.perceive("enemy spotted");
+        assert!(matches!(
+            b.decide(),
+            CognitiveAction::UseAbility { ability_id: 7 }
+        ));
+        b.learn(1.0);
+        assert!((b.reward_sum - 1.0).abs() < 1e-6);
+    }
+
+    struct PassThroughCodec;
+    impl MediaCodec for PassThroughCodec {
+        fn encode_frame(&mut self, p: &[u8], _w: u32, _h: u32) -> Vec<u8> {
+            p.to_vec()
+        }
+        fn decode_frame(&mut self, e: &[u8]) -> Option<DecodedMediaFrame> {
+            Some(DecodedMediaFrame {
+                pixels: e.to_vec(),
+                width: 1,
+                height: 1,
+            })
+        }
+        fn format_name(&self) -> &str {
+            "raw"
+        }
+    }
+
+    #[test]
+    fn codec_round_trip_returns_input() {
+        let mut c = PassThroughCodec;
+        let encoded = c.encode_frame(&[1, 2, 3], 1, 3);
+        let decoded = c.decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.pixels, vec![1, 2, 3]);
+        assert_eq!(c.format_name(), "raw");
+    }
+
+    struct MockLol;
+    impl LolScriptProvider for MockLol {
+        fn compile_lol(&mut self, source: &str) -> Result<String, String> {
+            if source.contains("sphere") {
+                Ok(r#"{"kind":"sphere","radius":1.0}"#.to_string())
+            } else {
+                Err("unsupported LOL primitive".into())
+            }
+        }
+    }
+
+    #[test]
+    fn lol_compile_translates_primitive() {
+        let mut l = MockLol;
+        let j = l.compile_lol("sphere 1").unwrap();
+        assert!(j.contains("\"sphere\""));
+        assert!(l.compile_lol("blob").is_err());
+    }
+
+    struct MockVfx {
+        active: usize,
+    }
+    impl VfxProvider for MockVfx {
+        fn spawn_effect(&mut self, _n: &str, _x: f32, _y: f32, _z: f32) {
+            self.active += 1;
+        }
+        fn active_effect_count(&self) -> usize {
+            self.active
+        }
+    }
+
+    #[test]
+    fn vfx_provider_counts_spawns() {
+        let mut v = MockVfx { active: 0 };
+        v.spawn_effect("explosion", 0.0, 0.0, 0.0);
+        v.spawn_effect("smoke", 1.0, 0.0, 0.0);
+        assert_eq!(v.active_effect_count(), 2);
+    }
+
+    struct MockCache {
+        map: std::collections::HashMap<String, Vec<u8>>,
+    }
+    impl AssetCacheProvider for MockCache {
+        fn get(&self, k: &str) -> Option<Vec<u8>> {
+            self.map.get(k).cloned()
+        }
+        fn put(&mut self, k: &str, v: Vec<u8>) {
+            self.map.insert(k.to_string(), v);
+        }
+        fn remove(&mut self, k: &str) {
+            self.map.remove(k);
+        }
+        fn len(&self) -> usize {
+            self.map.len()
+        }
+    }
+
+    #[test]
+    fn asset_cache_put_get_remove() {
+        let mut c = MockCache {
+            map: std::collections::HashMap::new(),
+        };
+        c.put("texture", vec![1, 2, 3]);
+        assert_eq!(c.get("texture"), Some(vec![1, 2, 3]));
+        assert_eq!(c.len(), 1);
+        c.remove("texture");
+        assert!(c.is_empty());
     }
 
     #[test]

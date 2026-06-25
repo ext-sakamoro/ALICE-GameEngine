@@ -176,7 +176,11 @@ pub use asset::{
     parse_fbx_header, parse_vrm_full, parse_vrm_json, FbxHeader, VrmBoneBinding,
     VrmExpressionBinding, VrmExtract, VrmHeader,
 };
-pub use bridge::{AudioSampleProvider, CollisionProvider, Plugin, PluginRegistry, SdfEvaluator};
+pub use bridge::{
+    AssetCacheProvider, AudioSampleProvider, CognitiveAction, CognitiveProvider, CollisionProvider,
+    DecodedMediaFrame, LolScriptProvider, MediaCodec, Plugin, PluginRegistry, SdfEvaluator,
+    SyncMessage, SyncProvider, VfxProvider,
+};
 pub use camera_controller::{FpsCamera, OrbitCamera};
 pub use cloth::{ClothConfig, ClothParticle, ClothSim};
 pub use collision::{gjk, ConvexHull, ConvexSphere, GjkResult};

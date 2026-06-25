@@ -23,6 +23,33 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 11 — ALICE-xxx eco-system bridges
+
+Six new `bridge::*` traits so the engine can plug into the rest of
+the ALICE Eco-System without picking up the implementing crate as
+a hard dependency. Each trait ships with a `MockX` test
+implementation that proves the contract is round-trip-safe.
+
+- **`SyncProvider`** (= ALICE-Sync) — `publish(topic, payload)` +
+  `poll()` + `subscribed_topics()` for multiplayer / scene-sync
+  pub/sub.
+- **`CognitiveProvider`** (= ALICE-Cognitive) — `perceive` /
+  `decide → CognitiveAction` (Idle / Move / Speak / UseAbility /
+  Custom) / `learn(reward)` for NPC AI brains.
+- **`MediaCodec`** (= ALICE-Codec) — `encode_frame` / `decode_frame`
+  + `format_name` for replay capture and cinematic playback.
+- **`LolScriptProvider`** (= ALICE-LOL) — `compile_lol(source) →
+  SDF JSON` so DSL authoring drops straight into the engine.
+- **`VfxProvider`** (= ALICE-Visual) — `spawn_effect(name, x, y, z)`
+  + `active_effect_count()` for higher-level VFX without a hard
+  dep on a specific VFX implementation.
+- **`AssetCacheProvider`** (= ALICE-Cache) — `get` / `put` /
+  `remove` / `len` for streamed / network-loaded resource caching.
+
+Bridge surface is now 21 traits (= 15 from Wave 0 + 6 new),
+covering every ALICE-* crate that has a sensible game-engine
+integration point.
+
 ### v0.7 wave 10 — GUI stack v2 (grid + animation + text input + notify)
 
 Builds on the Wave 9 foundation so the engine's GUI surface

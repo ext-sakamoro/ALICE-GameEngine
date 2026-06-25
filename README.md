@@ -158,6 +158,11 @@ Feature flags pick what you compile:
   backspace
 - **Notify queue** — `NotifyCenter` toasts (auto-dismiss) + modals
   (manual dismiss), 4 severities
+- **ALICE eco-system bridges (21 traits)** — Wave 11 adds
+  `SyncProvider` (ALICE-Sync), `CognitiveProvider` (ALICE-Cognitive),
+  `MediaCodec` (ALICE-Codec), `LolScriptProvider` (ALICE-LOL),
+  `VfxProvider` (ALICE-Visual), `AssetCacheProvider` (ALICE-Cache)
+  on top of the existing 15 traits
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
