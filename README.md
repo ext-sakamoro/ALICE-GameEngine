@@ -79,6 +79,8 @@ Feature flags pick what you compile:
 - **3D Gaussian Splatting** — `GaussianCloud` + per-frame projection
   + cull + back-to-front depth sort + SH band-1 evaluator. `cargo
   run --example gaussian_splat_demo`
+- **DDGI** — `DdgiVolume` probe grid + octahedral irradiance +
+  trilinear 8-probe blend. `cargo run --example ddgi_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -172,6 +174,7 @@ cargo run --example hair_demo          # 64 grass strands swayed by wind
 cargo run --example volumetric_clouds_demo # ASCII sky with FBM clouds
 cargo run --example humanoid_demo      # VRM humanoid binding + lip-sync expression
 cargo run --example gaussian_splat_demo  # 200 splats projected + depth sorted
+cargo run --example ddgi_demo          # 4×4×4 DDGI probe volume + trilinear sample
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

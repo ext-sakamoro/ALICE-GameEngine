@@ -139,6 +139,10 @@ path = "templates/humanoid_demo.rs"
 name = "gaussian_splat_demo"
 path = "templates/gaussian_splat_demo.rs"
 
+[[example]]
+name = "ddgi_demo"
+path = "templates/ddgi_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

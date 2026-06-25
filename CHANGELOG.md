@@ -23,6 +23,15 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`ddgi`** — Dynamic Diffuse Global Illumination (Majercik et al.
+  2019). `DdgiConfig` (grid / spacing / resolution / hysteresis),
+  `DdgiVolume::update_probe_irradiance` (low-pass filter blending),
+  `sample_irradiance(world, dir)` (trilinear 8-probe blend, octahedral
+  direction lookup, world-volume bounds check). `dir_to_oct` /
+  `oct_to_dir` octahedral encoding utilities. Demo:
+  `cargo run --example ddgi_demo` (warm-interior / cool-exterior
+  probe volume queried at four world positions).
+
 - **`gaussian_splat`** — 3D Gaussian Splatting (Kerbl et al. 2023)
   CPU data + per-frame projection. `Splat` (position / anisotropic
   scale / rotation / colour / opacity / SH band-1 coefficients),
