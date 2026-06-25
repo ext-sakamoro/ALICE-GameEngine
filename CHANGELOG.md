@@ -23,6 +23,13 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`hair`** — CPU hair / grass strand simulator. `HairConfig`
+  (segments / length / wind_strength / gravity / stiffness / LOD),
+  `HairSystem::add_strand` + `simulate(dt, wind)` does Verlet
+  integration with a length constraint, per-strand seed jitter, and
+  LOD cutoff. Demo: `cargo run --example hair_demo` (64 grass blades
+  swayed by a constant wind).
+
 - **`env_probe`** — Environment probe / IBL data + prefilter math.
   `EnvProbeData` (scene-graph payload), `Cubemap` (6-face RGBA32F,
   direction sampling, bilinear), `prefilter_irradiance` (cosine

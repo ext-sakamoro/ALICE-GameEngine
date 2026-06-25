@@ -67,6 +67,9 @@ Feature flags pick what you compile:
 - **Environment probes / IBL** — `Cubemap` data + CPU `prefilter_irradiance`
   / `prefilter_radiance` + `IBL_LOOKUP_WGSL`; `NodeKind::EnvProbe`
   scene integration. `cargo run --example env_probe_demo`
+- **Hair / grass strands** — `HairSystem` Verlet strand integrator
+  with wind sway, length constraint, per-strand seed, LOD cutoff.
+  `cargo run --example hair_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -156,6 +159,7 @@ cargo run --example constraint_demo    # Slider piston + Fixed weld + ConeTwist 
 cargo run --example light_culling_demo --features gpu  # tiled cull: 128 lights × 8160 tiles
 cargo run --example ocean_demo         # Tessendorf FFT ocean ASCII heightmap (no deps)
 cargo run --example env_probe_demo     # Cubemap + irradiance/radiance prefilter
+cargo run --example hair_demo          # 64 grass strands swayed by wind
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

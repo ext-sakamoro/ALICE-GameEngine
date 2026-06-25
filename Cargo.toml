@@ -123,6 +123,10 @@ path = "templates/ocean_demo.rs"
 name = "env_probe_demo"
 path = "templates/env_probe_demo.rs"
 
+[[example]]
+name = "hair_demo"
+path = "templates/hair_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"
