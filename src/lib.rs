@@ -85,6 +85,7 @@ pub mod gpu_mesh;
 pub mod grid;
 pub mod hair;
 pub mod hd2d_postfx;
+#[cfg(feature = "sdf")]
 pub mod heatmap;
 pub mod humanoid;
 pub mod image_decode;
@@ -178,8 +179,9 @@ pub use asset::{
 };
 pub use bridge::{
     AssetCacheProvider, AudioSampleProvider, CognitiveAction, CognitiveProvider, CollisionProvider,
-    DecodedMediaFrame, LolScriptProvider, MediaCodec, Plugin, PluginRegistry, SdfEvaluator,
-    SyncMessage, SyncProvider, VfxProvider,
+    CrdtSync, DecodedMediaFrame, DhtProvider, GossipMessage, GossipProvider, IceCandidate,
+    LolScriptProvider, MediaCodec, NatTraversal, PeerAddress, PeerDiscovery, PeerIdentity, Plugin,
+    PluginRegistry, SdfEvaluator, SyncMessage, SyncProvider, VfxProvider,
 };
 pub use camera_controller::{FpsCamera, OrbitCamera};
 pub use cloth::{ClothConfig, ClothParticle, ClothSim};
@@ -210,6 +212,7 @@ pub use gpu_bvh::{morton3_unit, radix_sort_u32_pairs, Aabb as BvhAabb, Bvh, BvhN
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
 pub use grid::{solve as grid_solve, GridCell, GridLayout, ResolvedCell, TrackSize};
 pub use hair::{HairConfig, HairStrand, HairSystem};
+#[cfg(feature = "sdf")]
 pub use heatmap::{heatmap_slice, Axis as SdfAxis, Colormap as SdfColormap};
 pub use humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};
 pub use image_decode::{decode_bmp, DecodedImage, ImageDecoder};

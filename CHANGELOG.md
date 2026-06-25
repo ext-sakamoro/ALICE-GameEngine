@@ -23,6 +23,34 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 12 — P2P bridge stack
+
+Six new dedicated P2P bridge traits so the engine can plug into
+real peer-to-peer stacks (libp2p, WebRTC, custom DHT) without
+owning the wire protocol. Each ships with a `Mock*` test
+implementation that exercises the contract.
+
+- **`PeerIdentity`** — `peer_id` / `sign(message)` /
+  `verify(peer_id, message, signature)` for Ed25519-style
+  authenticated peers.
+- **`PeerDiscovery`** — `announce(self_addr)` / `known_peers()`
+  (returns `PeerAddress { peer_id, multiaddr }`) / `forget(peer_id)`
+  for mDNS / DHT bootstrap / manual peer tables.
+- **`NatTraversal`** — `gather_candidates() → Vec<IceCandidate>`
+  (host / srflx / relay) / `pair_with(remote, candidates)` /
+  `punch_hole(remote)` for STUN / TURN / ICE.
+- **`DhtProvider`** — `put(key, value)` / `get(key) → Option<Vec<u8>>` /
+  `find_peers(key)` for Kademlia-style key-value lookup.
+- **`GossipProvider`** — `subscribe(topic)` / `unsubscribe(topic)` /
+  `publish(topic, payload)` / `drain_inbox() → Vec<GossipMessage>` /
+  `peer_count()` for libp2p `gossipsub`-style fanout.
+- **`CrdtSync`** — `local_update(key, value)` / `encode_delta()` /
+  `apply_delta(bytes)` / `snapshot()` for CRDT (Automerge / Yjs /
+  RGA) state convergence between peers.
+
+Bridge surface is now **27 traits** (= 15 from Wave 0 + 6 from
+Wave 11 + 6 from Wave 12).
+
 ### v0.7 wave 11 — ALICE-xxx eco-system bridges
 
 Six new `bridge::*` traits so the engine can plug into the rest of

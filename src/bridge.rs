@@ -521,6 +521,93 @@ pub trait AssetCacheProvider: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// Wave 12: P2P bridge stack
+// ---------------------------------------------------------------------------
+
+/// Public-key-based peer identity. Implementors bridge real signing
+/// keys (Ed25519, libp2p `Keypair`, etc.) to the engine without
+/// exposing the private material.
+pub trait PeerIdentity: Send + Sync {
+    /// Stable peer id derived from the public key.
+    fn peer_id(&self) -> String;
+    /// Sign arbitrary bytes with the local private key.
+    fn sign(&self, message: &[u8]) -> Vec<u8>;
+    /// Verify a signature claimed to come from `peer_id`.
+    fn verify(&self, peer_id: &str, message: &[u8], signature: &[u8]) -> bool;
+}
+
+/// Peer discovery backend (mDNS, Kademlia bootstrap, manual
+/// configuration). The engine periodically calls
+/// [`PeerDiscovery::known_peers`] to refresh its peer table.
+pub trait PeerDiscovery: Send + Sync {
+    fn announce(&mut self, self_addr: &str);
+    fn known_peers(&self) -> Vec<PeerAddress>;
+    fn forget(&mut self, peer_id: &str);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerAddress {
+    pub peer_id: String,
+    pub multiaddr: String,
+}
+
+/// NAT-traversal helper (STUN / TURN / ICE / hole-punching).
+/// `gather_candidates` collects local + reflexive addresses;
+/// `pair_with` records a remote candidate set for connectivity
+/// checks.
+pub trait NatTraversal: Send + Sync {
+    fn gather_candidates(&mut self) -> Vec<IceCandidate>;
+    fn pair_with(&mut self, remote_peer: &str, remote_candidates: &[IceCandidate]);
+    fn punch_hole(&mut self, remote_peer: &str) -> bool;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IceCandidate {
+    /// `host` / `srflx` (server-reflexive) / `relay`.
+    pub kind: String,
+    pub address: String,
+    pub port: u16,
+    pub priority: u32,
+}
+
+/// Distributed hash table (Kademlia-style) provider. Engine code
+/// stores small key-value pairs (= player session beacons, scene
+/// hashes) without owning the network plumbing.
+pub trait DhtProvider: Send + Sync {
+    fn put(&mut self, key: &str, value: Vec<u8>);
+    fn get(&self, key: &str) -> Option<Vec<u8>>;
+    fn find_peers(&self, key: &str) -> Vec<String>;
+}
+
+/// Gossip / pub-sub overlay (libp2p `gossipsub` analogue). Topics
+/// are arbitrary strings; published payloads fan out to all
+/// subscribers.
+pub trait GossipProvider: Send + Sync {
+    fn subscribe(&mut self, topic: &str);
+    fn unsubscribe(&mut self, topic: &str);
+    fn publish(&mut self, topic: &str, payload: &[u8]);
+    fn drain_inbox(&mut self) -> Vec<GossipMessage>;
+    fn peer_count(&self) -> usize;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GossipMessage {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub from_peer: String,
+}
+
+/// Conflict-free Replicated Data Type sync. Implementors expose a
+/// CRDT (= last-writer-wins map, OR-set, RGA list, Automerge doc)
+/// + the delta encoding required to converge peers.
+pub trait CrdtSync: Send + Sync {
+    fn local_update(&mut self, key: &str, value: &[u8]);
+    fn encode_delta(&self) -> Vec<u8>;
+    fn apply_delta(&mut self, delta: &[u8]);
+    fn snapshot(&self) -> Vec<(String, Vec<u8>)>;
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -700,6 +787,222 @@ mod tests {
         assert_eq!(c.len(), 1);
         c.remove("texture");
         assert!(c.is_empty());
+    }
+
+    // --- Wave 12 P2P bridge tests ---
+
+    struct MockIdentity {
+        id: String,
+    }
+    impl PeerIdentity for MockIdentity {
+        fn peer_id(&self) -> String {
+            self.id.clone()
+        }
+        fn sign(&self, m: &[u8]) -> Vec<u8> {
+            // Trivial signature = id ++ message hash.
+            let mut out = self.id.as_bytes().to_vec();
+            out.extend_from_slice(&m.iter().map(|b| b.wrapping_add(1)).collect::<Vec<_>>());
+            out
+        }
+        fn verify(&self, peer_id: &str, m: &[u8], sig: &[u8]) -> bool {
+            let prefix = peer_id.as_bytes();
+            sig.starts_with(prefix)
+                && sig[prefix.len()..] == m.iter().map(|b| b.wrapping_add(1)).collect::<Vec<_>>()
+        }
+    }
+
+    #[test]
+    fn peer_identity_sign_verify_round_trip() {
+        let id = MockIdentity {
+            id: "peer-A".into(),
+        };
+        let sig = id.sign(b"hello");
+        assert!(id.verify("peer-A", b"hello", &sig));
+        assert!(!id.verify("peer-B", b"hello", &sig));
+    }
+
+    struct MockDiscovery {
+        table: Vec<PeerAddress>,
+    }
+    impl PeerDiscovery for MockDiscovery {
+        fn announce(&mut self, _addr: &str) {}
+        fn known_peers(&self) -> Vec<PeerAddress> {
+            self.table.clone()
+        }
+        fn forget(&mut self, id: &str) {
+            self.table.retain(|p| p.peer_id != id);
+        }
+    }
+
+    #[test]
+    fn peer_discovery_forget_removes_entry() {
+        let mut d = MockDiscovery {
+            table: vec![
+                PeerAddress {
+                    peer_id: "a".into(),
+                    multiaddr: "/ip4/127.0.0.1/tcp/1".into(),
+                },
+                PeerAddress {
+                    peer_id: "b".into(),
+                    multiaddr: "/ip4/127.0.0.1/tcp/2".into(),
+                },
+            ],
+        };
+        assert_eq!(d.known_peers().len(), 2);
+        d.forget("a");
+        assert_eq!(d.known_peers().len(), 1);
+    }
+
+    struct MockNat {
+        local: Vec<IceCandidate>,
+        pairs: std::collections::HashMap<String, Vec<IceCandidate>>,
+    }
+    impl NatTraversal for MockNat {
+        fn gather_candidates(&mut self) -> Vec<IceCandidate> {
+            self.local.clone()
+        }
+        fn pair_with(&mut self, peer: &str, remote: &[IceCandidate]) {
+            self.pairs.insert(peer.to_string(), remote.to_vec());
+        }
+        fn punch_hole(&mut self, peer: &str) -> bool {
+            self.pairs.contains_key(peer)
+        }
+    }
+
+    #[test]
+    fn nat_traversal_pair_then_punch() {
+        let mut n = MockNat {
+            local: vec![IceCandidate {
+                kind: "host".into(),
+                address: "192.168.0.5".into(),
+                port: 41234,
+                priority: 100,
+            }],
+            pairs: std::collections::HashMap::new(),
+        };
+        assert_eq!(n.gather_candidates().len(), 1);
+        assert!(!n.punch_hole("remote"));
+        n.pair_with(
+            "remote",
+            &[IceCandidate {
+                kind: "srflx".into(),
+                address: "203.0.113.4".into(),
+                port: 50000,
+                priority: 50,
+            }],
+        );
+        assert!(n.punch_hole("remote"));
+    }
+
+    struct MockDht {
+        kv: std::collections::HashMap<String, Vec<u8>>,
+    }
+    impl DhtProvider for MockDht {
+        fn put(&mut self, k: &str, v: Vec<u8>) {
+            self.kv.insert(k.to_string(), v);
+        }
+        fn get(&self, k: &str) -> Option<Vec<u8>> {
+            self.kv.get(k).cloned()
+        }
+        fn find_peers(&self, _k: &str) -> Vec<String> {
+            vec!["peer-x".into(), "peer-y".into()]
+        }
+    }
+
+    #[test]
+    fn dht_put_get_find() {
+        let mut d = MockDht {
+            kv: std::collections::HashMap::new(),
+        };
+        d.put("session/abc", vec![1, 2, 3]);
+        assert_eq!(d.get("session/abc"), Some(vec![1, 2, 3]));
+        assert_eq!(d.find_peers("session/abc").len(), 2);
+    }
+
+    struct MockGossip {
+        topics: std::collections::HashSet<String>,
+        inbox: Vec<GossipMessage>,
+    }
+    impl GossipProvider for MockGossip {
+        fn subscribe(&mut self, t: &str) {
+            self.topics.insert(t.to_string());
+        }
+        fn unsubscribe(&mut self, t: &str) {
+            self.topics.remove(t);
+        }
+        fn publish(&mut self, t: &str, p: &[u8]) {
+            if self.topics.contains(t) {
+                self.inbox.push(GossipMessage {
+                    topic: t.to_string(),
+                    payload: p.to_vec(),
+                    from_peer: "self".into(),
+                });
+            }
+        }
+        fn drain_inbox(&mut self) -> Vec<GossipMessage> {
+            std::mem::take(&mut self.inbox)
+        }
+        fn peer_count(&self) -> usize {
+            3
+        }
+    }
+
+    #[test]
+    fn gossip_subscribe_publish_drain() {
+        let mut g = MockGossip {
+            topics: std::collections::HashSet::new(),
+            inbox: Vec::new(),
+        };
+        g.subscribe("chat");
+        g.publish("chat", b"hello");
+        g.publish("private", b"ignored");
+        let msgs = g.drain_inbox();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].topic, "chat");
+        assert!(g.drain_inbox().is_empty());
+        assert_eq!(g.peer_count(), 3);
+    }
+
+    struct MockCrdt {
+        kv: std::collections::HashMap<String, Vec<u8>>,
+        pending: Vec<u8>,
+    }
+    impl CrdtSync for MockCrdt {
+        fn local_update(&mut self, k: &str, v: &[u8]) {
+            self.kv.insert(k.to_string(), v.to_vec());
+            // Trivial delta encoding: "key|value_len|bytes".
+            self.pending
+                .extend_from_slice(format!("{k}|{}|", v.len()).as_bytes());
+            self.pending.extend_from_slice(v);
+        }
+        fn encode_delta(&self) -> Vec<u8> {
+            self.pending.clone()
+        }
+        fn apply_delta(&mut self, delta: &[u8]) {
+            // For the mock we just append the raw bytes — production
+            // CRDT crates parse + merge.
+            self.pending.extend_from_slice(delta);
+        }
+        fn snapshot(&self) -> Vec<(String, Vec<u8>)> {
+            self.kv
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        }
+    }
+
+    #[test]
+    fn crdt_local_update_emits_delta_and_snapshots() {
+        let mut c = MockCrdt {
+            kv: std::collections::HashMap::new(),
+            pending: Vec::new(),
+        };
+        c.local_update("hp", &[60]);
+        let delta = c.encode_delta();
+        assert!(!delta.is_empty());
+        let snap = c.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].0, "hp");
     }
 
     #[test]
