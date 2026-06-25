@@ -236,6 +236,102 @@ impl DdgiVolume {
 }
 
 // ---------------------------------------------------------------------------
+// GPU compute pipeline
+// ---------------------------------------------------------------------------
+
+/// Owns the wgpu compute pipeline + bind group layout for the DDGI
+/// per-probe irradiance update. Pair with the WGSL in
+/// `shader::DDGI_UPDATE_COMPUTE_WGSL` and dispatch one workgroup per
+/// probe (workgroup size 8×8 = one thread per octahedral texel).
+///
+/// Buffer layout (= matches the WGSL `@binding`s):
+///
+/// | binding | type | use |
+/// |---------|------|-----|
+/// | 0 | `uniform DdgiParams` | probe count + resolution + hysteresis |
+/// | 1 | `storage<read> array<f32>` | per-direction radiance samples |
+/// | 2 | `storage<read_write> array<f32>` | accumulated irradiance |
+#[cfg(feature = "gpu")]
+pub struct DdgiVolumeGpu {
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub pipeline: wgpu::ComputePipeline,
+}
+
+#[cfg(feature = "gpu")]
+impl DdgiVolumeGpu {
+    #[must_use]
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("alice-ddgi-update-compute"),
+            source: wgpu::ShaderSource::Wgsl(crate::shader::DDGI_UPDATE_COMPUTE_WGSL.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("alice-ddgi-update-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("alice-ddgi-update-pl"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("alice-ddgi-update-pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader_module,
+            entry_point: Some("cs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+        Self {
+            bind_group_layout,
+            pipeline,
+        }
+    }
+
+    /// Workgroup count = one workgroup per probe (the shader takes
+    /// `8 × 8` threads per workgroup, one per irradiance texel).
+    #[must_use]
+    pub const fn workgroup_count(probe_count: u32) -> (u32, u32, u32) {
+        (probe_count, 1, 1)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

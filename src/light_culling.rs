@@ -295,6 +295,114 @@ impl TileLightList {
 }
 
 // ---------------------------------------------------------------------------
+// GPU compute pipeline
+// ---------------------------------------------------------------------------
+
+/// Owns the wgpu compute pipeline + bind group layout for the tiled
+/// light culler. Dispatch this pipeline as the GPU-side equivalent of
+/// [`TiledLightCuller::cull`]; the WGSL lives in
+/// `shader::LIGHT_CULLING_COMPUTE_WGSL`.
+///
+/// Buffer layout (= matches the WGSL `@binding`s):
+///
+/// | binding | type | use |
+/// |---------|------|-----|
+/// | 0 | `uniform CullParams` | view + projection + grid + light count |
+/// | 1 | `storage<read> array<LightSphere>` | input lights |
+/// | 2 | `storage<read_write> array<atomic<u32>>` | per-tile light count |
+/// | 3 | `storage<read_write> array<u32>` | flattened tile→light list |
+pub struct TiledLightCullerGpu {
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub pipeline: wgpu::ComputePipeline,
+}
+
+impl TiledLightCullerGpu {
+    /// Compile the WGSL and build the compute pipeline. Call once per
+    /// device.
+    #[must_use]
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("alice-light-culling-compute"),
+            source: wgpu::ShaderSource::Wgsl(crate::shader::LIGHT_CULLING_COMPUTE_WGSL.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("alice-light-culling-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("alice-light-culling-pl"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("alice-light-culling-pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader_module,
+            entry_point: Some("cs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+        Self {
+            bind_group_layout,
+            pipeline,
+        }
+    }
+
+    /// Workgroup count for `light_count` lights at the shader's
+    /// `@workgroup_size(64)`. Useful so callers can dispatch without
+    /// duplicating the constant.
+    #[must_use]
+    pub const fn workgroup_count_x(light_count: u32) -> u32 {
+        (light_count + 63) / 64
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

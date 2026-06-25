@@ -52,6 +52,11 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | 3D Gaussian Splatting | `let mut c = GaussianCloud::new(); c.add(Splat::isotropic(pos, 0.05, color, 0.8)); let projected = c.prepare_frame(view, proj);` |
 | DDGI volume | `let mut v = DdgiVolume::new(DdgiConfig::default()); v.update_probe_irradiance(idx, &samples); v.sample_irradiance(world, dir);` |
 | GPU BVH + radix sort | `let bvh = Bvh::build(&aabbs, 4); morton3_unit(p); radix_sort_u32_pairs(&mut pairs);` |
+| GPU compute (light cull) | `let p = TiledLightCullerGpu::new(&device); /* bind buffers */ encoder.begin_compute_pass(...).set_pipeline(&p.pipeline);` |
+| GPU compute (DDGI) | `let p = DdgiVolumeGpu::new(&device); /* bind probe + samples */ pass.dispatch_workgroups(probe_count, 1, 1);` |
+| Cubemap from sky | `let cube = capture_sky_to_cubemap(32, &AtmosphereParams::default());` |
+| Mobile touch camera | `let mut cam = TouchCamera::new(target); cam.handle_touch(&TouchEvent { id: 0, phase: TouchPhase::Began, position: (x, y) });` |
+| Editor scene CRUD | `let mut e = Editor::new(); e.apply(&mut scene, EditorCommand::Translate { node, delta });` |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

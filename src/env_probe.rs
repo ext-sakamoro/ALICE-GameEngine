@@ -106,6 +106,61 @@ impl Cubemap {
 }
 
 // ---------------------------------------------------------------------------
+// Cubemap capture (sky → cubemap)
+// ---------------------------------------------------------------------------
+
+/// World-space view matrices for the six cube faces, centred at
+/// `position`. Order matches [`Cubemap`]'s face indexing
+/// (+X / -X / +Y / -Y / +Z / -Z).
+#[must_use]
+pub fn cubemap_face_views(position: crate::math::Vec3) -> [crate::math::Mat4; 6] {
+    use crate::math::{Mat4, Vec3};
+    let p = position;
+    [
+        // +X: look down +X, up is -Y so the texture is right-handed.
+        Mat4::look_at(p, p + Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, -1.0, 0.0)),
+        // -X
+        Mat4::look_at(p, p + Vec3::new(-1.0, 0.0, 0.0), Vec3::new(0.0, -1.0, 0.0)),
+        // +Y
+        Mat4::look_at(p, p + Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)),
+        // -Y
+        Mat4::look_at(p, p + Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 0.0, -1.0)),
+        // +Z
+        Mat4::look_at(p, p + Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, -1.0, 0.0)),
+        // -Z
+        Mat4::look_at(p, p + Vec3::new(0.0, 0.0, -1.0), Vec3::new(0.0, -1.0, 0.0)),
+    ]
+}
+
+/// Captures the [`sky_color`](crate::sky::sky_color) atmosphere into a
+/// six-face cubemap. Used to seed an environment probe before the full
+/// GPU 6-face render pass lands.
+#[must_use]
+pub fn capture_sky_to_cubemap(
+    resolution: u32,
+    atmosphere: &crate::sky::AtmosphereParams,
+) -> Cubemap {
+    let mut cube = Cubemap::new_with_color(resolution, Color::BLACK);
+    let inv_n = (resolution as f32).recip();
+    for face in 0..6_usize {
+        for y in 0..resolution {
+            for x in 0..resolution {
+                let u = (x as f32 + 0.5) * inv_n;
+                let v = (y as f32 + 0.5) * inv_n;
+                let dir = face_uv_to_direction(face, u, v).normalize();
+                let color = crate::sky::sky_color(dir, atmosphere);
+                let idx = ((y * resolution + x) * 4) as usize;
+                cube.faces[face][idx] = color.r;
+                cube.faces[face][idx + 1] = color.g;
+                cube.faces[face][idx + 2] = color.b;
+                cube.faces[face][idx + 3] = 1.0;
+            }
+        }
+    }
+    cube
+}
+
+// ---------------------------------------------------------------------------
 // Prefiltered probe
 // ---------------------------------------------------------------------------
 
@@ -492,5 +547,31 @@ mod tests {
         assert!((result.r - 0.7).abs() < 5e-2);
         assert!((result.g - 0.6).abs() < 5e-2);
         assert!((result.b - 0.5).abs() < 5e-2);
+    }
+
+    #[test]
+    fn cubemap_face_views_return_six_unique_matrices() {
+        let views = cubemap_face_views(Vec3::new(1.0, 2.0, 3.0));
+        // Every face's forward direction lands the same world point at
+        // a different transformed coordinate, so no two view matrices
+        // should be identical.
+        for i in 0..6 {
+            for j in (i + 1)..6 {
+                assert!(views[i] != views[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn capture_sky_to_cubemap_populates_all_faces() {
+        let atmosphere = crate::sky::AtmosphereParams::default();
+        let cube = capture_sky_to_cubemap(8, &atmosphere);
+        assert_eq!(cube.resolution, 8);
+        // Each face must have some non-zero radiance (sky is never
+        // perfectly black for the default sun direction).
+        for (i, face) in cube.faces.iter().enumerate() {
+            let max: f32 = face.iter().copied().fold(0.0_f32, f32::max);
+            assert!(max > 0.0, "face {i} is entirely black");
+        }
     }
 }

@@ -246,6 +246,157 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 ";
 
+/// Tiled light culling compute shader.
+///
+/// One workgroup per `(group_count / WORKGROUP_SIZE)` rows of lights;
+/// each invocation tests one (light, tile) pair and atomically appends
+/// to the per-tile index list when the sphere overlaps the tile AABB.
+/// Mirrors `light_culling::TiledLightCuller::cull` so the GPU output
+/// matches the CPU reference bit-for-bit.
+pub const LIGHT_CULLING_COMPUTE_WGSL: &str = r"
+struct LightSphere {
+    position: vec3<f32>,
+    radius: f32,
+};
+
+struct CullParams {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    screen_w: u32,
+    screen_h: u32,
+    tile_size: u32,
+    tile_count_x: u32,
+    tile_count_y: u32,
+    light_count: u32,
+    max_lights_per_tile: u32,
+    _pad: u32,
+};
+
+@group(0) @binding(0) var<uniform> params: CullParams;
+@group(0) @binding(1) var<storage, read> lights: array<LightSphere>;
+@group(0) @binding(2) var<storage, read_write> tile_counts: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> tile_indices: array<u32>;
+
+fn ndc_to_tile(ndc_x: f32, ndc_y: f32) -> vec2<i32> {
+    let px = (ndc_x * 0.5 + 0.5) * f32(params.screen_w);
+    let py = (0.5 - ndc_y * 0.5) * f32(params.screen_h);
+    return vec2<i32>(i32(px) / i32(params.tile_size), i32(py) / i32(params.tile_size));
+}
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let light_idx = gid.x;
+    if light_idx >= params.light_count {
+        return;
+    }
+    let light = lights[light_idx];
+    if light.radius <= 0.0 {
+        return;
+    }
+
+    // Project the bounding sphere's 8 AABB corners to screen, take min/max.
+    var min_t = vec2<i32>(i32(params.tile_count_x), i32(params.tile_count_y));
+    var max_t = vec2<i32>(-1, -1);
+    let signs = array<f32, 2>(-1.0, 1.0);
+    var any_in_front = false;
+    for (var sx = 0; sx < 2; sx++) {
+        for (var sy = 0; sy < 2; sy++) {
+            for (var sz = 0; sz < 2; sz++) {
+                let corner = light.position + vec3<f32>(
+                    signs[sx] * light.radius,
+                    signs[sy] * light.radius,
+                    signs[sz] * light.radius,
+                );
+                let view_pos = params.view * vec4<f32>(corner, 1.0);
+                let clip = params.projection * view_pos;
+                if clip.w <= 0.0 {
+                    continue;
+                }
+                any_in_front = true;
+                let ndc_x = clip.x / clip.w;
+                let ndc_y = clip.y / clip.w;
+                let t = ndc_to_tile(ndc_x, ndc_y);
+                min_t = vec2<i32>(min(min_t.x, t.x), min(min_t.y, t.y));
+                max_t = vec2<i32>(max(max_t.x, t.x), max(max_t.y, t.y));
+            }
+        }
+    }
+    if !any_in_front {
+        return;
+    }
+    min_t = vec2<i32>(
+        max(min_t.x, 0),
+        max(min_t.y, 0),
+    );
+    max_t = vec2<i32>(
+        min(max_t.x, i32(params.tile_count_x) - 1),
+        min(max_t.y, i32(params.tile_count_y) - 1),
+    );
+    if min_t.x > max_t.x || min_t.y > max_t.y {
+        return;
+    }
+
+    let cap = params.max_lights_per_tile;
+    for (var ty = min_t.y; ty <= max_t.y; ty++) {
+        for (var tx = min_t.x; tx <= max_t.x; tx++) {
+            let tile_id = u32(ty) * params.tile_count_x + u32(tx);
+            let slot = atomicAdd(&tile_counts[tile_id], 1u);
+            if slot < cap {
+                let base = tile_id * cap;
+                tile_indices[base + slot] = light_idx;
+            }
+        }
+    }
+}
+";
+
+/// DDGI probe irradiance update compute shader.
+///
+/// One workgroup per probe (8×8 = 64 threads per probe); each thread
+/// blends one octahedral texel of the irradiance map with the new
+/// per-direction radiance estimate using the `hysteresis` low-pass
+/// filter. Mirrors `ddgi::DdgiVolume::update_probe_irradiance`.
+pub const DDGI_UPDATE_COMPUTE_WGSL: &str = r"
+struct DdgiParams {
+    probe_count: u32,
+    irradiance_resolution: u32,
+    hysteresis: f32,
+    _pad: u32,
+};
+
+@group(0) @binding(0) var<uniform> params: DdgiParams;
+@group(0) @binding(1) var<storage, read> new_samples: array<f32>;
+@group(0) @binding(2) var<storage, read_write> irradiance: array<f32>;
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let probe_idx = wid.x;
+    if probe_idx >= params.probe_count {
+        return;
+    }
+    let res = params.irradiance_resolution;
+    let x = lid.x;
+    let y = lid.y;
+    if x >= res || y >= res {
+        return;
+    }
+    let texel_in_probe = y * res + x;
+    let texels_per_probe = res * res;
+    let channel_base = (probe_idx * texels_per_probe + texel_in_probe) * 3u;
+    let alpha = clamp(params.hysteresis, 0.0, 1.0);
+    let inv_alpha = 1.0 - alpha;
+    for (var c = 0u; c < 3u; c++) {
+        let i = channel_base + c;
+        let sample = new_samples[i];
+        let current = irradiance[i];
+        irradiance[i] = sample * alpha + current * inv_alpha;
+    }
+}
+";
+
 /// Image-based lighting (IBL) cubemap lookup helpers in WGSL.
 ///
 /// Provides `sample_irradiance` for diffuse IBL and
@@ -602,6 +753,16 @@ pub fn builtin_shader_cache() -> ShaderCache {
         ShaderStage::Fragment,
     ));
     cache.add(ShaderSource::new(
+        "light_culling_compute",
+        LIGHT_CULLING_COMPUTE_WGSL,
+        ShaderStage::Compute,
+    ));
+    cache.add(ShaderSource::new(
+        "ddgi_update_compute",
+        DDGI_UPDATE_COMPUTE_WGSL,
+        ShaderStage::Compute,
+    ));
+    cache.add(ShaderSource::new(
         "lut_postprocess",
         crate::lut_postprocess::LUT_POSTPROCESS_WGSL,
         ShaderStage::Fragment,
@@ -676,7 +837,9 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 10);
+        assert_eq!(cache.count(), 12);
+        assert!(cache.get("light_culling_compute").is_some());
+        assert!(cache.get("ddgi_update_compute").is_some());
         assert!(cache.get("ibl_lookup").is_some());
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
@@ -711,6 +874,22 @@ mod tests {
         for (label, src) in [
             ("decal_vertex", DECAL_VERTEX_WGSL),
             ("decal_fragment", DECAL_FRAGMENT_WGSL),
+        ] {
+            let module = naga::front::wgsl::parse_str(src)
+                .unwrap_or_else(|e| panic!("{label} WGSL parse failed: {e:?}"));
+            let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+            validator
+                .validate(&module)
+                .unwrap_or_else(|e| panic!("{label} naga validation failed: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn compute_shaders_pass_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        for (label, src) in [
+            ("light_culling_compute", LIGHT_CULLING_COMPUTE_WGSL),
+            ("ddgi_update_compute", DDGI_UPDATE_COMPUTE_WGSL),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{label} WGSL parse failed: {e:?}"));

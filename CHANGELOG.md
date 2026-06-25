@@ -23,6 +23,35 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 1 — 4-region expansion
+
+- **GPU compute shaders** — `LIGHT_CULLING_COMPUTE_WGSL`
+  + `DDGI_UPDATE_COMPUTE_WGSL` const (naga-validated, builtin cache
+  10 → 12). Per-module wgpu pipeline scaffolds:
+  `light_culling::TiledLightCullerGpu` (= 4-binding compute pipeline,
+  `workgroup_count_x(light_count)` helper) and
+  `ddgi::DdgiVolumeGpu` (= 3-binding compute pipeline, one workgroup
+  per probe, 8×8 threads). CPU implementations stay as the reference
+  / fallback.
+
+- **`env_probe`** new helpers — `cubemap_face_views(position)` returns
+  the six standard cube-face view matrices; `capture_sky_to_cubemap(
+  resolution, atmosphere)` rasterises [`sky::sky_color`] into a fresh
+  [`Cubemap`] so probes can be seeded without the full GPU 6-face
+  capture pass landing yet.
+
+- **`mobile`** new module — `TouchPhase` / `TouchEvent` / `ScreenMetrics`
+  + `TouchCamera` (= single-finger orbit, two-finger pinch zoom,
+  device-independent units). Renderer-agnostic so iOS / Android / web
+  shells can forward platform touches with no extra glue.
+
+- **`editor`** new module — `EditorCommand` (Add / Hide / Show /
+  Translate / SetScale / SetRotation / Rename), `Editor::apply`
+  mutates a [`SceneGraph`] and records the inverse on
+  `EditorHistory` (capacity-bounded). JSON round-trip ready, designed
+  to be the receiving end of the MCP server's `editor.apply` tool and
+  a future websocket transport for browser editors.
+
 - **`gpu_bvh`** — CPU-side BVH + Morton-code radix sort. `Aabb`
   (union / centre / surface_area), `morton3_unit(xyz)` (30-bit
   Z-curve code in unit cube), `radix_sort_u32_pairs` (stable LSD

@@ -84,6 +84,14 @@ Feature flags pick what you compile:
 - **GPU BVH + radix sort** — `Bvh::build` (Morton-sorted, median-
   split), reusable `radix_sort_u32_pairs`. `cargo run --example
   gpu_bvh_demo`
+- **GPU compute pipelines** — `TiledLightCullerGpu` /
+  `DdgiVolumeGpu` wgpu compute scaffolds, WGSL naga-validated
+- **Cubemap capture** — `cubemap_face_views` + `capture_sky_to_cubemap`
+  for seeding env probes from sky atmosphere
+- **Mobile (iOS / Android)** — `TouchPhase` / `TouchEvent` / `TouchCamera`
+  (single-finger orbit + two-finger pinch zoom)
+- **Editor scaffold** — `Editor::apply(EditorCommand)` for
+  declarative scene CRUD with capacity-bounded undo history
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

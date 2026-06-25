@@ -73,6 +73,7 @@ pub mod ddgi;
 pub mod decal;
 pub mod easy;
 pub mod ecs;
+pub mod editor;
 pub mod engine;
 pub mod env_probe;
 pub mod fix128;
@@ -92,6 +93,7 @@ pub mod lod;
 pub mod lut_postprocess;
 pub mod math;
 pub mod mcp;
+pub mod mobile;
 pub mod network;
 pub mod ocean;
 pub mod physics3d;
@@ -167,9 +169,11 @@ pub use ecs::{
     Collider, CollisionPair, ComponentStore, EntityId, EntityManager, GameEngineError, GameTime,
     Input, PhysicsSystem, Scene, Sprite, Transform, Velocity, World, AABB,
 };
+pub use editor::{Editor, EditorCommand, EditorError, EditorHistory, EditorOutcome};
 pub use engine::{Engine, EngineConfig, EngineContext, System};
 pub use env_probe::{
-    prefilter_irradiance, prefilter_radiance, Cubemap, EnvProbeData, PrefilteredEnvProbe,
+    capture_sky_to_cubemap, cubemap_face_views, prefilter_irradiance, prefilter_radiance, Cubemap,
+    EnvProbeData, PrefilteredEnvProbe,
 };
 pub use fix128::{Fix128, Fix128Vec3};
 pub use gaussian_splat::{evaluate_sh_band1, GaussianCloud, ProjectedSplat, Splat};
@@ -189,6 +193,7 @@ pub use lod::{LodGroup, LodLevel, LodSelection};
 pub use lut_postprocess::{load_cube_file, Lut3DData, LutPostProcess};
 pub use math::{Color, Mat4, Quat, Vec2, Vec3, Vec4};
 pub use mcp::{McpHandler, McpRequest, McpResponse};
+pub use mobile::{ScreenMetrics, TouchCamera, TouchEvent, TouchPhase};
 pub use network::{GameClient, GameHost, NetMessage, NetPeer, PeerId};
 pub use ocean::{OceanConfig, OceanFrame, OceanSimulator};
 pub use physics3d::{Contact3D, PhysicsWorld, RigidBody};
