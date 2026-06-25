@@ -23,6 +23,15 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`ocean`** — Tessendorf-style FFT ocean simulator (Wicked-inspired
+  `wiOcean`). `OceanConfig` (grid_size / patch_size / wind / amplitude /
+  gravity), `OceanSimulator::simulate(time) → OceanFrame` with height
+  field + central-difference normals. **No external dependencies**:
+  ships a self-contained Cooley-Tukey radix-2 IFFT, Box-Muller
+  Gaussian noise from a deterministic 64-bit hash. 32×32 grid runs in
+  ~0.5 ms / frame on Apple Silicon. Demo:
+  `cargo run --example ocean_demo` (ASCII heightmap at four time steps).
+
 - **`light_culling`** (feature `gpu`) — Tiled (Forward+ style) CPU-side
   light culler. `LightCullingConfig` (tile_size / max_lights_per_tile),
   `TiledLightCuller::cull(lights, view, proj) → TileLightList` returns

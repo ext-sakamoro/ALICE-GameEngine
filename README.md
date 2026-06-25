@@ -64,6 +64,10 @@ Feature flags pick what you compile:
   the screen into 16-px tiles, returns per-tile point/spot light index
   lists + a separate directional list. `cargo run --example
   light_culling_demo --features gpu`
+- **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
+  Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
+  patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
+  32×32 grid. `cargo run --example ocean_demo`
 - **HD-2D / post-process** — `Sprite3D` billboard + WGSL templates for
   pbr-sprite, **SSGI** (16 samples) and **SMAA** (all naga-validated)
 - **Multiplayer scaffolding** — `LoopbackTransport` implements
@@ -147,6 +151,7 @@ cargo run --example decal_demo         # 5 deferred decals on wall + floor (head
 cargo run --example job_system_demo    # fork-join JobContext: 2 asset jobs + 256 particle jobs
 cargo run --example constraint_demo    # Slider piston + Fixed weld + ConeTwist hip joint
 cargo run --example light_culling_demo --features gpu  # tiled cull: 128 lights × 8160 tiles
+cargo run --example ocean_demo         # Tessendorf FFT ocean ASCII heightmap (no deps)
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full
