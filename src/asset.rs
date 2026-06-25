@@ -201,6 +201,61 @@ pub struct GltfHeader {
     pub length: u32,
 }
 
+/// VRM 1.0 / 1.1 header fields parsed from a `.vrm` GLB container's
+/// `VRMC_vrm` JSON extension. Scaffold — only spec/meta is decoded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VrmHeader {
+    pub spec_version: String,
+    pub title: String,
+    pub author: String,
+}
+
+/// Try to extract a VRM 1.x header from a JSON chunk.
+#[must_use]
+pub fn parse_vrm_json(json: &str) -> Option<VrmHeader> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let vrm = v.get("extensions")?.get("VRMC_vrm")?;
+    let meta = vrm.get("meta")?;
+    Some(VrmHeader {
+        spec_version: vrm.get("specVersion")?.as_str()?.to_string(),
+        title: meta
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string(),
+        author: meta
+            .get("authors")
+            .and_then(|a| a.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+/// FBX binary header. Scaffold recogniser only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FbxHeader {
+    pub version: u32,
+}
+
+/// Parse the first bytes of an FBX binary file (magic + version).
+#[must_use]
+pub fn parse_fbx_header(data: &[u8]) -> Option<FbxHeader> {
+    let magic = b"Kaydara FBX Binary  \0\x1a\x00";
+    if data.len() < magic.len() + 4 || &data[..magic.len()] != magic {
+        return None;
+    }
+    let v = u32::from_le_bytes(data[magic.len()..magic.len() + 4].try_into().ok()?);
+    Some(FbxHeader { version: v })
+}
+
+/// USD ASCII (`.usda`) magic recogniser.
+#[must_use]
+pub fn is_usda(data: &str) -> bool {
+    data.trim_start().starts_with("#usda")
+}
+
 /// Parses a glTF binary (.glb) header from bytes.
 #[must_use]
 pub fn parse_glb_header(data: &[u8]) -> Option<GltfHeader> {

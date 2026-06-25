@@ -104,6 +104,18 @@ Feature flags pick what you compile:
   clear_all_faces` smoke driver for the 6-face capture pipeline
 - **Mobile CI** — `aarch64-apple-ios` + `aarch64-linux-android`
   cargo check on every PR (macos-latest runner)
+- **Multi-platform CI** — main test matrix on `[ubuntu, macos,
+  windows]` × Rust stable
+- **iOS / Android binaries** — `.rlib` + `.a` + `.dylib` produced
+  from one `cargo build` (`[lib] crate-type` 3-way)
+- **Procedural animation** — `cloth::ClothSim` mass-spring grid +
+  `soft_body::SoftBodySim` 3-axis lattice (Verlet integrator)
+- **Virtual shadow scaffold** — `VirtualShadowMap` UE5-style page
+  allocator (allocate / release / lookup)
+- **Editor browser UI** — embedded HTML at `http://127.0.0.1:8088/`
+- **Asset I/O** — VRM 1.x meta + FBX binary header + USD ASCII
+  recognisers (scaffold)
+- **TUTORIAL.md** — five-step getting started
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

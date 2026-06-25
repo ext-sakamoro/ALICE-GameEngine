@@ -23,6 +23,54 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 4 — evaluation report follow-through
+
+Closes the 10 residual items from the v0.6 evaluation report (E.
+弱み / 残課題). Each item now ships at least scaffold + tests + doc.
+
+- **Cubemap GPU full render** —
+  `shader::CUBEMAP_SKY_FRAGMENT_WGSL` (naga-validated) renders the
+  procedural sky into a cubemap face; combine with
+  `env_probe::CubemapCaptureTargets` for a real dynamic IBL probe.
+
+- **iOS / Android library binaries** — `Cargo.toml` `[lib]
+  crate-type = ["rlib", "staticlib", "cdylib"]` now produces
+  `.rlib` + `.a` + `.dylib` from one `cargo build`. Verified locally
+  on macOS aarch64 (= 3 artefacts in `target/release/`).
+
+- **Editor websocket UI** — `templates/editor_ui/index.html`
+  ships an embedded browser editor (connect / hello / snapshot /
+  undo / redo / translate / rename / hide) and
+  `editor_server_demo` serves it at `http://127.0.0.1:8088/`.
+
+- **GPU compute light culling demo** —
+  `templates/gpu_compute_light_culling_demo.rs` dispatches the
+  tiled-light compute shader on a real GPU device. Verified on Apple
+  M3 (4 lights, 240/240 tiles covered).
+
+- **TLAS/BLAS GPU scaffold** — `shader::GPU_BVH_REFIT_COMPUTE_WGSL`
+  (naga-validated) implements the leaf-refit pass for the existing
+  CPU-built `Bvh`; the bottom-up interior refit driver lands in a
+  follow-up PR.
+
+- **Asset I/O extension** — `asset::parse_vrm_json` (VRM 1.x meta
+  block), `asset::parse_fbx_header` (Kaydara FBX binary magic +
+  version), `asset::is_usda` (`#usda` ASCII recogniser) — scaffold
+  recognisers so importers can branch.
+
+- **Multi-platform CI** — `.github/workflows/ci.yml` test job runs
+  on a `[ubuntu-latest, macos-latest, windows-latest]` matrix.
+
+- **Procedural animation** — new `cloth` module (mass-spring grid
+  with Verlet + length constraint + wind) and `soft_body` module
+  (3-axis lattice with pin support). 13 unit tests.
+
+- **TUTORIAL.md** — five-step getting-started covering install /
+  LLM NPC / SDF+mesh scene / RPG battle / editor websocket.
+
+- **`virtual_shadow` scaffold** — `VirtualShadowMap` page allocator
+  (UE5-style) with `allocate` / `release` / `lookup`. 6 unit tests.
+
 ### v0.7 wave 3 — 4-region production wiring
 
 - **Editor websocket server demo** — new `editor_server` feature

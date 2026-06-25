@@ -246,6 +246,103 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 ";
 
+/// GPU BVH refit compute shader scaffold. Reads a flat `BvhNode`
+/// storage buffer + per-primitive `Aabb` buffer, and re-computes each
+/// internal node's bounding box bottom-up. Pair with
+/// [`crate::gpu_bvh::Bvh`] (`primitive_order` already Morton-sorted on
+/// the CPU).
+///
+/// This is the **scaffold** path: it only refits an existing
+/// hierarchy. A future PR adds the parallel Morton-build step (=
+/// "Karras 2012") so the entire BVH can be rebuilt on the GPU each
+/// frame for dynamic geometry.
+pub const GPU_BVH_REFIT_COMPUTE_WGSL: &str = r"
+struct Aabb {
+    min: vec3<f32>,
+    _pad0: f32,
+    max: vec3<f32>,
+    _pad1: f32,
+};
+
+struct BvhNode {
+    bounds_min: vec3<f32>,
+    left: u32,
+    bounds_max: vec3<f32>,
+    right: u32,
+    primitive_start: u32,
+    primitive_count: u32,
+    _pad: vec2<u32>,
+};
+
+struct BvhParams {
+    node_count: u32,
+    _pad: vec3<u32>,
+};
+
+@group(0) @binding(0) var<uniform> params: BvhParams;
+@group(0) @binding(1) var<storage, read> primitive_aabbs: array<Aabb>;
+@group(0) @binding(2) var<storage, read_write> nodes: array<BvhNode>;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if idx >= params.node_count {
+        return;
+    }
+    let node = nodes[idx];
+    // Leaf: union primitives in [primitive_start, primitive_start + count).
+    if node.primitive_count > 0u {
+        var lo = vec3<f32>(1e30, 1e30, 1e30);
+        var hi = vec3<f32>(-1e30, -1e30, -1e30);
+        for (var i = 0u; i < node.primitive_count; i++) {
+            let p = primitive_aabbs[node.primitive_start + i];
+            lo = min(lo, p.min);
+            hi = max(hi, p.max);
+        }
+        nodes[idx].bounds_min = lo;
+        nodes[idx].bounds_max = hi;
+    }
+    // Interior bounds depend on children — caller should dispatch in
+    // post-order. This scaffold updates only leaves; the bottom-up
+    // refit driver is left for the next PR.
+}
+";
+
+/// Cubemap-face sky shader. Draws a fullscreen triangle into one face
+/// of an `Rgba16Float` cubemap and colors each pixel by the world-
+/// space direction reconstructed from the screen UV + the supplied
+/// face-camera inverse view-projection matrix.
+pub const CUBEMAP_SKY_FRAGMENT_WGSL: &str = r"
+struct SkyUniforms {
+    inv_view_projection: mat4x4<f32>,
+    sun_direction: vec3<f32>,
+    _pad: f32,
+    horizon_color: vec3<f32>,
+    _pad2: f32,
+    zenith_color: vec3<f32>,
+    _pad3: f32,
+};
+
+@group(0) @binding(0) var<uniform> sky: SkyUniforms;
+
+@fragment
+fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    // Re-project the screen UV through the per-face inverse VP to get
+    // the world-space ray direction we are looking at.
+    let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0);
+    let world_h = sky.inv_view_projection * vec4<f32>(ndc, 1.0);
+    let dir = normalize(world_h.xyz / max(world_h.w, 1e-6));
+
+    // Smooth horizon→zenith gradient, with a soft sun disc.
+    let t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+    let base = mix(sky.horizon_color, sky.zenith_color, t);
+    let sun = max(dot(dir, normalize(sky.sun_direction)), 0.0);
+    let sun_disc = pow(sun, 256.0) * 12.0;
+    let color = base + vec3<f32>(sun_disc);
+    return vec4<f32>(color, 1.0);
+}
+";
+
 /// Tiled light culling compute shader.
 ///
 /// One workgroup per `(group_count / WORKGROUP_SIZE)` rows of lights;
@@ -753,6 +850,16 @@ pub fn builtin_shader_cache() -> ShaderCache {
         ShaderStage::Fragment,
     ));
     cache.add(ShaderSource::new(
+        "cubemap_sky_fragment",
+        CUBEMAP_SKY_FRAGMENT_WGSL,
+        ShaderStage::Fragment,
+    ));
+    cache.add(ShaderSource::new(
+        "gpu_bvh_refit_compute",
+        GPU_BVH_REFIT_COMPUTE_WGSL,
+        ShaderStage::Compute,
+    ));
+    cache.add(ShaderSource::new(
         "light_culling_compute",
         LIGHT_CULLING_COMPUTE_WGSL,
         ShaderStage::Compute,
@@ -837,9 +944,11 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 12);
+        assert_eq!(cache.count(), 14);
         assert!(cache.get("light_culling_compute").is_some());
         assert!(cache.get("ddgi_update_compute").is_some());
+        assert!(cache.get("cubemap_sky_fragment").is_some());
+        assert!(cache.get("gpu_bvh_refit_compute").is_some());
         assert!(cache.get("ibl_lookup").is_some());
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
@@ -882,6 +991,28 @@ mod tests {
                 .validate(&module)
                 .unwrap_or_else(|e| panic!("{label} naga validation failed: {e:?}"));
         }
+    }
+
+    #[test]
+    fn gpu_bvh_refit_shader_passes_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = naga::front::wgsl::parse_str(GPU_BVH_REFIT_COMPUTE_WGSL)
+            .unwrap_or_else(|e| panic!("gpu_bvh_refit_compute WGSL parse failed: {e:?}"));
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("gpu_bvh_refit_compute naga validation failed: {e:?}"));
+    }
+
+    #[test]
+    fn cubemap_sky_shader_passes_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = naga::front::wgsl::parse_str(CUBEMAP_SKY_FRAGMENT_WGSL)
+            .unwrap_or_else(|e| panic!("cubemap_sky_fragment WGSL parse failed: {e:?}"));
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("cubemap_sky_fragment naga validation failed: {e:?}"));
     }
 
     #[test]

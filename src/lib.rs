@@ -68,6 +68,7 @@ pub mod audio_output;
 pub mod battle;
 pub mod bridge;
 pub mod camera_controller;
+pub mod cloth;
 pub mod collision;
 pub mod ddgi;
 pub mod decal;
@@ -110,11 +111,13 @@ pub mod shader;
 pub mod simd_eval;
 pub mod skeleton;
 pub mod sky;
+pub mod soft_body;
 #[cfg(feature = "gpu")]
 pub mod sprite_render;
 pub mod text;
 pub mod texture;
 pub mod verse;
+pub mod virtual_shadow;
 pub mod volumetric_clouds;
 
 // ---------------------------------------------------------------------------
@@ -161,6 +164,7 @@ pub use animation::{AnimationClip, AnimationPlayer, Keyframe, StateMachine, Trac
 pub use app::{AppCallbacks, HeadlessRunner};
 pub use bridge::{AudioSampleProvider, CollisionProvider, Plugin, PluginRegistry, SdfEvaluator};
 pub use camera_controller::{FpsCamera, OrbitCamera};
+pub use cloth::{ClothConfig, ClothParticle, ClothSim};
 pub use collision::{gjk, ConvexHull, ConvexSphere, GjkResult};
 pub use ddgi::{dir_to_oct, oct_to_dir, DdgiConfig, DdgiProbe, DdgiVolume};
 pub use decal::{DecalBlendMode, DecalData, DecalDraw};
@@ -211,10 +215,14 @@ pub use sdf_assets::{load_asdf, AsdfFile};
 pub use shader::{ShaderCache, ShaderSource, ShaderStage};
 pub use simd_eval::{eval_sphere_batch, Vec3x8};
 pub use skeleton::{Bone, BoneTrack, SkeletalAnimation, Skeleton, SkinData};
+pub use soft_body::{SoftBodyConfig, SoftBodySim, SoftParticle};
 pub use text::{BitmapFont, TextLayout};
 pub use texture::{GpuTextureDesc, TextureAsset};
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
+};
+pub use virtual_shadow::{
+    PhysicalPageHandle, VirtualPageId, VirtualShadowConfig, VirtualShadowMap,
 };
 pub use volumetric_clouds::{
     cloud_density, march_cloud_ray, CloudRayResult, VolumetricCloudConfig,

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ALICE-GameEngine Editor</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 16px;
+         background: #1a1a1a; color: #ddd; }
+  h1 { margin: 0 0 8px; font-size: 18px; }
+  .row { display: flex; gap: 12px; margin-bottom: 12px; align-items: center; }
+  button, input { background: #2a2a2a; color: #ddd; border: 1px solid #444;
+                  padding: 4px 10px; border-radius: 4px; }
+  button:hover { background: #3a3a3a; cursor: pointer; }
+  #log { width: 100%; height: 320px; background: #0a0a0a; color: #9c9; padding: 8px;
+         font-family: "SF Mono", Menlo, monospace; font-size: 12px;
+         overflow-y: scroll; white-space: pre; border: 1px solid #333; }
+  .ok { color: #9c9; }
+  .err { color: #f88; }
+</style>
+</head>
+<body>
+<h1>ALICE-GameEngine — Editor UI demo</h1>
+<div class="row">
+  <span id="status">disconnected</span>
+  <button onclick="connect()">connect</button>
+  <button onclick="send({kind:'hello',protocol_version:1})">hello</button>
+  <button onclick="send({kind:'snapshot'})">snapshot</button>
+  <button onclick="send({kind:'undo'})">undo</button>
+  <button onclick="send({kind:'redo'})">redo</button>
+</div>
+<div class="row">
+  <input id="cmdId" type="number" value="0" style="width: 50px"> node id
+  <input id="dx" type="number" value="1.0" step="0.5" style="width: 60px"> dx
+  <input id="dy" type="number" value="0.0" step="0.5" style="width: 60px"> dy
+  <input id="dz" type="number" value="0.0" step="0.5" style="width: 60px"> dz
+  <button onclick="translateNode()">translate</button>
+  <button onclick="renameNode()">rename "test"</button>
+  <button onclick="hideNode()">hide</button>
+</div>
+<div id="log"></div>
+
+<script>
+let ws = null;
+function log(msg, cls) {
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  line.className = cls || '';
+  line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function connect() {
+  if (ws) ws.close();
+  ws = new WebSocket('ws://' + window.location.host + '/ws');
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'connected';
+    log('connected', 'ok');
+  };
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'disconnected';
+    log('disconnected', 'err');
+  };
+  ws.onmessage = (evt) => log('← ' + evt.data, 'ok');
+}
+function send(obj) {
+  if (!ws || ws.readyState !== 1) { log('not connected', 'err'); return; }
+  const j = JSON.stringify(obj);
+  ws.send(j);
+  log('→ ' + j);
+}
+function translateNode() {
+  const id = parseInt(document.getElementById('cmdId').value, 10);
+  const dx = parseFloat(document.getElementById('dx').value);
+  const dy = parseFloat(document.getElementById('dy').value);
+  const dz = parseFloat(document.getElementById('dz').value);
+  send({ kind:'apply', command:{ Translate:{ node:[id], delta:[dx, dy, dz] } } });
+}
+function renameNode() {
+  const id = parseInt(document.getElementById('cmdId').value, 10);
+  send({ kind:'apply', command:{ Rename:{ node:[id], name:'test' } } });
+}
+function hideNode() {
+  const id = parseInt(document.getElementById('cmdId').value, 10);
+  send({ kind:'apply', command:{ Hide:{ node:[id] } } });
+}
+</script>
+</body>
+</html>

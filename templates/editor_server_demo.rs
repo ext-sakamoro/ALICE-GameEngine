@@ -55,8 +55,8 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn root() -> &'static str {
-    "ALICE-GameEngine editor server — connect to /ws and send EditorClientMessage JSON frames."
+async fn root() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("editor_ui/index.html"))
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
