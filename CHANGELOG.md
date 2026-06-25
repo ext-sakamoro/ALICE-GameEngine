@@ -23,6 +23,30 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 10 — GUI stack v2 (grid + animation + text input + notify)
+
+Builds on the Wave 9 foundation so the engine's GUI surface
+reaches Web / React parity.
+
+- **`grid`** — CSS-Grid style layout solver alongside `flex`.
+  `TrackSize::Fixed(px)` / `Fraction(weight)` (CSS `fr` analogue)
+  / `Auto` + per-cell `column_span` / `row_span`. Useful for
+  dashboards, photo galleries, header bars with named columns.
+- **`ui_animation`** — `UiTransition` + 5 `Easing` curves (Linear /
+  EaseIn / EaseOut / EaseInOut / Spring). `set_target(value, dur)`
+  starts the animation, `tick(dt)` advances it. Mid-flight target
+  changes restart the curve from the current value (responsive UI
+  feel). Useful for hover / pressed / focused state interpolation.
+- **`imgui::text_input`** — single-line text field. `UiInput` gains
+  `typed: Vec<char>` + `backspace: bool` so any host input layer
+  can forward keystrokes. Records `UiInteraction::TextInputEdited`
+  / `TextInputFocused` for game-side handlers.
+- **`notify`** — `NotifyCenter` toast / modal queue. `push` adds
+  a `Notification` (Info / Success / Warning / Error severities);
+  `tick(dt)` auto-dismisses toasts and leaves modals; `active()`
+  returns modals first then toasts in arrival order. Capacity caps
+  drop the oldest toast but never a modal.
+
 ### v0.7 wave 9 — Bevy-style GUI stack
 
 Four new modules + theme bring the engine's UI surface up to

@@ -150,6 +150,14 @@ Feature flags pick what you compile:
   tree) + `Inspector::detail` (right-panel property list)
 - **Theme** — `UiTheme::dark()` / `light()` preset palettes +
   spacing scale + font scale
+- **CSS Grid layout** — `grid::solve` (Fixed / Fraction / Auto +
+  span) sibling to flex
+- **UI animation** — `UiTransition` + 5 easing curves
+  (Linear / EaseIn / EaseOut / EaseInOut / Spring)
+- **TextInput widget** — caret + selection + UTF-8 typed buffer +
+  backspace
+- **Notify queue** — `NotifyCenter` toasts (auto-dismiss) + modals
+  (manual dismiss), 4 severities
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

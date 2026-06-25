@@ -34,15 +34,28 @@ pub enum UiCommand {
         label: String,
         checked: bool,
     },
+    TextInput {
+        position: Vec2,
+        size: Vec2,
+        label: String,
+        text: String,
+        caret: u32,
+        focused: bool,
+    },
 }
 
 /// What the user is doing this frame. Provided by the host
 /// application from its actual input layer.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiInput {
     pub cursor: Vec2,
     pub primary_pressed: bool,
     pub primary_just_released: bool,
+    /// New text characters typed this frame (= each `char` produced
+    /// by the platform's text-input layer). UTF-8 ready.
+    pub typed: Vec<char>,
+    /// True when the host's backspace key fired this frame.
+    pub backspace: bool,
 }
 
 /// One-frame builder. Create with [`UiContext::new`], build the UI
@@ -63,6 +76,8 @@ pub enum UiInteraction {
     ButtonClicked { label: String },
     SliderChanged { label: String, new_value: f32 },
     CheckboxToggled { label: String, new_value: bool },
+    TextInputEdited { label: String, new_text: String },
+    TextInputFocused { label: String },
 }
 
 impl UiContext {
@@ -136,6 +151,51 @@ impl UiContext {
         changed
     }
 
+    /// Single-line text-input widget. `text` is mutated in place
+    /// when the cursor is inside the field; new characters from
+    /// `UiInput::typed` append at the caret, backspace removes the
+    /// last character. Returns `true` when the contents changed.
+    pub fn text_input(&mut self, label: &str, text: &mut String) -> bool {
+        let position = Vec2::new(self.indent, self.cursor_y);
+        let size = Vec2::new(200.0, 22.0);
+        let focused = point_in_rect(self.input.cursor, position, size);
+        let mut changed = false;
+        if focused {
+            if self.input.primary_just_released {
+                self.interactions.push(UiInteraction::TextInputFocused {
+                    label: label.to_string(),
+                });
+            }
+            for ch in &self.input.typed {
+                if !ch.is_control() {
+                    text.push(*ch);
+                    changed = true;
+                }
+            }
+            if self.input.backspace && !text.is_empty() {
+                text.pop();
+                changed = true;
+            }
+            if changed {
+                self.interactions.push(UiInteraction::TextInputEdited {
+                    label: label.to_string(),
+                    new_text: text.clone(),
+                });
+            }
+        }
+        let caret = text.chars().count() as u32;
+        self.commands.push(UiCommand::TextInput {
+            position,
+            size,
+            label: label.to_string(),
+            text: text.clone(),
+            caret,
+            focused,
+        });
+        self.cursor_y += size.y() + self.spacing;
+        changed
+    }
+
     pub fn checkbox(&mut self, label: &str, checked: &mut bool) -> bool {
         let position = Vec2::new(self.indent, self.cursor_y);
         let size = Vec2::new(18.0, 18.0);
@@ -200,6 +260,7 @@ mod tests {
             cursor: Vec2::new(20.0, 12.0),
             primary_pressed: false,
             primary_just_released: true,
+            ..UiInput::default()
         });
         let clicked = ui.button("ok");
         assert!(clicked);
@@ -223,6 +284,7 @@ mod tests {
             cursor: Vec2::new(88.0, 18.0),
             primary_pressed: true,
             primary_just_released: false,
+            ..UiInput::default()
         });
         let mut v = 0.0_f32;
         let changed = ui.slider("vol", &mut v, 0.0, 1.0);
@@ -241,6 +303,47 @@ mod tests {
         let toggled = ui.checkbox("enable", &mut on);
         assert!(toggled);
         assert!(on);
+    }
+
+    #[test]
+    fn text_input_appends_typed_characters_when_focused() {
+        let input = UiInput {
+            cursor: Vec2::new(20.0, 18.0),
+            typed: vec!['h', 'i'],
+            ..UiInput::default()
+        };
+        let mut ui = UiContext::new(input);
+        let mut buf = String::new();
+        let changed = ui.text_input("name", &mut buf);
+        assert!(changed);
+        assert_eq!(buf, "hi");
+    }
+
+    #[test]
+    fn text_input_backspace_drops_last_character() {
+        let input = UiInput {
+            cursor: Vec2::new(20.0, 18.0),
+            backspace: true,
+            ..UiInput::default()
+        };
+        let mut ui = UiContext::new(input);
+        let mut buf = "abc".to_string();
+        let changed = ui.text_input("name", &mut buf);
+        assert!(changed);
+        assert_eq!(buf, "ab");
+    }
+
+    #[test]
+    fn text_input_ignored_when_cursor_outside() {
+        let input = UiInput {
+            cursor: Vec2::new(500.0, 500.0),
+            typed: vec!['x'],
+            ..UiInput::default()
+        };
+        let mut ui = UiContext::new(input);
+        let mut buf = String::new();
+        assert!(!ui.text_input("name", &mut buf));
+        assert!(buf.is_empty());
     }
 
     #[test]

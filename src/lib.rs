@@ -82,6 +82,7 @@ pub mod flex;
 pub mod gaussian_splat;
 pub mod gpu_bvh;
 pub mod gpu_mesh;
+pub mod grid;
 pub mod hair;
 pub mod hd2d_postfx;
 pub mod heatmap;
@@ -100,6 +101,7 @@ pub mod math;
 pub mod mcp;
 pub mod mobile;
 pub mod network;
+pub mod notify;
 pub mod ocean;
 pub mod physics3d;
 pub mod prelude;
@@ -123,6 +125,7 @@ pub mod sprite_render;
 pub mod text;
 pub mod texture;
 pub mod theme;
+pub mod ui_animation;
 pub mod verse;
 pub mod virtual_shadow;
 pub mod volumetric_clouds;
@@ -201,6 +204,7 @@ pub use flex::{
 pub use gaussian_splat::{evaluate_sh_band1, GaussianCloud, ProjectedSplat, Splat};
 pub use gpu_bvh::{morton3_unit, radix_sort_u32_pairs, Aabb as BvhAabb, Bvh, BvhNode};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
+pub use grid::{solve as grid_solve, GridCell, GridLayout, ResolvedCell, TrackSize};
 pub use hair::{HairConfig, HairStrand, HairSystem};
 pub use heatmap::{heatmap_slice, Axis as SdfAxis, Colormap as SdfColormap};
 pub use humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};
@@ -222,6 +226,7 @@ pub use mobile::{
     mobile_build_hints, MobileTarget, ScreenMetrics, TouchCamera, TouchEvent, TouchPhase,
 };
 pub use network::{GameClient, GameHost, NetMessage, NetPeer, PeerId};
+pub use notify::{Notification, NotifyCenter, Severity};
 pub use ocean::{OceanConfig, OceanFrame, OceanSimulator};
 pub use physics3d::{Contact3D, PhysicsWorld, RigidBody};
 pub use render_pipeline::{FrameData, MaterialUniforms, MvpUniforms, RenderStats};
@@ -237,6 +242,7 @@ pub use soft_body::{SoftBodyConfig, SoftBodySim, SoftParticle};
 pub use text::{BitmapFont, TextLayout};
 pub use texture::{GpuTextureDesc, TextureAsset};
 pub use theme::UiTheme;
+pub use ui_animation::{Easing, UiTransition};
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
 };
