@@ -69,6 +69,7 @@ pub mod battle;
 pub mod bridge;
 pub mod camera_controller;
 pub mod collision;
+pub mod decal;
 pub mod easy;
 pub mod ecs;
 pub mod engine;
@@ -147,6 +148,7 @@ pub use app::{AppCallbacks, HeadlessRunner};
 pub use bridge::{AudioSampleProvider, CollisionProvider, Plugin, PluginRegistry, SdfEvaluator};
 pub use camera_controller::{FpsCamera, OrbitCamera};
 pub use collision::{gjk, ConvexHull, ConvexSphere, GjkResult};
+pub use decal::{DecalBlendMode, DecalData, DecalDraw};
 pub use easy::{Game, GameBuilder};
 pub use ecs::{
     Collider, CollisionPair, ComponentStore, EntityId, EntityManager, GameEngineError, GameTime,

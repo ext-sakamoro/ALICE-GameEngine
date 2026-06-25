@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+### New modules
+
+- **`decal`** — Deferred decal projection (Wicked-inspired). `DecalData`
+  (albedo / normal / color / opacity / layer_mask / blend_mode),
+  `DecalBlendMode` (AlphaBlend / Multiply / Additive with stable shader
+  IDs), `DecalDraw` with pre-computed inverse world matrix and OBB→AABB
+  helper for frustum culling.
+
+### Scene graph + renderer integration
+
+- `NodeKind::Decal(DecalData)` — decals are first-class scene graph
+  nodes; their OBB extents come from `local_transform.scale`.
+- `SceneGraph::decals()` collector + `local_aabb` arm for the unit OBB.
+- `FrameData` gains `decal_draws: Vec<DecalDraw>`, collected per frame
+  with pre-computed inverse world matrices for shader use.
+- `RenderPass::Decal` inserted between `GBuffer` and `DeferredLighting`
+  in `Renderer::active_passes()`; `DrawStats.decal_nodes`,
+  `PipelineState.decal_pass_enabled` added.
+
+### Shaders
+
+- `DECAL_VERTEX_WGSL` + `DECAL_FRAGMENT_WGSL` — depth-reconstruct OBB
+  projection with branchless blend mode dispatch matching
+  `DecalBlendMode::shader_id`. Both naga-validated in unit tests. Built-
+  in shader cache now reports 8 entries (was 6).
+
+### Example
+
+- `cargo run --example decal_demo` — five decals (bullet hole, blood,
+  graffiti, sign, glowing rune) projected onto a wall mesh and SDF
+  floor, headless.
+
 ## [0.6.0] - 2026-06-11
 
 Major content release: turn-based RPG, 3D action combat, hierarchical

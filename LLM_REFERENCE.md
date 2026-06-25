@@ -38,6 +38,7 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | A* pathfinding | `navmesh::a_star(&mesh, start_tri, goal_tri)` |
 | Crowd separation | `navmesh::crowd_separation(&mut agents, radius, strength)` |
 | 2D sprites/tiles | `scene2d::Sprite2D`, `TileMap`, `detect_2d_collisions()` |
+| Deferred decals | `scene.add(Node::new("hole", NodeKind::Decal(DecalData::default())))` — OBB extents = `local_transform.scale` |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

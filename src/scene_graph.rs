@@ -104,6 +104,10 @@ pub enum NodeKind {
 
     /// Particle emitter.
     ParticleEmitter(ParticleEmitterData),
+
+    /// Deferred decal that projects a texture onto underlying `GBuffer`
+    /// geometry within an OBB defined by `local_transform`.
+    Decal(crate::decal::DecalData),
 }
 
 /// Polygon mesh payload.
@@ -484,6 +488,12 @@ impl SceneGraph {
         self.query_by_kind(&|k| matches!(k, NodeKind::Sdf(_)))
     }
 
+    /// Collects all deferred decals in the scene.
+    #[must_use]
+    pub fn decals(&self) -> Vec<NodeId> {
+        self.query_by_kind(&|k| matches!(k, NodeKind::Decal(_)))
+    }
+
     /// Look up a node by name (linear scan).
     #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<NodeId> {
@@ -722,7 +732,7 @@ impl SceneGraph {
         };
         match &node.kind {
             NodeKind::Sdf(sdf) => Aabb3::new(-sdf.half_extents, sdf.half_extents),
-            NodeKind::Mesh(_) => Aabb3::new(-Vec3::ONE, Vec3::ONE),
+            NodeKind::Mesh(_) | NodeKind::Decal(_) => Aabb3::new(-Vec3::ONE, Vec3::ONE),
             NodeKind::Light(ld) => match ld.variant {
                 LightVariant::Point { radius } | LightVariant::Spot { radius, .. } => {
                     let r = Vec3::new(radius, radius, radius);

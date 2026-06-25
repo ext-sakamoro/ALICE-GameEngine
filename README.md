@@ -49,6 +49,9 @@ Feature flags pick what you compile:
 - **Pathfinding** — A*, **hierarchical A*** with cluster planning,
   grid-to-NavMesh auto-generation
 - **Particles** — CPU emitter + **curl-noise force field** + `TrailEmitter`
+- **Deferred decals** — OBB projector node (`NodeKind::Decal`), depth-
+  reconstruct WGSL, three blend modes (alpha / multiply / additive),
+  `cargo run --example decal_demo`
 - **HD-2D / post-process** — `Sprite3D` billboard + WGSL templates for
   pbr-sprite, **SSGI** (16 samples) and **SMAA** (all naga-validated)
 - **Multiplayer scaffolding** — `LoopbackTransport` implements
@@ -128,6 +131,7 @@ cargo run --example rpg                # turn-based: NPC choice → battle → r
 cargo run --example multiplayer_battle # two peers via LoopbackTransport
 cargo run --example visual_novel       # EventScript-driven branching story
 cargo run --example fps_combat         # LockOn cone + hitscan + HitStop
+cargo run --example decal_demo         # 5 deferred decals on wall + floor (headless)
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

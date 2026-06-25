@@ -246,6 +246,118 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 ";
 
+/// Deferred decal vertex shader.
+///
+/// Takes a unit cube `[-1, 1]^3` as input (8 vertices, 36 indices) and
+/// transforms it by the decal's world matrix. The fragment shader then
+/// reconstructs the world position of the underlying `GBuffer` pixel from
+/// the depth buffer and discards fragments outside the OBB.
+pub const DECAL_VERTEX_WGSL: &str = r"
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) screen_uv: vec2<f32>,
+};
+
+struct DecalUniforms {
+    world_matrix: mat4x4<f32>,
+    inv_world_matrix: mat4x4<f32>,
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    inv_view_projection: mat4x4<f32>,
+    color_opacity: vec4<f32>,
+    blend_layer: vec4<u32>,
+};
+
+@group(0) @binding(0) var<uniform> u: DecalUniforms;
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let world_pos = u.world_matrix * vec4<f32>(in.position, 1.0);
+    let clip = u.projection * u.view * world_pos;
+    out.clip_position = clip;
+    // Screen UV in [0, 1], y flipped to match WGPU's top-left origin.
+    let ndc = clip.xy / clip.w;
+    out.screen_uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    return out;
+}
+";
+
+/// Deferred decal fragment shader.
+///
+/// Reads the depth buffer to reconstruct world position, transforms back
+/// into projector-local space, discards fragments whose `|local.xyz| > 1`,
+/// samples the decal albedo texture using `local.xy` and blends onto the
+/// `GBuffer` per `blend_layer.x` (= `DecalBlendMode::shader_id`).
+pub const DECAL_FRAGMENT_WGSL: &str = r"
+@group(0) @binding(1) var t_depth: texture_depth_2d;
+@group(0) @binding(2) var s_depth: sampler;
+@group(0) @binding(3) var t_decal_albedo: texture_2d<f32>;
+@group(0) @binding(4) var s_decal: sampler;
+
+struct DecalUniforms {
+    world_matrix: mat4x4<f32>,
+    inv_world_matrix: mat4x4<f32>,
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    inv_view_projection: mat4x4<f32>,
+    color_opacity: vec4<f32>,
+    blend_layer: vec4<u32>,
+};
+
+@group(0) @binding(0) var<uniform> u: DecalUniforms;
+
+struct DecalOutput {
+    @location(0) albedo: vec4<f32>,
+};
+
+@fragment
+fn fs_main(@location(0) screen_uv: vec2<f32>) -> DecalOutput {
+    // Reconstruct world position from depth.
+    let depth = textureSample(t_depth, s_depth, screen_uv);
+    // NDC Z in WGPU is [0, 1]; convert UV back to NDC XY and reproject.
+    let ndc = vec3<f32>(
+        screen_uv.x * 2.0 - 1.0,
+        1.0 - screen_uv.y * 2.0,
+        depth,
+    );
+    let world_h = u.inv_view_projection * vec4<f32>(ndc, 1.0);
+    let world = world_h.xyz / world_h.w;
+
+    // World → projector local. Outside the unit cube → discard.
+    let local = (u.inv_world_matrix * vec4<f32>(world, 1.0)).xyz;
+    let bounds = abs(local) - vec3<f32>(1.0, 1.0, 1.0);
+    if bounds.x > 0.0 || bounds.y > 0.0 || bounds.z > 0.0 {
+        discard;
+    }
+
+    // Local XY ∈ [-1, 1] → UV ∈ [0, 1]. Y flipped for texture convention.
+    let decal_uv = vec2<f32>(local.x * 0.5 + 0.5, 0.5 - local.y * 0.5);
+    let sample = textureSample(t_decal_albedo, s_decal, decal_uv);
+    let tint = u.color_opacity;
+    let alpha = sample.a * tint.a;
+
+    var out: DecalOutput;
+    let blend_id = u.blend_layer.x;
+    if blend_id == 0u {
+        // AlphaBlend: premultiplied output, fixed-function blend dst rgb = src + (1-src.a)*dst
+        out.albedo = vec4<f32>(sample.rgb * tint.rgb * alpha, alpha);
+    } else if blend_id == 1u {
+        // Multiply: lerp(white, sample*tint, alpha), set alpha to 1 so dst rgb *= src.rgb
+        let multiplied = mix(vec3<f32>(1.0, 1.0, 1.0), sample.rgb * tint.rgb, alpha);
+        out.albedo = vec4<f32>(multiplied, 1.0);
+    } else {
+        // Additive: dst rgb += src.rgb * alpha, dst alpha unchanged
+        out.albedo = vec4<f32>(sample.rgb * tint.rgb * alpha, 0.0);
+    }
+    return out;
+}
+";
+
 /// Deferred lighting pass fragment shader.
 pub const DEFERRED_LIGHTING_FRAGMENT_WGSL: &str = r"
 @group(0) @binding(0) var t_albedo: texture_2d<f32>;
@@ -317,6 +429,16 @@ pub fn builtin_shader_cache() -> ShaderCache {
     cache.add(ShaderSource::new(
         "deferred_lighting",
         DEFERRED_LIGHTING_FRAGMENT_WGSL,
+        ShaderStage::Fragment,
+    ));
+    cache.add(ShaderSource::new(
+        "decal_vertex",
+        DECAL_VERTEX_WGSL,
+        ShaderStage::Vertex,
+    ));
+    cache.add(ShaderSource::new(
+        "decal_fragment",
+        DECAL_FRAGMENT_WGSL,
         ShaderStage::Fragment,
     ));
     cache.add(ShaderSource::new(
@@ -394,12 +516,47 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 6);
+        assert_eq!(cache.count(), 8);
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
         assert!(cache.get("sdf_raymarch").is_some());
         assert!(cache.get("fullscreen_vertex").is_some());
         assert!(cache.get("deferred_lighting").is_some());
+        assert!(cache.get("decal_vertex").is_some());
+        assert!(cache.get("decal_fragment").is_some());
+        assert!(cache.get("lut_postprocess").is_some());
+    }
+
+    #[test]
+    fn decal_vertex_has_uniforms_and_entry() {
+        assert!(DECAL_VERTEX_WGSL.contains("DecalUniforms"));
+        assert!(DECAL_VERTEX_WGSL.contains("inv_world_matrix"));
+        assert!(DECAL_VERTEX_WGSL.contains("@vertex"));
+    }
+
+    #[test]
+    fn decal_fragment_has_blend_branches() {
+        // Blend mode IDs must match decal::DecalBlendMode::shader_id().
+        assert!(DECAL_FRAGMENT_WGSL.contains("blend_id == 0u"));
+        assert!(DECAL_FRAGMENT_WGSL.contains("blend_id == 1u"));
+        assert!(DECAL_FRAGMENT_WGSL.contains("discard"));
+        assert!(DECAL_FRAGMENT_WGSL.contains("@fragment"));
+    }
+
+    #[test]
+    fn decal_shaders_pass_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        for (label, src) in [
+            ("decal_vertex", DECAL_VERTEX_WGSL),
+            ("decal_fragment", DECAL_FRAGMENT_WGSL),
+        ] {
+            let module = naga::front::wgsl::parse_str(src)
+                .unwrap_or_else(|e| panic!("{label} WGSL parse failed: {e:?}"));
+            let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+            validator
+                .validate(&module)
+                .unwrap_or_else(|e| panic!("{label} naga validation failed: {e:?}"));
+        }
     }
 
     #[test]

@@ -84,6 +84,7 @@ pub struct DrawStats {
     pub triangles: u64,
     pub mesh_nodes: u32,
     pub sdf_nodes: u32,
+    pub decal_nodes: u32,
     pub light_count: u32,
     pub shadow_passes: u32,
 }
@@ -99,6 +100,9 @@ pub enum RenderPass {
     DirectionalShadow,
     PointShadow,
     SpotShadow,
+    /// Projects [`Decal`](crate::decal::DecalData) volumes onto the
+    /// `GBuffer` after geometry but before lighting.
+    Decal,
     DeferredLighting,
     SdfRaymarch,
     Ssao,
@@ -290,11 +294,13 @@ impl Renderer {
     ) -> DrawStats {
         let mesh_count = scene.meshes().len() as u32;
         let sdf_count = scene.sdf_volumes().len() as u32;
+        let decal_count = scene.decals().len() as u32;
         let stats = DrawStats {
-            draw_calls: mesh_count + sdf_count,
+            draw_calls: mesh_count + sdf_count + decal_count,
             triangles: u64::from(mesh_count) * 12, // conservative estimate per mesh
             mesh_nodes: mesh_count,
             sdf_nodes: sdf_count,
+            decal_nodes: decal_count,
             light_count: ctx.lights.len() as u32,
             shadow_passes: ctx.lights.iter().filter(|l| l.cast_shadows).count() as u32,
         };
@@ -310,6 +316,7 @@ impl Renderer {
             triangles: 0,
             mesh_nodes: 0,
             sdf_nodes: 0,
+            decal_nodes: 0,
             light_count: ctx.lights.len() as u32,
             shadow_passes: ctx.lights.iter().filter(|l| l.cast_shadows).count() as u32,
         };
@@ -318,9 +325,18 @@ impl Renderer {
     }
 
     /// Returns passes that would execute for current quality settings.
+    ///
+    /// The decal pass is always reported between `GBuffer` and
+    /// `DeferredLighting`; if the scene contains no decals the pass is a
+    /// no-op at submission time but still occupies its slot in the graph
+    /// so downstream code can attach dependencies deterministically.
     #[must_use]
     pub fn active_passes(&self) -> Vec<RenderPass> {
-        let mut passes = vec![RenderPass::GBuffer, RenderPass::DeferredLighting];
+        let mut passes = vec![
+            RenderPass::GBuffer,
+            RenderPass::Decal,
+            RenderPass::DeferredLighting,
+        ];
         if self.quality.ssao_enabled {
             passes.push(RenderPass::Ssao);
         }
@@ -558,6 +574,7 @@ mod tests {
         let r = Renderer::new(1920, 1080);
         let passes = r.active_passes();
         assert!(passes.contains(&RenderPass::GBuffer));
+        assert!(passes.contains(&RenderPass::Decal));
         assert!(passes.contains(&RenderPass::DeferredLighting));
         assert!(passes.contains(&RenderPass::Ssao));
         assert!(passes.contains(&RenderPass::Bloom));
@@ -573,7 +590,25 @@ mod tests {
         r.quality.hdr_enabled = false;
         r.quality.fxaa_enabled = false;
         let passes = r.active_passes();
-        assert_eq!(passes.len(), 2);
+        // GBuffer + Decal + DeferredLighting
+        assert_eq!(passes.len(), 3);
+    }
+
+    #[test]
+    fn active_passes_orders_decal_between_gbuffer_and_lighting() {
+        let r = Renderer::new(800, 600);
+        let passes = r.active_passes();
+        let gbuf = passes
+            .iter()
+            .position(|p| *p == RenderPass::GBuffer)
+            .unwrap();
+        let decal = passes.iter().position(|p| *p == RenderPass::Decal).unwrap();
+        let lighting = passes
+            .iter()
+            .position(|p| *p == RenderPass::DeferredLighting)
+            .unwrap();
+        assert!(gbuf < decal);
+        assert!(decal < lighting);
     }
 
     #[test]
@@ -726,6 +761,10 @@ mod tests {
         sg.add(Node::new("m1", NodeKind::Mesh(MeshData::default())));
         sg.add(Node::new("m2", NodeKind::Mesh(MeshData::default())));
         sg.add(Node::new("s1", NodeKind::Sdf(SdfData::default())));
+        sg.add(Node::new(
+            "decal1",
+            NodeKind::Decal(crate::decal::DecalData::default()),
+        ));
         sg.add(Node::new("sun", NodeKind::Light(LightData::default())));
         sg.update_world_matrices();
 
@@ -734,7 +773,8 @@ mod tests {
         let stats = r.render_frame_with_scene(&ctx, &sg);
         assert_eq!(stats.mesh_nodes, 2);
         assert_eq!(stats.sdf_nodes, 1);
-        assert_eq!(stats.draw_calls, 3);
+        assert_eq!(stats.decal_nodes, 1);
+        assert_eq!(stats.draw_calls, 4);
         assert_eq!(stats.light_count, 1);
     }
 

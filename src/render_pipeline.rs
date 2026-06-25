@@ -3,6 +3,7 @@
 //! Abstracts the per-frame GPU operations without requiring an actual
 //! GPU device (testable CPU-side).
 
+use crate::decal::DecalDraw;
 use crate::math::{Color, Mat4, Vec3};
 use crate::scene_graph::{NodeKind, Projection, SceneGraph};
 
@@ -76,6 +77,7 @@ pub struct FrameData {
     pub clear_color: Color,
     pub mesh_draws: Vec<MeshDraw>,
     pub sdf_draws: Vec<SdfDraw>,
+    pub decal_draws: Vec<DecalDraw>,
     pub light_count: u32,
 }
 
@@ -149,6 +151,16 @@ impl FrameData {
             }
         }
 
+        let mut decal_draws = Vec::new();
+        for decal_id in scene.decals() {
+            if let Some(node) = scene.get(decal_id) {
+                if let NodeKind::Decal(ref dd) = node.kind {
+                    let world = scene.world_matrix(decal_id);
+                    decal_draws.push(DecalDraw::new(world, dd.clone()));
+                }
+            }
+        }
+
         Some(Self {
             camera_view,
             camera_projection,
@@ -156,13 +168,14 @@ impl FrameData {
             clear_color: cam_data.clear_color,
             mesh_draws,
             sdf_draws,
+            decal_draws,
             light_count: scene.lights().len() as u32,
         })
     }
 
     #[must_use]
     pub const fn total_draw_count(&self) -> usize {
-        self.mesh_draws.len() + self.sdf_draws.len()
+        self.mesh_draws.len() + self.sdf_draws.len() + self.decal_draws.len()
     }
 }
 
@@ -196,6 +209,7 @@ impl RenderStats {
 pub struct PipelineState {
     pub gbuffer_enabled: bool,
     pub sdf_raymarch_enabled: bool,
+    pub decal_pass_enabled: bool,
     pub deferred_lighting_enabled: bool,
     pub post_process_enabled: bool,
     pub debug_overlay_enabled: bool,
@@ -206,6 +220,7 @@ impl Default for PipelineState {
         Self {
             gbuffer_enabled: true,
             sdf_raymarch_enabled: true,
+            decal_pass_enabled: true,
             deferred_lighting_enabled: true,
             post_process_enabled: true,
             debug_overlay_enabled: false,
@@ -219,6 +234,7 @@ impl PipelineState {
     pub fn enabled_stage_count(&self) -> u32 {
         u32::from(self.gbuffer_enabled)
             + u32::from(self.sdf_raymarch_enabled)
+            + u32::from(self.decal_pass_enabled)
             + u32::from(self.deferred_lighting_enabled)
             + u32::from(self.post_process_enabled)
             + u32::from(self.debug_overlay_enabled)
@@ -309,8 +325,9 @@ mod tests {
         let ps = PipelineState::default();
         assert!(ps.gbuffer_enabled);
         assert!(ps.sdf_raymarch_enabled);
+        assert!(ps.decal_pass_enabled);
         assert!(!ps.debug_overlay_enabled);
-        assert_eq!(ps.enabled_stage_count(), 4);
+        assert_eq!(ps.enabled_stage_count(), 5);
     }
 
     #[test]
@@ -318,11 +335,34 @@ mod tests {
         let ps = PipelineState {
             gbuffer_enabled: false,
             sdf_raymarch_enabled: false,
+            decal_pass_enabled: false,
             deferred_lighting_enabled: false,
             post_process_enabled: false,
             debug_overlay_enabled: false,
         };
         assert_eq!(ps.enabled_stage_count(), 0);
+    }
+
+    #[test]
+    fn frame_data_collects_decals() {
+        let mut sg = SceneGraph::new("test");
+        sg.add(Node::new("cam", NodeKind::Camera(CameraData::default())));
+        let mut decal_node = Node::new(
+            "bullet_hole",
+            NodeKind::Decal(crate::decal::DecalData::default()),
+        );
+        decal_node.local_transform.position = Vec3::new(2.0, 0.0, 0.0);
+        decal_node.local_transform.scale = Vec3::new(0.5, 0.5, 0.5);
+        sg.add(decal_node);
+        sg.update_world_matrices();
+
+        let fd = FrameData::from_scene(&sg).unwrap();
+        assert_eq!(fd.decal_draws.len(), 1);
+        // OBB center should be at the node's world position.
+        let center = fd.decal_draws[0].world_matrix.transform_point3(Vec3::ZERO);
+        assert!((center.x() - 2.0).abs() < 1e-4);
+        // total_draw_count includes decals.
+        assert_eq!(fd.total_draw_count(), 1);
     }
 
     #[test]
