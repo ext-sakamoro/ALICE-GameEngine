@@ -183,6 +183,44 @@ pub struct CubemapCaptureTargets {
 
 #[cfg(feature = "gpu")]
 impl CubemapCaptureTargets {
+    /// Submit a clear-only render pass into each face. The simplest
+    /// possible "render driver" — useful as a sanity check that the
+    /// 6 face views are wired up correctly. Production code replaces
+    /// the clear with the engine's full deferred render against the
+    /// face's view/projection.
+    pub fn clear_all_faces(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        clear_color: crate::math::Color,
+    ) {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("alice-cubemap-clear"),
+        });
+        for face in 0..6 {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("alice-cubemap-face-clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.face_views[face],
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: clear_color.r.into(),
+                            g: clear_color.g.into(),
+                            b: clear_color.b.into(),
+                            a: clear_color.a.into(),
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
     /// Allocate the GPU resources for a probe at `position`.
     #[must_use]
     pub fn new(

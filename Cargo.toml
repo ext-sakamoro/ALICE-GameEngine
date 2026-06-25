@@ -23,6 +23,7 @@ python = ["ffi"]
 godot = ["ffi"]
 audio_output = ["audio", "cpal"]
 network_udp = ["tokio"]
+editor_server = ["axum", "tokio", "tokio/macros", "tokio/rt-multi-thread"]
 full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
 
 [dependencies]
@@ -46,6 +47,9 @@ tokio = { version = "1.0", features = ["rt-multi-thread", "net", "sync"], option
 
 # Window (optional)
 winit = { version = "0.30", optional = true }
+
+# Editor websocket server (optional, requires `editor_server` feature).
+axum = { version = "0.7", features = ["ws"], optional = true }
 
 [dev-dependencies]
 approx = "0.5"
@@ -146,6 +150,16 @@ path = "templates/ddgi_demo.rs"
 [[example]]
 name = "gpu_bvh_demo"
 path = "templates/gpu_bvh_demo.rs"
+
+[[example]]
+name = "editor_server_demo"
+path = "templates/editor_server_demo.rs"
+required-features = ["editor_server"]
+
+[[example]]
+name = "gpu_compute_demo"
+path = "templates/gpu_compute_demo.rs"
+required-features = ["gpu"]
 
 [profile.release]
 opt-level = 3

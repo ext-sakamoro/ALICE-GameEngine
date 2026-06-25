@@ -23,6 +23,36 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 3 — 4-region production wiring
+
+- **Editor websocket server demo** — new `editor_server` feature
+  (axum 0.7 + tokio macros / rt-multi-thread) + `templates/
+  editor_server_demo.rs` runs an axum server on `127.0.0.1:8088`
+  with `/ws` handling JSON-encoded `EditorClientMessage` frames via
+  `dispatch_client_message`. Shared scene + editor behind
+  `tokio::sync::Mutex` for multi-client safety.
+
+- **Cubemap GPU render driver** —
+  `CubemapCaptureTargets::clear_all_faces(device, queue, color)`:
+  smallest "render driver" that submits 6 clear-only passes against
+  the 6 face views, proving the wiring before the engine plugs in
+  its real deferred render. Production code swaps the clear for the
+  6-face deferred render.
+
+- **Mobile CI smoke** — `.github/workflows/ci.yml` gains a new
+  `mobile-build` job on `macos-latest` that runs `cargo check
+  --target aarch64-apple-ios` + `--target aarch64-linux-android`
+  with `--no-default-features` so iOS / Android cross builds are
+  validated on every PR.
+
+- **GPU compute headless demo** — new `templates/gpu_compute_demo.rs`
+  drives the DDGI update compute shader end-to-end on a real GPU
+  via pollster + wgpu Instance/Adapter/Device, dispatches via
+  `dispatch_compute_once`-style flow, reads back the irradiance
+  buffer, and verifies the mean matches the input samples (= 0.7).
+  Verified on Apple M3 (Metal). Falls back to a graceful skip
+  message when no compatible adapter is available.
+
 ### v0.7 wave 2 — 4-region depth
 
 - **`editor`** undo/redo wired through — `Editor::undo` /

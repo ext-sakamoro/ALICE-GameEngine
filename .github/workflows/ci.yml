@@ -34,6 +34,19 @@ jobs:
       - name: Doc-tests
         run: cargo test --doc --features full
 
+  mobile-build:
+    name: mobile build smoke (iOS + Android cargo check)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-linux-android
+      - name: cargo check (iOS aarch64)
+        run: cargo check --target aarch64-apple-ios --no-default-features
+      - name: cargo check (Android aarch64)
+        run: cargo check --target aarch64-linux-android --no-default-features
+
   actionlint:
     name: actionlint (workflow YAML 検証)
     runs-on: ubuntu-latest

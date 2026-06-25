@@ -96,6 +96,14 @@ Feature flags pick what you compile:
   `dispatch_client_message` pure-function dispatcher
 - **GPU compute helpers** — `GpuContext::dispatch_compute_once` +
   `create_storage_buffer` (+ readback) for one-shot compute submit
+  · headless demo verified on Apple M3 Metal
+- **Editor websocket server** — `editor_server` feature + axum
+  0.7 + `dispatch_client_message` over `/ws`; `cargo run --example
+  editor_server_demo --features editor_server`
+- **Cubemap GPU render driver** — `CubemapCaptureTargets::
+  clear_all_faces` smoke driver for the 6-face capture pipeline
+- **Mobile CI** — `aarch64-apple-ios` + `aarch64-linux-android`
+  cargo check on every PR (macos-latest runner)
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -191,6 +199,8 @@ cargo run --example humanoid_demo      # VRM humanoid binding + lip-sync express
 cargo run --example gaussian_splat_demo  # 200 splats projected + depth sorted
 cargo run --example ddgi_demo          # 4×4×4 DDGI probe volume + trilinear sample
 cargo run --example gpu_bvh_demo       # Morton-sorted BVH over 64 AABBs + radix sort
+cargo run --example gpu_compute_demo --features gpu             # DDGI compute headless on real GPU
+cargo run --example editor_server_demo --features editor_server # axum ws on 127.0.0.1:8088
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full
