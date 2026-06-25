@@ -56,6 +56,10 @@ Feature flags pick what you compile:
   `wait`) with nestable contexts via `fork()`. Dedicated rayon thread
   pool, Condvar-based wait, panic-safe `wait`. `cargo run --example
   job_system_demo`
+- **Joint constraints** — `Distance` / `Hinge` / `Ball` / `Spring` +
+  new **`Slider`** (prismatic, min/max clamp), **`Fixed`** (weld),
+  **`ConeTwist`** (humanoid swing limit). `cargo run --example
+  constraint_demo`
 - **HD-2D / post-process** — `Sprite3D` billboard + WGSL templates for
   pbr-sprite, **SSGI** (16 samples) and **SMAA** (all naga-validated)
 - **Multiplayer scaffolding** — `LoopbackTransport` implements
@@ -137,6 +141,7 @@ cargo run --example visual_novel       # EventScript-driven branching story
 cargo run --example fps_combat         # LockOn cone + hitscan + HitStop
 cargo run --example decal_demo         # 5 deferred decals on wall + floor (headless)
 cargo run --example job_system_demo    # fork-join JobContext: 2 asset jobs + 256 particle jobs
+cargo run --example constraint_demo    # Slider piston + Fixed weld + ConeTwist hip joint
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

@@ -40,6 +40,9 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | 2D sprites/tiles | `scene2d::Sprite2D`, `TileMap`, `detect_2d_collisions()` |
 | Deferred decals | `scene.add(Node::new("hole", NodeKind::Decal(DecalData::default())))` — OBB extents = `local_transform.scale` |
 | Fork-join jobs | `let ctx = JobContext::new(); execute(&ctx, \|\| ...); dispatch(&ctx, 1000, 32, \|args\| ...); wait(&ctx);` — dedicated rayon pool, Condvar wait, `ctx.fork()` for nested barriers |
+| Slider (prismatic) joint | `Joint::slider(a, b, axis, min_offset, max_offset)` — 1-axis slide, perpendicular lock + min/max clamp |
+| Fixed (weld) joint | `Joint::fixed(a, b, offset)` — holds `B - A == offset` |
+| Cone twist (humanoid) joint | `Joint::cone_twist(a, b, twist_axis, swing_half_angle, twist_half_angle)` — swing clamp; twist limit reserved for future angular solver |
 | MCP remote control | `mcp::McpHandler::handle(&request, &mut ctx)` |
 | MCP binary | `cargo run --bin mcp_server` (stdio JSON-RPC) |
 | Import Unity scene | `import::parse_unity_yaml(&yaml)` → `unity_scene_to_nodes()` |

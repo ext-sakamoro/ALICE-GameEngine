@@ -10,6 +10,19 @@
   IDs), `DecalDraw` with pre-computed inverse world matrix and OBB→AABB
   helper for frustum culling.
 
+### Existing modules — additions
+
+- **`joint`** — Three new `JointKind` variants (Wicked-inspired
+  `ConstraintComponent`):
+  - `Slider` (prismatic, 1-axis slide with min/max offset clamp)
+  - `Fixed` (weld, holds `B - A == offset`)
+  - `ConeTwist` (humanoid hip / shoulder, swing half-angle clamp;
+    `twist_half_angle` stored but not enforced by the position-based
+    solver)
+  Constructors: `Joint::slider` / `Joint::fixed` / `Joint::cone_twist`.
+  Example: `cargo run --example constraint_demo` (piston + weld + cone
+  twist scenes).
+
 - **`jobs`** — Fork-join job system (Wicked-inspired `wiJobSystem`).
   `JobContext` (Mutex+Condvar pending counter, optional parent for
   nesting), `JobArgs` (job_index / group_id / group_index), top-level

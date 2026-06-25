@@ -106,6 +106,10 @@ path = "templates/decal_demo.rs"
 name = "job_system_demo"
 path = "templates/job_system_demo.rs"
 
+[[example]]
+name = "constraint_demo"
+path = "templates/constraint_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"
