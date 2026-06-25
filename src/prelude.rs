@@ -23,5 +23,6 @@ pub use crate::camera_controller::{FpsCamera, OrbitCamera};
 pub use crate::decal::{DecalBlendMode, DecalData, DecalDraw};
 pub use crate::ecs::{EntityId, GameTime, World};
 pub use crate::input::{ActionMap, InputState, Key, MouseButton};
+pub use crate::jobs::{JobArgs, JobContext};
 pub use crate::physics3d::{PhysicsWorld, RigidBody};
 pub use crate::scripting::{Event, EventBus};

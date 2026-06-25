@@ -102,6 +102,10 @@ path = "templates/fps_combat.rs"
 name = "decal_demo"
 path = "templates/decal_demo.rs"
 
+[[example]]
+name = "job_system_demo"
+path = "templates/job_system_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

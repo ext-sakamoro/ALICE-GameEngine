@@ -10,6 +10,15 @@
   IDs), `DecalDraw` with pre-computed inverse world matrix and OBB→AABB
   helper for frustum culling.
 
+- **`jobs`** — Fork-join job system (Wicked-inspired `wiJobSystem`).
+  `JobContext` (Mutex+Condvar pending counter, optional parent for
+  nesting), `JobArgs` (job_index / group_id / group_index), top-level
+  `execute` / `dispatch` / `wait`. Dedicated `rayon::ThreadPool`
+  (isolated from the global pool used by `sdf::marching_cubes_parallel`).
+  Panic-safe via RAII `JobGuard` so `wait` always unblocks. Example:
+  `cargo run --example job_system_demo` (256 fork-joined "particle" jobs
+  + 2 "asset" jobs, single parent `wait` covers both stages).
+
 ### Scene graph + renderer integration
 
 - `NodeKind::Decal(DecalData)` — decals are first-class scene graph
