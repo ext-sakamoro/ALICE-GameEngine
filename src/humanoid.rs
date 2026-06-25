@@ -174,6 +174,55 @@ impl Humanoid {
             .copied()
             .collect()
     }
+
+    /// Bulk-bind from a VRM 1.x extract (= the output of
+    /// [`asset::parse_vrm_full`](crate::asset::parse_vrm_full)).
+    /// VRM `humanBones` keys are camelCase (e.g. `"leftUpperArm"`)
+    /// while [`HumanoidBone`] uses snake_case (e.g.
+    /// `left_upper_arm`); this helper bridges the naming gap. Returns
+    /// the number of bones it bound.
+    pub fn bind_from_vrm(&mut self, extract: &crate::asset::VrmExtract) -> usize {
+        let mut count = 0;
+        for entry in &extract.bones {
+            if let Some(bone) = vrm_camel_to_humanoid(&entry.bone_name) {
+                self.bind(bone, entry.node_index);
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
+fn vrm_camel_to_humanoid(name: &str) -> Option<HumanoidBone> {
+    use HumanoidBone::*;
+    match name {
+        "hips" => Some(hips),
+        "spine" => Some(spine),
+        "chest" => Some(chest),
+        "upperChest" => Some(upper_chest),
+        "neck" => Some(neck),
+        "head" => Some(head),
+        "leftShoulder" => Some(left_shoulder),
+        "leftUpperArm" => Some(left_upper_arm),
+        "leftLowerArm" => Some(left_lower_arm),
+        "leftHand" => Some(left_hand),
+        "rightShoulder" => Some(right_shoulder),
+        "rightUpperArm" => Some(right_upper_arm),
+        "rightLowerArm" => Some(right_lower_arm),
+        "rightHand" => Some(right_hand),
+        "leftUpperLeg" => Some(left_upper_leg),
+        "leftLowerLeg" => Some(left_lower_leg),
+        "leftFoot" => Some(left_foot),
+        "leftToes" => Some(left_toes),
+        "rightUpperLeg" => Some(right_upper_leg),
+        "rightLowerLeg" => Some(right_lower_leg),
+        "rightFoot" => Some(right_foot),
+        "rightToes" => Some(right_toes),
+        "leftEye" => Some(left_eye),
+        "rightEye" => Some(right_eye),
+        "jaw" => Some(jaw),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +420,38 @@ mod tests {
         e.set_visemes(ExpressionChannel::Aa, 0.7, ExpressionChannel::Ih, 0.3);
         assert!((e.weight(&ExpressionChannel::Aa) - 0.7).abs() < 1e-6);
         assert!((e.weight(&ExpressionChannel::Ih) - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bind_from_vrm_extracts_camelcase_to_snakecase() {
+        use crate::asset::{VrmBoneBinding, VrmExtract, VrmHeader};
+        let extract = VrmExtract {
+            header: VrmHeader {
+                spec_version: "1.0".into(),
+                title: "T".into(),
+                author: "A".into(),
+            },
+            bones: vec![
+                VrmBoneBinding {
+                    bone_name: "head".into(),
+                    node_index: 12,
+                },
+                VrmBoneBinding {
+                    bone_name: "leftUpperArm".into(),
+                    node_index: 7,
+                },
+                VrmBoneBinding {
+                    bone_name: "unknownBone".into(),
+                    node_index: 99,
+                },
+            ],
+            expressions: vec![],
+        };
+        let mut h = Humanoid::new();
+        let bound = h.bind_from_vrm(&extract);
+        assert_eq!(bound, 2);
+        assert_eq!(h.get(HumanoidBone::head), Some(12));
+        assert_eq!(h.get(HumanoidBone::left_upper_arm), Some(7));
     }
 
     #[test]

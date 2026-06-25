@@ -271,6 +271,91 @@ pub mod android {
     pub const PLATFORM_NAME: &str = "android";
 }
 
+// ---------------------------------------------------------------------------
+// JNI bridge (scaffold — only compiled into the cdylib for Android)
+// ---------------------------------------------------------------------------
+
+/// Bare-bones JNI bridge: a stable opaque pointer type the Java side
+/// can store and pass back. Real method implementations will be added
+/// in a follow-up PR; this scaffold keeps the ABI surface fixed so
+/// the Java wrapper does not need to change later.
+#[repr(C)]
+pub struct AliceGameEngineHandle {
+    pub frame: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// JNI-callable: create an engine handle. Returns a heap-owned
+/// `Box<AliceGameEngineHandle>` cast to a raw pointer; the Java side
+/// must call [`alice_ge_destroy`] to free it.
+///
+/// # Safety
+///
+/// The caller must eventually call `alice_ge_destroy(ptr)` exactly
+/// once; double-free or use-after-free is undefined behaviour.
+#[unsafe(no_mangle)]
+pub extern "C" fn alice_ge_create(width: u32, height: u32) -> *mut AliceGameEngineHandle {
+    Box::into_raw(Box::new(AliceGameEngineHandle {
+        frame: 0,
+        width,
+        height,
+    }))
+}
+
+/// JNI-callable: advance one frame. Returns the new frame counter.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer previously returned from
+/// `alice_ge_create` and not yet freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn alice_ge_tick(handle: *mut AliceGameEngineHandle) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let h = unsafe { &mut *handle };
+    h.frame = h.frame.wrapping_add(1);
+    h.frame
+}
+
+/// JNI-callable: forward a touch event. Phase mapping matches
+/// [`TouchPhase`]: 0=Began / 1=Moved / 2=Ended / 3=Cancelled.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer previously returned from
+/// `alice_ge_create` and not yet freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn alice_ge_touch(
+    handle: *mut AliceGameEngineHandle,
+    _id: u32,
+    _phase: u32,
+    _x: f32,
+    _y: f32,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // Real implementation will route into a TouchCamera owned by
+    // the engine; this scaffold acknowledges the call so the Java
+    // wrapper can be tested end-to-end.
+    1
+}
+
+/// JNI-callable: release the handle.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer previously returned from
+/// `alice_ge_create`; calling twice or with garbage is UB.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn alice_ge_destroy(handle: *mut AliceGameEngineHandle) {
+    if !handle.is_null() {
+        drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
 #[cfg(target_os = "ios")]
 pub mod ios {
     //! iOS-specific glue. Currently a placeholder; the app crate
@@ -424,6 +509,29 @@ mod tests {
         let h = mobile_build_hints();
         assert!(h.contains("cdylib"));
         assert!(h.contains("staticlib"));
+    }
+
+    #[test]
+    fn jni_create_tick_destroy_round_trip() {
+        let h = alice_ge_create(800, 600);
+        assert!(!h.is_null());
+        unsafe {
+            assert_eq!((*h).width, 800);
+            assert_eq!((*h).height, 600);
+            assert_eq!(alice_ge_tick(h), 1);
+            assert_eq!(alice_ge_tick(h), 2);
+            assert_eq!(alice_ge_touch(h, 0, 0, 10.0, 20.0), 1);
+            alice_ge_destroy(h);
+        }
+    }
+
+    #[test]
+    fn jni_handles_null_gracefully() {
+        unsafe {
+            assert_eq!(alice_ge_tick(std::ptr::null_mut()), 0);
+            assert_eq!(alice_ge_touch(std::ptr::null_mut(), 0, 0, 0.0, 0.0), 0);
+            alice_ge_destroy(std::ptr::null_mut());
+        }
     }
 
     #[test]

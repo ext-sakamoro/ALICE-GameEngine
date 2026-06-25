@@ -23,6 +23,37 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 6 — driver demos + JNI bridge
+
+Closes the four residual items from Wave 5.
+
+- **TLAS bottom-up dispatch demo** —
+  `templates/gpu_bvh_refit_demo.rs` builds a small BVH, dispatches
+  `gpu_bvh_interior_refit_compute` once per
+  `Bvh::levels_bottom_up()` slot, reads back the root node, and
+  asserts the GPU-refit AABB matches the CPU-built scene bounds.
+  Verified on Apple M3 (= 3 levels, root bounds = scene bounds).
+
+- **`virtual_shadow::render_caster_to_page`** — one-page depth
+  render driver: opens a depth-only render pass scoped to the
+  page's atlas viewport (= `set_viewport` with `page_uv_offset`),
+  invokes the caller's `draw_callback`, and submits. The smallest
+  driver an engine needs to fill exactly the dirty pages of a
+  virtual shadow map.
+
+- **`Humanoid::bind_from_vrm(&VrmExtract)`** — bridges the VRM
+  camelCase naming (`leftUpperArm`) to the engine's snake_case
+  [`HumanoidBone`] (`left_upper_arm`) and bulk-binds every known
+  bone in one call. Unknown bones are skipped (= forward
+  compatible).
+
+- **Android JNI wrapper scaffold** — `mobile::AliceGameEngineHandle`
+  + `alice_ge_create` / `alice_ge_tick` / `alice_ge_touch` /
+  `alice_ge_destroy` (`#[unsafe(no_mangle)] extern "C"`) so the
+  Java side can store an opaque pointer + dispatch frame ticks +
+  touch events. ABI is now frozen; real method bodies land in a
+  follow-up PR without breaking the Java wrapper.
+
 ### v0.7 wave 5 — production drivers (residual gap)
 
 Closes the four "scaffold あり / driver 未着" items left over from

@@ -123,7 +123,13 @@ Feature flags pick what you compile:
 - **VRM full extract** — `parse_vrm_full` returns bones +
   expressions, not just meta
 - **`virtual_shadow` GPU atlas** — `VirtualShadowGpu` allocates the
-  Depth32Float atlas + comparison sampler
+  Depth32Float atlas + comparison sampler · `render_caster_to_page`
+  per-page depth driver
+- **TLAS bottom-up demo** — `cargo run --example gpu_bvh_refit_demo
+  --features gpu` (Apple M3 verified)
+- **VRM → Humanoid bind** — `Humanoid::bind_from_vrm(&VrmExtract)`
+- **Android JNI scaffold** — `alice_ge_create` /
+  `alice_ge_tick` / `alice_ge_touch` / `alice_ge_destroy` C ABI
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

@@ -172,6 +172,11 @@ name = "gpu_compute_light_culling_demo"
 path = "templates/gpu_compute_light_culling_demo.rs"
 required-features = ["gpu"]
 
+[[example]]
+name = "gpu_bvh_refit_demo"
+path = "templates/gpu_bvh_refit_demo.rs"
+required-features = ["gpu"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"

@@ -185,6 +185,68 @@ impl VirtualShadowGpu {
         let inv = (per_side as f32).recip();
         (x as f32 * inv, y as f32 * inv)
     }
+
+    /// Get a one-page `TextureView` (= `array_layer_count: 1`, but
+    /// using viewport offsets) so the shadow caster pass can target
+    /// exactly one page of the atlas. The returned descriptor sets
+    /// the viewport via `set_viewport` on the render pass; the texel
+    /// rect is `(x_offset, y_offset, page_size, page_size)`.
+    #[must_use]
+    pub fn page_viewport(&self, handle: PhysicalPageHandle) -> (f32, f32, f32, f32) {
+        let per_side = self.atlas_pages_per_side.max(1);
+        let x = (handle.index % per_side) * self.page_size;
+        let y = (handle.index / per_side) * self.page_size;
+        (
+            x as f32,
+            y as f32,
+            self.page_size as f32,
+            self.page_size as f32,
+        )
+    }
+
+    /// One-page depth render: opens a depth-only render pass on the
+    /// atlas restricted to `handle`'s viewport, calls `draw_callback`
+    /// with the pass (= application records draw calls there), then
+    /// submits.
+    ///
+    /// Combined with [`Self::page_viewport`] / [`Self::page_uv_offset`]
+    /// this is the smallest driver an engine needs to fill exactly
+    /// the dirty pages of a virtual shadow map; everything else is
+    /// regular render-pass plumbing.
+    pub fn render_caster_to_page<F>(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        handle: PhysicalPageHandle,
+        clear_depth: f32,
+        draw_callback: F,
+    ) where
+        F: FnOnce(&mut wgpu::RenderPass<'_>),
+    {
+        let (vx, vy, vw, vh) = self.page_viewport(handle);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("alice-virtual-shadow-page-encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("alice-virtual-shadow-page-pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.atlas_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear_depth),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
+            draw_callback(&mut pass);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
 }
 
 // ---------------------------------------------------------------------------
