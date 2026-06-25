@@ -78,6 +78,7 @@ pub mod editor;
 pub mod engine;
 pub mod env_probe;
 pub mod fix128;
+pub mod flex;
 pub mod gaussian_splat;
 pub mod gpu_bvh;
 pub mod gpu_mesh;
@@ -86,8 +87,10 @@ pub mod hd2d_postfx;
 pub mod heatmap;
 pub mod humanoid;
 pub mod image_decode;
+pub mod imgui;
 pub mod import;
 pub mod input;
+pub mod inspector;
 pub mod jobs;
 pub mod joint;
 pub mod llm;
@@ -119,6 +122,7 @@ pub mod soft_body;
 pub mod sprite_render;
 pub mod text;
 pub mod texture;
+pub mod theme;
 pub mod verse;
 pub mod virtual_shadow;
 pub mod volumetric_clouds;
@@ -190,6 +194,10 @@ pub use env_probe::{
     prefilter_radiance, Cubemap, CubemapFaceCamera, EnvProbeData, PrefilteredEnvProbe,
 };
 pub use fix128::{Fix128, Fix128Vec3};
+pub use flex::{
+    solve as flex_solve, AlignItems, FlexDirection, FlexLayout, FlexNode, JustifyContent,
+    ResolvedChild,
+};
 pub use gaussian_splat::{evaluate_sh_band1, GaussianCloud, ProjectedSplat, Splat};
 pub use gpu_bvh::{morton3_unit, radix_sort_u32_pairs, Aabb as BvhAabb, Bvh, BvhNode};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
@@ -197,8 +205,10 @@ pub use hair::{HairConfig, HairStrand, HairSystem};
 pub use heatmap::{heatmap_slice, Axis as SdfAxis, Colormap as SdfColormap};
 pub use humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};
 pub use image_decode::{decode_bmp, DecodedImage, ImageDecoder};
+pub use imgui::{UiCommand, UiContext, UiInput, UiInteraction};
 pub use import::{detect_format, ProjectFormat};
 pub use input::{ActionMap, InputState, Key, MouseButton};
+pub use inspector::{Inspector, InspectorRow};
 pub use jobs::{dispatch, execute, wait, JobArgs, JobContext};
 pub use joint::{solve_joints, Joint, JointKind, RagdollDef};
 #[cfg(feature = "gpu")]
@@ -226,6 +236,7 @@ pub use skeleton::{Bone, BoneTrack, SkeletalAnimation, Skeleton, SkinData};
 pub use soft_body::{SoftBodyConfig, SoftBodySim, SoftParticle};
 pub use text::{BitmapFont, TextLayout};
 pub use texture::{GpuTextureDesc, TextureAsset};
+pub use theme::UiTheme;
 pub use verse::{
     Coroutine, Failable, LiveVar, StickyEvent, SubscribableEvent, TickExecutor, Transaction,
 };

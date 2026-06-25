@@ -142,6 +142,14 @@ Feature flags pick what you compile:
   Triangle + 4 boolean ops + grid sampler
 - **SDF heatmap** — slice → RGBA with 4 colormaps (CoolWarm /
   Binary / Viridis / Magma) for debug overlays
+- **Flex layout** — `flex::solve` (Row / Column × Justify × Align
+  + grow + gap) for Bevy-style UI sizing
+- **Immediate-mode GUI** — `imgui::UiContext` (label / button /
+  slider / checkbox) records `UiCommand`s + interactions per frame
+- **Scene inspector** — `Inspector::rows(&scene)` (depth-indented
+  tree) + `Inspector::detail` (right-panel property list)
+- **Theme** — `UiTheme::dark()` / `light()` preset palettes +
+  spacing scale + font scale
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a

@@ -23,6 +23,35 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+### v0.7 wave 9 — Bevy-style GUI stack
+
+Four new modules + theme bring the engine's UI surface up to
+parity with the bevy_ui / bevy_egui / bevy_inspector_egui trio.
+
+- **`flex`** — Flexbox layout solver. `FlexDirection` (Row /
+  Column) × `JustifyContent` (Start / Centre / End / SpaceBetween /
+  SpaceAround) × `AlignItems` (Start / Centre / End / Stretch) with
+  `flex_grow` weight + uniform `gap`. `solve(container, layout,
+  children) → Vec<ResolvedChild>` returns per-child rects.
+
+- **`imgui`** — Immediate-mode GUI builder
+  (egui / `bevy_egui` style). `UiContext::new(UiInput)` creates a
+  per-frame builder, widgets `label` / `button` / `slider` /
+  `checkbox` record [`UiCommand`]s for the renderer + interaction
+  events for game logic. Auto vertical stacking, hit-testing
+  against the cursor + primary press / release flags.
+
+- **`inspector`** — Scene-graph inspector (`bevy_inspector_egui`
+  style). `Inspector::rows(&scene)` returns a flat `Vec<InspectorRow>`
+  with depth-indented names + per-kind label; `Inspector::detail(
+  scene, id)` returns the `(field, value)` pairs for the right-side
+  property panel. Read-only by design — mutations route through
+  `Editor::apply` so undo/redo stays consistent.
+
+- **`theme`** — `UiTheme` colour palette + spacing scale + font
+  size scale, with `dark` / `light` presets (= IDE default / Material
+  Design). Stateless, serde round-trippable.
+
 ### v0.7 wave 8 — ALICE-SDF feature port
 
 Adopts six high-value features from `ALICE-SDF` so the engine's
