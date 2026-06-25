@@ -64,6 +64,9 @@ Feature flags pick what you compile:
   the screen into 16-px tiles, returns per-tile point/spot light index
   lists + a separate directional list. `cargo run --example
   light_culling_demo --features gpu`
+- **Environment probes / IBL** — `Cubemap` data + CPU `prefilter_irradiance`
+  / `prefilter_radiance` + `IBL_LOOKUP_WGSL`; `NodeKind::EnvProbe`
+  scene integration. `cargo run --example env_probe_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -152,6 +155,7 @@ cargo run --example job_system_demo    # fork-join JobContext: 2 asset jobs + 25
 cargo run --example constraint_demo    # Slider piston + Fixed weld + ConeTwist hip joint
 cargo run --example light_culling_demo --features gpu  # tiled cull: 128 lights × 8160 tiles
 cargo run --example ocean_demo         # Tessendorf FFT ocean ASCII heightmap (no deps)
+cargo run --example env_probe_demo     # Cubemap + irradiance/radiance prefilter
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

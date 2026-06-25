@@ -73,6 +73,7 @@ pub mod decal;
 pub mod easy;
 pub mod ecs;
 pub mod engine;
+pub mod env_probe;
 pub mod fix128;
 pub mod gpu_mesh;
 pub mod hd2d_postfx;
@@ -160,6 +161,9 @@ pub use ecs::{
     Input, PhysicsSystem, Scene, Sprite, Transform, Velocity, World, AABB,
 };
 pub use engine::{Engine, EngineConfig, EngineContext, System};
+pub use env_probe::{
+    prefilter_irradiance, prefilter_radiance, Cubemap, EnvProbeData, PrefilteredEnvProbe,
+};
 pub use fix128::{Fix128, Fix128Vec3};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
 pub use image_decode::{decode_bmp, DecodedImage, ImageDecoder};

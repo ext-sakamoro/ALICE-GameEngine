@@ -23,6 +23,15 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`env_probe`** — Environment probe / IBL data + prefilter math.
+  `EnvProbeData` (scene-graph payload), `Cubemap` (6-face RGBA32F,
+  direction sampling, bilinear), `prefilter_irradiance` (cosine
+  convolution → diffuse IBL), `prefilter_radiance` (Phong-style mip
+  chain → specular IBL split-sum), `PrefilteredEnvProbe` bundle.
+  `NodeKind::EnvProbe` + `SceneGraph::env_probes()` collector. WGSL
+  `IBL_LOOKUP_WGSL` helper for shader-side cubemap sampling, naga-
+  validated. Built-in shader cache now reports 10 entries.
+
 - **`ocean`** — Tessendorf-style FFT ocean simulator (Wicked-inspired
   `wiOcean`). `OceanConfig` (grid_size / patch_size / wind / amplitude /
   gravity), `OceanSimulator::simulate(time) → OceanFrame` with height

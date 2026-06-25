@@ -246,6 +246,44 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 ";
 
+/// Image-based lighting (IBL) cubemap lookup helpers in WGSL.
+///
+/// Provides `sample_irradiance` for diffuse IBL and
+/// `sample_radiance_mip` for the GGX split-sum specular IBL. Bind
+/// cubemaps as `texture_cube<f32>` on bindings 0 (irradiance) and
+/// 1 (prefiltered radiance) along with a linear sampler on binding 2.
+pub const IBL_LOOKUP_WGSL: &str = r"
+@group(0) @binding(0) var t_irradiance: texture_cube<f32>;
+@group(0) @binding(1) var t_radiance: texture_cube<f32>;
+@group(0) @binding(2) var s_linear: sampler;
+
+struct IblUniforms {
+    radiance_mip_count: u32,
+    _pad: vec3<u32>,
+};
+
+@group(0) @binding(3) var<uniform> u_ibl: IblUniforms;
+
+fn sample_irradiance(normal: vec3<f32>) -> vec3<f32> {
+    return textureSample(t_irradiance, s_linear, normal).rgb;
+}
+
+fn sample_radiance_mip(reflect_dir: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let max_mip = f32(u_ibl.radiance_mip_count) - 1.0;
+    let mip = clamp(roughness, 0.0, 1.0) * max_mip;
+    return textureSampleLevel(t_radiance, s_linear, reflect_dir, mip).rgb;
+}
+
+@fragment
+fn fs_main(@location(0) normal: vec3<f32>) -> @location(0) vec4<f32> {
+    // Trivial demonstration entry: returns the diffuse irradiance for a
+    // fragment-supplied normal. Real materials combine this with the
+    // specular sample using the split-sum BRDF.
+    let irr = sample_irradiance(normalize(normal));
+    return vec4<f32>(irr, 1.0);
+}
+";
+
 /// Tiled (Forward+ style) deferred lighting fragment shader.
 ///
 /// Reads a per-tile light index list from a storage buffer and only
@@ -559,6 +597,11 @@ pub fn builtin_shader_cache() -> ShaderCache {
         ShaderStage::Fragment,
     ));
     cache.add(ShaderSource::new(
+        "ibl_lookup",
+        IBL_LOOKUP_WGSL,
+        ShaderStage::Fragment,
+    ));
+    cache.add(ShaderSource::new(
         "lut_postprocess",
         crate::lut_postprocess::LUT_POSTPROCESS_WGSL,
         ShaderStage::Fragment,
@@ -633,7 +676,8 @@ mod tests {
     #[test]
     fn builtin_cache_has_all() {
         let cache = builtin_shader_cache();
-        assert_eq!(cache.count(), 9);
+        assert_eq!(cache.count(), 10);
+        assert!(cache.get("ibl_lookup").is_some());
         assert!(cache.get("gbuffer_vertex").is_some());
         assert!(cache.get("gbuffer_fragment").is_some());
         assert!(cache.get("sdf_raymarch").is_some());
@@ -675,6 +719,17 @@ mod tests {
                 .validate(&module)
                 .unwrap_or_else(|e| panic!("{label} naga validation failed: {e:?}"));
         }
+    }
+
+    #[test]
+    fn ibl_lookup_shader_passes_naga_validation() {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = naga::front::wgsl::parse_str(IBL_LOOKUP_WGSL)
+            .unwrap_or_else(|e| panic!("ibl_lookup WGSL parse failed: {e:?}"));
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("ibl_lookup naga validation failed: {e:?}"));
     }
 
     #[test]

@@ -108,6 +108,9 @@ pub enum NodeKind {
     /// Deferred decal that projects a texture onto underlying `GBuffer`
     /// geometry within an OBB defined by `local_transform`.
     Decal(crate::decal::DecalData),
+
+    /// Environment probe — cubemap-based IBL source positioned in world.
+    EnvProbe(crate::env_probe::EnvProbeData),
 }
 
 /// Polygon mesh payload.
@@ -494,6 +497,12 @@ impl SceneGraph {
         self.query_by_kind(&|k| matches!(k, NodeKind::Decal(_)))
     }
 
+    /// Collects all environment probes in the scene.
+    #[must_use]
+    pub fn env_probes(&self) -> Vec<NodeId> {
+        self.query_by_kind(&|k| matches!(k, NodeKind::EnvProbe(_)))
+    }
+
     /// Look up a node by name (linear scan).
     #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<NodeId> {
@@ -733,6 +742,14 @@ impl SceneGraph {
         match &node.kind {
             NodeKind::Sdf(sdf) => Aabb3::new(-sdf.half_extents, sdf.half_extents),
             NodeKind::Mesh(_) | NodeKind::Decal(_) => Aabb3::new(-Vec3::ONE, Vec3::ONE),
+            NodeKind::EnvProbe(ep) => {
+                let r = Vec3::new(
+                    ep.influence_radius,
+                    ep.influence_radius,
+                    ep.influence_radius,
+                );
+                Aabb3::new(-r, r)
+            }
             NodeKind::Light(ld) => match ld.variant {
                 LightVariant::Point { radius } | LightVariant::Spot { radius, .. } => {
                     let r = Vec3::new(radius, radius, radius);
