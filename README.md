@@ -76,6 +76,9 @@ Feature flags pick what you compile:
 - **Humanoid (VRM 1.0)** — 25-bone canonical mapping + expression
   channels (visemes + emotion presets + custom). `cargo run
   --example humanoid_demo`
+- **3D Gaussian Splatting** — `GaussianCloud` + per-frame projection
+  + cull + back-to-front depth sort + SH band-1 evaluator. `cargo
+  run --example gaussian_splat_demo`
 - **Tessendorf FFT ocean** — `OceanSimulator` with self-contained
   Cooley-Tukey IFFT (no external deps), Phillips spectrum, wind /
   patch / amplitude knobs, per-vertex normals. ~0.5 ms / frame on a
@@ -168,6 +171,7 @@ cargo run --example env_probe_demo     # Cubemap + irradiance/radiance prefilter
 cargo run --example hair_demo          # 64 grass strands swayed by wind
 cargo run --example volumetric_clouds_demo # ASCII sky with FBM clouds
 cargo run --example humanoid_demo      # VRM humanoid binding + lip-sync expression
+cargo run --example gaussian_splat_demo  # 200 splats projected + depth sorted
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full

@@ -75,6 +75,7 @@ pub mod ecs;
 pub mod engine;
 pub mod env_probe;
 pub mod fix128;
+pub mod gaussian_splat;
 pub mod gpu_mesh;
 pub mod hair;
 pub mod hd2d_postfx;
@@ -168,6 +169,7 @@ pub use env_probe::{
     prefilter_irradiance, prefilter_radiance, Cubemap, EnvProbeData, PrefilteredEnvProbe,
 };
 pub use fix128::{Fix128, Fix128Vec3};
+pub use gaussian_splat::{evaluate_sh_band1, GaussianCloud, ProjectedSplat, Splat};
 pub use gpu_mesh::{DrawCommand, DrawQueue, GpuMeshDesc, VertexLayout};
 pub use hair::{HairConfig, HairStrand, HairSystem};
 pub use humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};

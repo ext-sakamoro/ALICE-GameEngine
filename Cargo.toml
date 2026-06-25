@@ -135,6 +135,10 @@ path = "templates/volumetric_clouds_demo.rs"
 name = "humanoid_demo"
 path = "templates/humanoid_demo.rs"
 
+[[example]]
+name = "gaussian_splat_demo"
+path = "templates/gaussian_splat_demo.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

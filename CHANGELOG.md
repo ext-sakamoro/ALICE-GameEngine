@@ -23,6 +23,16 @@
   Example: `cargo run --example constraint_demo` (piston + weld + cone
   twist scenes).
 
+- **`gaussian_splat`** — 3D Gaussian Splatting (Kerbl et al. 2023)
+  CPU data + per-frame projection. `Splat` (position / anisotropic
+  scale / rotation / colour / opacity / SH band-1 coefficients),
+  `Splat::isotropic` constructor, `GaussianCloud::prepare_frame(view,
+  projection)` does frustum culling + screen-space projection +
+  back-to-front depth sort. `evaluate_sh_band1(coeffs, view_dir)` for
+  view-dependent colour. Tile-blending shader lives in a future PR.
+  Demo: `cargo run --example gaussian_splat_demo` (200 random splats
+  projected and depth-sorted in <1 ms).
+
 - **`humanoid`** — VRM 1.0-style humanoid skeleton mapping +
   expression channels. `HumanoidBone` enum (25 canonical VRM bones),
   `Humanoid::bind` / `get` / `meets_required` / `missing_required`,
