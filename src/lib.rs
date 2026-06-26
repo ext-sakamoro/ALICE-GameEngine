@@ -77,6 +77,7 @@ pub mod ecs;
 pub mod editor;
 pub mod engine;
 pub mod env_probe;
+pub mod environment_trajectory;
 pub mod fix128;
 pub mod flex;
 pub mod gaussian_splat;

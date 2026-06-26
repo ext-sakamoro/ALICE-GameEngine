@@ -4,6 +4,19 @@
 
 ### New modules
 
+- **`environment_trajectory`** — Language world model / agent simulator
+  trait. `EnvironmentTrajectory: Send + Sync` with
+  `predict_next(history, action) → Observation` + `schema()` +
+  `is_ready()`. Opaque `Action::Custom { kind, payload }` and
+  `Observation::Custom { kind, payload }` enums for forward
+  compatibility, `Turn { action, observation }` for trajectory storage,
+  `EnvironmentSchema { task_description_hash, action_space_kinds,
+  stateful }` for the static descriptor. `MockEnvironmentTrajectory`
+  with `echo` / `fixed` / `xor` behaviours co-located in the module.
+  Eight unit tests + one doctest, including a `Box<dyn Trait>` contract
+  test. Enables ALICE-LLM / ALICE-Cognitive / ALICE-Metaverse and
+  third-party language world models to plug in as NPC simulators or
+  Sim RL environments without owning the inference backend.
 - **`decal`** — Deferred decal projection (Wicked-inspired). `DecalData`
   (albedo / normal / color / opacity / layer_mask / blend_mode),
   `DecalBlendMode` (AlphaBlend / Multiply / Additive with stable shader
