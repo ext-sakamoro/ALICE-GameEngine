@@ -441,7 +441,11 @@ mod tests {
     fn transaction_rollback() {
         let mut state = 100_i32;
         let tx = Transaction::begin(&state);
-        state -= 30;
+        // 直後に rollback() で上書きされる中間状態 (assignment 意図的)
+        #[allow(unused_assignments)]
+        {
+            state -= 30;
+        }
         state = tx.rollback();
         assert_eq!(state, 100);
     }

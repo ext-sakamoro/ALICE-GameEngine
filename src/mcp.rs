@@ -431,7 +431,7 @@ mod tests {
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "scene_remove_node", "arguments": {"id": 0}}),
         };
-        McpHandler::handle(&req, &mut ctx);
+        let _ = McpHandler::handle(&req, &mut ctx);
         assert_eq!(ctx.scene.node_count(), 0);
     }
 
@@ -448,7 +448,7 @@ mod tests {
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "scene_set_transform", "arguments": {"id": 0, "x": 10.0, "y": 20.0, "z": 30.0}}),
         };
-        McpHandler::handle(&req, &mut ctx);
+        let _ = McpHandler::handle(&req, &mut ctx);
         let pos = ctx
             .scene
             .get(crate::scene_graph::NodeId(0))
@@ -503,7 +503,7 @@ mod tests {
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "physics_step", "arguments": {"frames": 10}}),
         };
-        McpHandler::handle(&req, &mut ctx);
+        let _ = McpHandler::handle(&req, &mut ctx);
         assert_eq!(ctx.time.frame_count, 10);
     }
 }

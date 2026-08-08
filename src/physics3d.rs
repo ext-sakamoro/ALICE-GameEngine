@@ -649,7 +649,7 @@ mod tests {
         let mut world = PhysicsWorld::new();
         world.gravity = Vec3::ZERO;
         let a = world.add_body(RigidBody::new(Vec3::ZERO, 1.0));
-        let b = world.add_body(RigidBody::new(Vec3::new(0.5, 0.0, 0.0), 1.0));
+        let _b = world.add_body(RigidBody::new(Vec3::new(0.5, 0.0, 0.0), 1.0));
         world.bodies[a].velocity = Vec3::new(1.0, 0.0, 0.0);
         world.step(0.01);
         assert!(!world.contacts.is_empty());

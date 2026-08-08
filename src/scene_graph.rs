@@ -1255,7 +1255,7 @@ mod tests {
     fn scene_graph_remove_and_readd() {
         let mut sg = SceneGraph::new("test");
         let a = sg.add(make_empty("a"));
-        let b = sg.add(make_empty("b"));
+        let _b = sg.add(make_empty("b"));
         sg.remove(a);
         let c = sg.add(make_empty("c"));
         assert_eq!(c.0, a.0); // reused slot
