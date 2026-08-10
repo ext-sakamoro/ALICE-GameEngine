@@ -41,7 +41,7 @@ rayon = "1.10"
 wide = "0.7"
 
 # GPU renderer (optional)
-wgpu = { version = "25", optional = true }
+wgpu = { version = "29", optional = true }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1.21", features = ["derive"], optional = true }
 
