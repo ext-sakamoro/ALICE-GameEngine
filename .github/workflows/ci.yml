@@ -46,6 +46,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,aarch64-linux-android
+      # `rust-toolchain.toml` pins channel 1.92.0 and `dtolnay/rust-toolchain@stable`
+      # honours that pin (silently ignoring `targets:`), so add the mobile targets
+      # explicitly to the pinned toolchain.
+      - name: Install mobile targets on pinned toolchain
+        run: rustup target add aarch64-apple-ios aarch64-linux-android
       - name: cargo check (iOS aarch64)
         run: cargo check --target aarch64-apple-ios --no-default-features
       - name: cargo check (Android aarch64)

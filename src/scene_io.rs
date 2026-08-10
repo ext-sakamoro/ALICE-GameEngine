@@ -208,7 +208,10 @@ mod tests {
     fn save_load_file() {
         let mut scene = SceneGraph::new("file_test");
         scene.add(Node::new("node", NodeKind::Empty));
-        let path = "/tmp/alice_scene_test.json";
+        // Use `std::env::temp_dir()` so the path works on Windows too
+        // (hardcoded `/tmp/...` fails on Windows CI with os error 3).
+        let path_buf = std::env::temp_dir().join("alice_scene_test.json");
+        let path = path_buf.to_str().expect("temp path must be UTF-8");
         save_scene(&scene, path).unwrap();
         let loaded = load_scene(path).unwrap();
         assert_eq!(loaded.node_count(), 1);
