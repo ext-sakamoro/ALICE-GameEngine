@@ -59,7 +59,7 @@ axum = { version = "0.7", features = ["ws"], optional = true }
 
 [dev-dependencies]
 approx = "0.5"
-naga = { version = "25", default-features = false, features = ["wgsl-in"] }
+naga = { version = "29", default-features = false, features = ["wgsl-in"] }
 
 [[bin]]
 name = "mcp_server"
