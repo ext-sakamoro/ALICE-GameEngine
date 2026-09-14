@@ -19,6 +19,12 @@ alice-game-engine = "0.6"
 alice-game-engine = { version = "0.6", features = ["full"] }
 ```
 
+The SDF law (primitive distances, smooth blends, marching cubes, dual
+contouring, 2D shapes) is not re-implemented here: `sdf` / `sdf2d` delegate to
+`alice-sdf` (crates.io, `default-features = false`), so the engine evaluates
+exactly the field ALICE-SDF transpiles to GLSL / WGSL / HLSL. The engine keeps
+its own lightweight node types and parameter conventions.
+
 Feature flags pick what you compile:
 
 | Feature | What you get |
