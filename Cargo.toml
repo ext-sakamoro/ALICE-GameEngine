@@ -34,6 +34,8 @@ full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
 
 [dependencies]
 glam = { version = "0.29", features = ["serde"] }
+# SDF law の単一 source (primitive / smooth op の距離関数を委譲、独自コピーを持たない)
+alice-sdf = { version = "1.9.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"

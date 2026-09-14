@@ -1,6 +1,12 @@
 //! SIMD 8-wide SDF batch evaluation using the `wide` crate.
 //!
 //! Evaluates 8 SDF points simultaneously using AVX2/NEON portable SIMD.
+//!
+//! `sdf_sphere_x8` / `sdf_box_x8` are lane-parallel copies of the sphere /
+//! box law: ALICE-SDF exposes no scalar-function SIMD variants (its SIMD path
+//! evaluates compiled node trees), so the law cannot be delegated here.  The
+//! copies are pinned to `alice_sdf::primitives` by the `alice_sdf_lane_parity`
+//! test (ALICE-SDF-LAWS §SDF ↔ Physics 同期の法 §5, priority 2).
 
 use crate::math::Vec3;
 use wide::f32x8;
@@ -176,6 +182,47 @@ pub fn eval_sphere_batch(points: &[Vec3], radius: f32) -> Vec<f32> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod alice_sdf_lane_parity {
+    use super::*;
+
+    fn batch(seed: u64) -> [Vec3; 8] {
+        let mut state = seed;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (((state >> 40) as f32) / ((1u64 << 24) as f32)).mul_add(8.0, -4.0)
+        };
+        std::array::from_fn(|_| Vec3::new(next(), next(), next()))
+    }
+
+    #[test]
+    fn sphere_lanes_match_alice_sdf() {
+        for seed in 1..=64u64 {
+            let pts = batch(seed);
+            let lanes = Vec3x8::to_array(sdf_sphere_x8(Vec3x8::from_points(&pts), 1.3));
+            for (i, p) in pts.iter().enumerate() {
+                let reference = alice_sdf::primitives::sdf_sphere(p.0, 1.3);
+                assert!((lanes[i] - reference).abs() <= 1e-5, "lane {i} {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn box_lanes_match_alice_sdf() {
+        let half = Vec3::new(1.0, 0.5, 2.0);
+        for seed in 1..=64u64 {
+            let pts = batch(seed);
+            let lanes = Vec3x8::to_array(sdf_box_x8(Vec3x8::from_points(&pts), half));
+            for (i, p) in pts.iter().enumerate() {
+                let reference = alice_sdf::primitives::sdf_box3d(p.0, half.0);
+                assert!((lanes[i] - reference).abs() <= 1e-5, "lane {i} {p:?}");
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

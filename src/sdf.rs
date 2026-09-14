@@ -1,7 +1,9 @@
 //! SDF hybrid rendering: evaluate SDF volumes alongside polygon meshes.
 //!
 //! This module provides the bridge between ALICE-SDF's node tree evaluation
-//! and the game engine's scene graph. SDF volumes can be:
+//! and the game engine's scene graph. The distance functions themselves come
+//! from `alice_sdf` (single source of the law); only the lightweight node
+//! tree, meshing and tracing utilities live here. SDF volumes can be:
 //! - Raymarched directly in a compute/fragment shader
 //! - Meshed via marching cubes for physics/rendering
 //! - Used as collision volumes (SDF CCD)
@@ -20,7 +22,16 @@ use serde::{Deserialize, Serialize};
 // SdfPrimitive — built-in primitives for the engine
 // ---------------------------------------------------------------------------
 
-/// Basic SDF primitives that can be evaluated without ALICE-SDF dependency.
+/// Basic SDF primitives for in-engine use.
+///
+/// The distance law is **not** re-implemented here: every variant delegates
+/// to the matching `alice_sdf::primitives::sdf_*` function, so the engine
+/// and ALICE-SDF (and everything ALICE-SDF transpiles to GLSL / WGSL / HLSL)
+/// evaluate the same field.  Parameter conventions kept from the engine's
+/// original API: `height` is the full height (ALICE-SDF takes half-heights),
+/// `Cone` has its base disc at `y = 0` and its tip at `y = height`
+/// (ALICE-SDF's cone is centred on the origin, so it is evaluated at
+/// `p - (0, height / 2, 0)`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SdfPrimitive {
     Sphere {
@@ -56,60 +67,21 @@ impl SdfPrimitive {
     #[inline]
     #[must_use]
     pub fn eval(&self, p: Vec3) -> f32 {
+        use alice_sdf::primitives as law;
+        let g = p.0;
         match self {
-            Self::Sphere { radius } => p.length() - radius,
-
-            Self::Box { half_extents } => {
-                let qx = p.x().abs() - half_extents.x();
-                let qy = p.y().abs() - half_extents.y();
-                let qz = p.z().abs() - half_extents.z();
-                let outside = Vec3::new(qx.max(0.0), qy.max(0.0), qz.max(0.0)).length();
-                let inside = qx.max(qy.max(qz)).min(0.0);
-                outside + inside
-            }
-
-            Self::Capsule { radius, height } => {
-                let half_h = height * 0.5;
-                let py = p.y().clamp(-half_h, half_h);
-                let nearest = Vec3::new(0.0, py, 0.0);
-                (p - nearest).length() - radius
-            }
-
-            Self::Cylinder { radius, height } => {
-                let half_h = height * 0.5;
-                let dx = Vec3::new(p.x(), 0.0, p.z()).length() - radius;
-                let dy = p.y().abs() - half_h;
-                let outside = Vec3::new(dx.max(0.0), dy.max(0.0), 0.0).length();
-                let inside = dx.max(dy).min(0.0);
-                outside + inside
-            }
-
+            Self::Sphere { radius } => law::sdf_sphere(g, *radius),
+            Self::Box { half_extents } => law::sdf_box3d(g, half_extents.0),
+            Self::Capsule { radius, height } => law::sdf_capsule_vertical(g, height * 0.5, *radius),
+            Self::Cylinder { radius, height } => law::sdf_cylinder(g, *radius, height * 0.5),
             Self::Torus {
                 major_radius,
                 minor_radius,
-            } => {
-                let qx = Vec3::new(p.x(), 0.0, p.z()).length() - major_radius;
-                let q = Vec3::new(qx, p.y(), 0.0);
-                q.length() - minor_radius
-            }
-
-            Self::Plane { normal, offset } => p.dot(*normal) - offset,
-
+            } => law::sdf_torus(g, *major_radius, *minor_radius),
+            Self::Plane { normal, offset } => law::sdf_plane(g, normal.0, *offset),
             Self::Cone { radius, height } => {
-                let q_len = Vec3::new(p.x(), 0.0, p.z()).length();
-                let tip = Vec3::new(0.0, *height, 0.0);
-                let base_edge = Vec3::new(*radius, 0.0, 0.0);
-                let cone_dir = (base_edge - tip).normalize();
-                let to_p = Vec3::new(q_len, p.y(), 0.0) - tip;
-                let proj = to_p.dot(cone_dir).clamp(0.0, (base_edge - tip).length());
-                let nearest = tip + cone_dir * proj;
-                let dist = (Vec3::new(q_len, p.y(), 0.0) - nearest).length();
-                let sign = if q_len * height - p.y() * radius < 0.0 && p.y() < *height {
-                    -1.0
-                } else {
-                    1.0
-                };
-                dist * sign
+                let half_h = height * 0.5;
+                law::sdf_cone(g - glam::Vec3::new(0.0, half_h, 0.0), *radius, half_h)
             }
         }
     }
@@ -143,28 +115,21 @@ pub enum SdfOp {
 }
 
 /// Applies a boolean operation to two distance values.
+///
+/// Smooth variants delegate to `alice_sdf::operations` (polynomial smooth
+/// min / max) so the blend law matches ALICE-SDF exactly.
 #[inline]
 #[must_use]
 pub fn apply_op(op: SdfOp, a: f32, b: f32, k: f32) -> f32 {
+    use alice_sdf::operations as law;
     match op {
         SdfOp::Union => a.min(b),
         SdfOp::Intersection => a.max(b),
         SdfOp::Subtraction => a.max(-b),
-        SdfOp::SmoothUnion => smooth_min(a, b, k),
-        SdfOp::SmoothIntersection => -smooth_min(-a, -b, k),
-        SdfOp::SmoothSubtraction => -smooth_min(-a, b, k),
+        SdfOp::SmoothUnion => law::sdf_smooth_union(a, b, k),
+        SdfOp::SmoothIntersection => law::sdf_smooth_intersection(a, b, k),
+        SdfOp::SmoothSubtraction => law::sdf_smooth_subtraction(a, b, k),
     }
-}
-
-/// Polynomial smooth minimum.
-#[inline]
-#[must_use]
-fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
-    if k < 1e-6 {
-        return a.min(b);
-    }
-    let h = (0.5 * (b - a)).mul_add(k.recip(), 0.5).clamp(0.0, 1.0);
-    (k * h).mul_add(-(1.0 - h), b.mul_add(1.0 - h, a * h))
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +190,103 @@ impl SdfNode {
                     d = apply_op(*op, d, child.eval(p), *k);
                 }
                 d
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Conversion to the ALICE-SDF node tree
+// ---------------------------------------------------------------------------
+
+impl From<&SdfPrimitive> for alice_sdf::SdfNode {
+    /// Same field as [`SdfPrimitive::eval`] (see the parameter notes there).
+    fn from(prim: &SdfPrimitive) -> Self {
+        match prim {
+            SdfPrimitive::Sphere { radius } => Self::Sphere { radius: *radius },
+            SdfPrimitive::Box { half_extents } => Self::Box3d {
+                half_extents: half_extents.0,
+            },
+            SdfPrimitive::Capsule { radius, height } => Self::Capsule {
+                point_a: glam::Vec3::new(0.0, -height * 0.5, 0.0),
+                point_b: glam::Vec3::new(0.0, height * 0.5, 0.0),
+                radius: *radius,
+            },
+            SdfPrimitive::Cylinder { radius, height } => Self::Cylinder {
+                radius: *radius,
+                half_height: height * 0.5,
+            },
+            SdfPrimitive::Torus {
+                major_radius,
+                minor_radius,
+            } => Self::Torus {
+                major_radius: *major_radius,
+                minor_radius: *minor_radius,
+            },
+            SdfPrimitive::Plane { normal, offset } => Self::Plane {
+                normal: normal.0,
+                distance: *offset,
+            },
+            SdfPrimitive::Cone { radius, height } => Self::Cone {
+                radius: *radius,
+                half_height: height * 0.5,
+            }
+            .translate(0.0, height * 0.5, 0.0),
+        }
+    }
+}
+
+impl From<&SdfNode> for alice_sdf::SdfNode {
+    /// Lossless conversion into the ALICE-SDF tree (`alice_sdf::eval` of the
+    /// result equals [`SdfNode::eval`], see the `alice_sdf_parity` tests).
+    fn from(node: &SdfNode) -> Self {
+        use std::sync::Arc;
+        match node {
+            SdfNode::Primitive(prim) => prim.into(),
+            SdfNode::Transform { translation, child } => Self::from(child.as_ref()).translate(
+                translation.x(),
+                translation.y(),
+                translation.z(),
+            ),
+            SdfNode::FullTransform {
+                translation,
+                rotation,
+                scale,
+                child,
+            } => {
+                // Engine order: p → -translation → inverse rotation → 1/scale → child × min(scale)
+                let scaled = Self::ScaleNonUniform {
+                    child: Arc::new(Self::from(child.as_ref())),
+                    factors: glam::Vec3::new(
+                        scale.x().max(1e-10),
+                        scale.y().max(1e-10),
+                        scale.z().max(1e-10),
+                    ),
+                };
+                scaled.rotate(glam::Quat::from_array(*rotation)).translate(
+                    translation.x(),
+                    translation.y(),
+                    translation.z(),
+                )
+            }
+            SdfNode::Operation { op, k, children } => {
+                let mut iter = children.iter().map(Self::from);
+                let Some(first) = iter.next() else {
+                    // Engine returns f32::MAX for an empty operation: an empty
+                    // union is "nothing", i.e. infinitely far away.
+                    return Self::Sphere { radius: -f32::MAX };
+                };
+                iter.fold(first, |acc, next| {
+                    let (a, b) = (Arc::new(acc), Arc::new(next));
+                    match op {
+                        SdfOp::Union => Self::Union { a, b },
+                        SdfOp::Intersection => Self::Intersection { a, b },
+                        SdfOp::Subtraction => Self::Subtraction { a, b },
+                        SdfOp::SmoothUnion => Self::SmoothUnion { a, b, k: *k },
+                        SdfOp::SmoothIntersection => Self::SmoothIntersection { a, b, k: *k },
+                        SdfOp::SmoothSubtraction => Self::SmoothSubtraction { a, b, k: *k },
+                    }
+                })
             }
         }
     }
@@ -1203,6 +1265,170 @@ fn sample_normal(node: &SdfNode, p: Vec3, eps: f32) -> Vec3 {
     }
 }
 
+/// Parity with ALICE-SDF: the engine tree and its converted `alice_sdf`
+/// tree must evaluate the same field (the engine has no distance law of its
+/// own any more; this pins that fact).
+#[cfg(test)]
+mod alice_sdf_parity {
+    use super::*;
+
+    /// Deterministic LCG points in a ±4 box (covers inside / outside / edges).
+    fn points(n: usize) -> Vec<Vec3> {
+        let mut state: u64 = 0x9a3e_e11e_5df0_0001;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (((state >> 40) as f32) / ((1u64 << 24) as f32)).mul_add(8.0, -4.0)
+        };
+        (0..n).map(|_| Vec3::new(next(), next(), next())).collect()
+    }
+
+    fn assert_parity(node: &SdfNode, label: &str) {
+        let alice: alice_sdf::SdfNode = node.into();
+        for p in points(500) {
+            let engine = node.eval(p);
+            let reference = alice_sdf::eval(&alice, p.0);
+            let tol = 1e-4 * engine.abs().max(1.0);
+            assert!(
+                (engine - reference).abs() <= tol,
+                "{label}: engine={engine} alice={reference} at {p:?}"
+            );
+        }
+    }
+
+    fn primitives() -> Vec<(&'static str, SdfPrimitive)> {
+        vec![
+            ("sphere", SdfPrimitive::Sphere { radius: 1.3 }),
+            (
+                "box",
+                SdfPrimitive::Box {
+                    half_extents: Vec3::new(1.0, 0.5, 2.0),
+                },
+            ),
+            (
+                "capsule",
+                SdfPrimitive::Capsule {
+                    radius: 0.4,
+                    height: 2.5,
+                },
+            ),
+            (
+                "cylinder",
+                SdfPrimitive::Cylinder {
+                    radius: 0.8,
+                    height: 1.8,
+                },
+            ),
+            (
+                "torus",
+                SdfPrimitive::Torus {
+                    major_radius: 1.5,
+                    minor_radius: 0.35,
+                },
+            ),
+            (
+                "plane",
+                SdfPrimitive::Plane {
+                    normal: Vec3::new(0.0, 1.0, 0.0),
+                    offset: 0.25,
+                },
+            ),
+            (
+                "cone",
+                SdfPrimitive::Cone {
+                    radius: 1.1,
+                    height: 2.2,
+                },
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_primitive_matches_alice_sdf() {
+        for (name, prim) in primitives() {
+            assert_parity(&SdfNode::Primitive(prim), name);
+        }
+    }
+
+    #[test]
+    fn every_operation_matches_alice_sdf() {
+        let ops = [
+            SdfOp::Union,
+            SdfOp::Intersection,
+            SdfOp::Subtraction,
+            SdfOp::SmoothUnion,
+            SdfOp::SmoothIntersection,
+            SdfOp::SmoothSubtraction,
+        ];
+        let prims = primitives();
+        for op in ops {
+            for k in [0.0, 0.35] {
+                let node = SdfNode::Operation {
+                    op,
+                    k,
+                    children: vec![
+                        SdfNode::Primitive(prims[0].1.clone()),
+                        SdfNode::Transform {
+                            translation: Vec3::new(0.7, 0.2, -0.3),
+                            child: Box::new(SdfNode::Primitive(prims[1].1.clone())),
+                        },
+                        SdfNode::Primitive(prims[4].1.clone()),
+                    ],
+                };
+                assert_parity(&node, &format!("{op:?} k={k}"));
+            }
+        }
+    }
+
+    #[test]
+    fn transforms_match_alice_sdf() {
+        let rotation =
+            glam::Quat::from_axis_angle(glam::Vec3::new(0.3, 1.0, 0.2).normalize(), 0.9).to_array();
+        for (name, prim) in primitives() {
+            let node = SdfNode::FullTransform {
+                translation: Vec3::new(0.5, -0.25, 1.0),
+                rotation,
+                scale: Vec3::new(1.5, 0.75, 1.25),
+                child: Box::new(SdfNode::Transform {
+                    translation: Vec3::new(-0.2, 0.1, 0.0),
+                    child: Box::new(SdfNode::Primitive(prim)),
+                }),
+            };
+            assert_parity(&node, &format!("full_transform({name})"));
+        }
+    }
+
+    #[test]
+    fn cone_zero_set_is_base_at_origin_tip_at_height() {
+        // Engine convention preserved: base disc at y = 0, tip at y = height.
+        let cone = SdfPrimitive::Cone {
+            radius: 1.0,
+            height: 2.0,
+        };
+        assert!(
+            cone.eval(Vec3::new(0.0, 1.0, 0.0)) < 0.0,
+            "axis midpoint inside"
+        );
+        assert!(
+            cone.eval(Vec3::new(0.0, 2.0, 0.0)).abs() < 1e-4,
+            "tip on surface"
+        );
+        assert!(
+            cone.eval(Vec3::new(1.0, 0.0, 0.0)).abs() < 1e-4,
+            "base rim on surface"
+        );
+        assert!(
+            cone.eval(Vec3::new(0.0, -0.5, 0.0)) > 0.0,
+            "below base outside"
+        );
+        assert!(
+            cone.eval(Vec3::new(0.0, 2.5, 0.0)) > 0.0,
+            "above tip outside"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1322,7 +1548,7 @@ mod tests {
 
     #[test]
     fn smooth_min_zero_k() {
-        let d = smooth_min(3.0, 5.0, 0.0);
+        let d = apply_op(SdfOp::SmoothUnion, 3.0, 5.0, 0.0);
         assert_eq!(d, 3.0);
     }
 

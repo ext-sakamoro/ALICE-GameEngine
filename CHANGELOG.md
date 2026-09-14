@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed — SDF law delegated to `alice-sdf` (single source)
+
+- `sdf::SdfPrimitive::eval` and `sdf::apply_op` no longer carry their own
+  distance / smooth-blend formulas: they call `alice_sdf::primitives::sdf_*`
+  and `alice_sdf::operations::sdf_smooth_*` (new dependency
+  `alice-sdf = "1.9.2"`, `default-features = false`). Engine parameter
+  conventions are unchanged (`height` = full height, `Cone` base at `y = 0`);
+  cone distances are now exact instead of the previous approximation (same
+  zero set).
+- `impl From<&SdfPrimitive> / From<&SdfNode> for alice_sdf::SdfNode` —
+  lossless conversion into the ALICE-SDF tree.
+- Tests: `sdf::alice_sdf_parity` (every primitive / op / transform vs
+  `alice_sdf::eval` on 500 points) and `simd_eval::alice_sdf_lane_parity`
+  (`sdf_sphere_x8` / `sdf_box_x8` lanes vs `alice_sdf::primitives`; the SIMD
+  helpers remain local copies because ALICE-SDF has no scalar-function SIMD
+  API).
+
 ### New modules
 
 - **`environment_trajectory`** — Language world model / agent simulator
