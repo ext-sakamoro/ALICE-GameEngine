@@ -33,68 +33,37 @@ pub enum Sdf2dPrimitive {
 }
 
 impl Sdf2dPrimitive {
-    /// Evaluate the signed distance at `p` (negative inside, positive
-    /// outside, zero on the silhouette).
+    /// Evaluate the 2D signed distance at `p`.
+    ///
+    /// The law comes from `alice_sdf::primitives` (single source): the
+    /// extruded XY shapes are evaluated at `z = 0` with an unbounded half
+    /// height, for which `extrude_2d` is the identity, and the triangle is the
+    /// exact 3-vertex polygon distance. Engine conventions are kept
+    /// (`Segment::thickness` is the full width, i.e. radius `thickness / 2`).
     #[must_use]
     pub fn eval(&self, p: Vec2) -> f32 {
+        use alice_sdf::primitives as law;
+        let p3 = glam::Vec3::new(p.x(), p.y(), 0.0);
         match *self {
-            Self::Circle { radius } => p.length() - radius,
-            Self::Box { half_extents } => {
-                let q = Vec2::new(
-                    p.x().abs() - half_extents.x(),
-                    p.y().abs() - half_extents.y(),
-                );
-                let outside = Vec2::new(q.x().max(0.0), q.y().max(0.0)).length();
-                let inside = q.x().max(q.y()).min(0.0);
-                outside + inside
-            }
+            Self::Circle { radius } => law::sdf_circle_2d(p3, radius, f32::MAX),
+            Self::Box { half_extents } => law::sdf_rect_2d(p3, half_extents.0, f32::MAX),
             Self::RoundedBox {
                 half_extents,
                 corner_radius,
             } => {
-                let h = Vec2::new(
-                    (half_extents.x() - corner_radius).max(0.0),
-                    (half_extents.y() - corner_radius).max(0.0),
-                );
-                let q = Vec2::new(p.x().abs() - h.x(), p.y().abs() - h.y());
-                let outside = Vec2::new(q.x().max(0.0), q.y().max(0.0)).length();
-                let inside = q.x().max(q.y()).min(0.0);
-                outside + inside - corner_radius
+                // Engine clamps the inner box at zero so `corner_radius` larger than
+                // a half extent degrades to a capsule-like shape instead of inverting.
+                let r = corner_radius.min(half_extents.x()).min(half_extents.y());
+                law::sdf_rounded_rect_2d(p3, half_extents.0, r, f32::MAX)
             }
             Self::Segment { a, b, thickness } => {
-                let pa = p - a;
-                let ba = b - a;
-                let ba_len2 = (ba.x() * ba.x() + ba.y() * ba.y()).max(1e-12);
-                let h = ((pa.x() * ba.x() + pa.y() * ba.y()) / ba_len2).clamp(0.0, 1.0);
-                let dx = pa.x() - ba.x() * h;
-                let dy = pa.y() - ba.y() * h;
-                (dx * dx + dy * dy).sqrt() - thickness * 0.5
+                if (b - a).0.length_squared() < 1e-12 {
+                    return (p - a).length() - thickness * 0.5;
+                }
+                law::sdf_segment_2d(p3, a.0, b.0, thickness * 0.5, f32::MAX)
             }
-            Self::Triangle { a, b, c } => triangle_sdf(p, a, b, c),
+            Self::Triangle { a, b, c } => law::sdf_polygon_2d_xy(p.0, &[a.0, b.0, c.0]),
         }
-    }
-}
-
-fn triangle_sdf(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> f32 {
-    let edge = |x: Vec2, y: Vec2| -> f32 {
-        let pa = p - x;
-        let ba = y - x;
-        let ba_len2 = (ba.x() * ba.x() + ba.y() * ba.y()).max(1e-12);
-        let h = ((pa.x() * ba.x() + pa.y() * ba.y()) / ba_len2).clamp(0.0, 1.0);
-        let dx = pa.x() - ba.x() * h;
-        let dy = pa.y() - ba.y() * h;
-        (dx * dx + dy * dy).sqrt()
-    };
-    let d = edge(a, b).min(edge(b, c)).min(edge(c, a));
-    // Sign from edge cross products (= inside vs outside).
-    let s = ((b.x() - a.x()) * (p.y() - a.y()) - (b.y() - a.y()) * (p.x() - a.x())).signum();
-    let s2 = ((c.x() - b.x()) * (p.y() - b.y()) - (c.y() - b.y()) * (p.x() - b.x())).signum();
-    let s3 = ((a.x() - c.x()) * (p.y() - c.y()) - (a.y() - c.y()) * (p.x() - c.x())).signum();
-    let inside = (s > 0.0) == (s2 > 0.0) && (s2 > 0.0) == (s3 > 0.0);
-    if inside {
-        -d
-    } else {
-        d
     }
 }
 
@@ -150,8 +119,8 @@ fn combine(op: Sdf2dOp, a: f32, b: f32, k: f32) -> f32 {
         Sdf2dOp::Intersect => a.max(b),
         Sdf2dOp::Subtract => a.max(-b),
         Sdf2dOp::SmoothUnion => {
-            let h = (0.5 + 0.5 * (b - a) / k.max(1e-6)).clamp(0.0, 1.0);
-            (b * (1.0 - h) + a * h) - k * h * (1.0 - h)
+            // Polynomial smooth minimum, same law as the 3D tree (`alice_sdf`).
+            alice_sdf::operations::smooth_min(a, b, k)
         }
     }
 }
@@ -182,6 +151,101 @@ pub fn sample_grid(node: &Sdf2dNode, width: u32, height: u32, min: Vec2, max: Ve
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// The 2D law equals ALICE-SDF's extruded shapes on the `z = 0` plane (for
+/// points closer than the half height, where the extrusion is the identity).
+#[cfg(test)]
+mod alice_sdf_parity {
+    use super::*;
+
+    fn points(n: usize) -> Vec<Vec2> {
+        let mut state: u64 = 0x2d5d_f000_0000_0001;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (((state >> 40) as f32) / ((1u64 << 24) as f32)).mul_add(6.0, -3.0)
+        };
+        (0..n).map(|_| Vec2::new(next(), next())).collect()
+    }
+
+    fn assert_matches(name: &str, prim: &Sdf2dPrimitive, node: &alice_sdf::SdfNode) {
+        for p in points(400) {
+            let d2 = prim.eval(p);
+            let d3 = alice_sdf::eval(node, glam::Vec3::new(p.x(), p.y(), 0.0));
+            assert!(
+                (d2 - d3).abs() <= 1e-5 * d2.abs().max(1.0),
+                "{name}: 2d={d2} extruded={d3} at {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn primitives_match_extruded_alice_sdf_nodes() {
+        use alice_sdf::SdfNode as N;
+        let h = 100.0; // far larger than any |distance| in the ±3 box
+        assert_matches(
+            "circle",
+            &Sdf2dPrimitive::Circle { radius: 1.2 },
+            &N::Circle2D {
+                radius: 1.2,
+                half_height: h,
+            },
+        );
+        assert_matches(
+            "box",
+            &Sdf2dPrimitive::Box {
+                half_extents: Vec2::new(1.0, 0.5),
+            },
+            &N::Rect2D {
+                half_extents: glam::Vec2::new(1.0, 0.5),
+                half_height: h,
+            },
+        );
+        assert_matches(
+            "rounded_box",
+            &Sdf2dPrimitive::RoundedBox {
+                half_extents: Vec2::new(1.0, 0.6),
+                corner_radius: 0.2,
+            },
+            &N::RoundedRect2D {
+                half_extents: glam::Vec2::new(1.0, 0.6),
+                round_radius: 0.2,
+                half_height: h,
+            },
+        );
+        assert_matches(
+            "segment",
+            &Sdf2dPrimitive::Segment {
+                a: Vec2::new(-1.0, -0.3),
+                b: Vec2::new(0.8, 0.9),
+                thickness: 0.4,
+            },
+            &N::Segment2D {
+                a: glam::Vec2::new(-1.0, -0.3),
+                b: glam::Vec2::new(0.8, 0.9),
+                thickness: 0.2,
+                half_height: h,
+            },
+        );
+        assert_matches(
+            "triangle",
+            &Sdf2dPrimitive::Triangle {
+                a: Vec2::new(-1.0, -0.8),
+                b: Vec2::new(1.2, -0.5),
+                c: Vec2::new(0.1, 1.1),
+            },
+            &N::Polygon2D {
+                vertices: vec![
+                    glam::Vec2::new(-1.0, -0.8),
+                    glam::Vec2::new(1.2, -0.5),
+                    glam::Vec2::new(0.1, 1.1),
+                ],
+                half_height: h,
+            },
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {

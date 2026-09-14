@@ -19,6 +19,13 @@
   `marching_cubes_parallel` is an alias of `marching_cubes` (ALICE-SDF's
   implementation is Z-slab parallel already). `adaptive_marching_cubes`
   keeps its octree driver but meshes leaves through the delegated function.
+- `sdf2d::Sdf2dPrimitive::eval` / `Sdf2dOp::SmoothUnion` delegate to
+  `alice_sdf::primitives::{sdf_circle_2d, sdf_rect_2d, sdf_rounded_rect_2d,
+  sdf_segment_2d, sdf_polygon_2d_xy}` and `operations::smooth_min` (extruded
+  shapes evaluated on `z = 0` with an unbounded half height, where the
+  extrusion is the identity; the triangle is the exact 3-vertex polygon
+  distance). Engine conventions kept (`Segment::thickness` = full width).
+  `sdf2d::alice_sdf_parity` pins the 2D law to the extruded ALICE-SDF nodes.
 - Tests: `sdf::alice_sdf_parity` (every primitive / op / transform vs
   `alice_sdf::eval` on 500 points) and `simd_eval::alice_sdf_lane_parity`
   (`sdf_sphere_x8` / `sdf_box_x8` lanes vs `alice_sdf::primitives`; the SIMD
