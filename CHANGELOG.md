@@ -13,6 +13,12 @@
   zero set).
 - `impl From<&SdfPrimitive> / From<&SdfNode> for alice_sdf::SdfNode` —
   lossless conversion into the ALICE-SDF tree.
+- `sdf::marching_cubes` / `marching_cubes_parallel` / `dual_contouring` now
+  delegate to `alice_sdf::mesh::{marching_cubes, dual_contouring}`; the
+  engine's own edge / triangle tables and DC solver (~700 lines) are removed.
+  `marching_cubes_parallel` is an alias of `marching_cubes` (ALICE-SDF's
+  implementation is Z-slab parallel already). `adaptive_marching_cubes`
+  keeps its octree driver but meshes leaves through the delegated function.
 - Tests: `sdf::alice_sdf_parity` (every primitive / op / transform vs
   `alice_sdf::eval` on 500 points) and `simd_eval::alice_sdf_lane_parity`
   (`sdf_sphere_x8` / `sdf_box_x8` lanes vs `alice_sdf::primitives`; the SIMD
