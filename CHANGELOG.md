@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed — breaking: MCP handshake の実装に伴う `mcp` module の型変更
+
+- **`initialize` を実装** — これが無いため MCP client は接続を完了できず、実装済の
+  8 tool は実際には到達不能だった `protocolVersion` は client の要求を echo し、
+  省略時は新 const `MCP_PROTOCOL_VERSION` (`2024-11-05`) を返す `capabilities.tools`
+  と `serverInfo` (`alice-game-engine` / `CARGO_PKG_VERSION`) を宣言する
+- **`ping` を実装** (spec の標準 method、空 result)
+- **notification に応答しなくなった** — JSON-RPC 2.0 は id の無い要求への応答を禁じて
+  おり、`notifications/initialized` に応答すると client が session を切る これに伴い
+  **`McpRequest.id` が `u64` → `Option<u64>`**、**`McpHandler::handle` が
+  `McpResponse` → `Option<McpResponse>`** (breaking、ただし consumer は本 crate 内の
+  `easy::Game::mcp_call` / `examples/mcp_controlled` / `bin/mcp_server` のみ)
+- stdio loop は `None` を受けたら何も書かずに次の行へ進む
+- 検証: stdio に `initialize` → `notifications/initialized` → `ping` → `tools/list` を
+  流して**応答 3 行** (= notification に応答していない) / `tools` 8 個 / echo された
+  `protocolVersion` を確認 test 5 本追加 (handshake / notification / ping)
+
 ### Changed — SDF law delegated to `alice-sdf` (single source)
 
 - `sdf::SdfPrimitive::eval` and `sdf::apply_op` no longer carry their own

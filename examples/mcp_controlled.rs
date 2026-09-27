@@ -8,13 +8,14 @@ use alice_game_engine::mcp::{McpHandler, McpRequest};
 fn call(ctx: &mut EngineContext, method: &str, params: serde_json::Value) -> serde_json::Value {
     let req = McpRequest {
         jsonrpc: "2.0".to_string(),
-        id: 1,
+        id: Some(1),
         method: method.to_string(),
         params,
     };
-    let resp = McpHandler::handle(&req, ctx);
+    // id を付けているので None (= notification) にはならない
+    let resp = McpHandler::handle(&req, ctx).expect("request with an id must produce a response");
     resp.result
-        .unwrap_or(serde_json::json!({"error": resp.error}))
+        .unwrap_or_else(|| serde_json::json!({"error": resp.error}))
 }
 
 fn main() {

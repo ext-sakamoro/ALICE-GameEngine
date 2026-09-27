@@ -267,12 +267,16 @@ impl Game {
     pub fn mcp_call(&mut self, method: &str, params: serde_json::Value) -> String {
         let request = crate::mcp::McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 1,
+            id: Some(1),
             method: method.to_string(),
             params,
         };
+        // id を付けているので handle は必ず response を返す (None は notification 専用)
         let response = crate::mcp::McpHandler::handle(&request, &mut self.engine.context);
-        serde_json::to_string(&response).unwrap_or_default()
+        response
+            .as_ref()
+            .and_then(|r| serde_json::to_string(r).ok())
+            .unwrap_or_default()
     }
 }
 

@@ -22,11 +22,22 @@ use serde::{Deserialize, Serialize};
 // MCP Request / Response
 // ---------------------------------------------------------------------------
 
+/// Protocol version reported by `initialize` when the client does not name one.
+///
+/// The client's requested version is echoed back when present, so this is only
+/// the fallback for a client that omits it.
+pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+
 /// JSON-RPC request from an MCP client.
+///
+/// `id` is absent for notifications (e.g. `notifications/initialized`), and
+/// JSON-RPC 2.0 forbids answering those — [`McpHandler::handle`] returns `None`
+/// for them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpRequest {
     pub jsonrpc: String,
-    pub id: u64,
+    #[serde(default)]
+    pub id: Option<u64>,
     pub method: String,
     #[serde(default)]
     pub params: serde_json::Value,
@@ -170,11 +181,37 @@ pub struct McpHandler;
 
 impl McpHandler {
     /// Dispatches a request to the appropriate handler.
+    ///
+    /// Returns `None` for notifications (= requests without an `id`): JSON-RPC
+    /// 2.0 forbids answering those, and a client that gets a response to its
+    /// `notifications/initialized` may drop the session.
     #[must_use]
-    pub fn handle(request: &McpRequest, ctx: &mut crate::engine::EngineContext) -> McpResponse {
-        match request.method.as_str() {
+    pub fn handle(
+        request: &McpRequest,
+        ctx: &mut crate::engine::EngineContext,
+    ) -> Option<McpResponse> {
+        let id = request.id?;
+        Some(match request.method.as_str() {
+            // MCP handshake — without this a client never finishes connecting,
+            // so the tools below were unreachable in practice
+            "initialize" => McpResponse::success(
+                id,
+                serde_json::json!({
+                    "protocolVersion": request
+                        .params
+                        .get("protocolVersion")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(MCP_PROTOCOL_VERSION),
+                    "capabilities": { "tools": {} },
+                    "serverInfo": {
+                        "name": "alice-game-engine",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                }),
+            ),
+            "ping" => McpResponse::success(id, serde_json::json!({})),
             "tools/list" => {
-                McpResponse::success(request.id, serde_json::json!({"tools": tool_definitions()}))
+                McpResponse::success(id, serde_json::json!({"tools": tool_definitions()}))
             }
             "tools/call" => {
                 let tool_name = request
@@ -183,10 +220,10 @@ impl McpHandler {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let args = request.params.get("arguments").cloned().unwrap_or_default();
-                Self::call_tool(request.id, tool_name, &args, ctx)
+                Self::call_tool(id, tool_name, &args, ctx)
             }
-            _ => McpResponse::error(request.id, -32601, "Method not found"),
-        }
+            _ => McpResponse::error(id, -32601, "Method not found"),
+        })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -359,11 +396,12 @@ mod tests {
         let mut ctx = EngineContext::new();
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 1,
+            id: Some(1),
             method: "tools/list".to_string(),
             params: serde_json::Value::Null,
         };
-        let resp = McpHandler::handle(&req, &mut ctx);
+        let resp =
+            McpHandler::handle(&req, &mut ctx).expect("request with an id must produce a response");
         assert!(resp.result.is_some());
         assert!(resp.error.is_none());
     }
@@ -373,14 +411,15 @@ mod tests {
         let mut ctx = EngineContext::new();
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 2,
+            id: Some(2),
             method: "tools/call".to_string(),
             params: serde_json::json!({
                 "name": "scene_add_node",
                 "arguments": {"name": "cube1", "kind": "mesh", "x": 1.0, "y": 2.0, "z": 3.0}
             }),
         };
-        let resp = McpHandler::handle(&req, &mut ctx);
+        let resp =
+            McpHandler::handle(&req, &mut ctx).expect("request with an id must produce a response");
         assert!(resp.result.is_some());
         assert_eq!(ctx.scene.node_count(), 1);
     }
@@ -394,11 +433,12 @@ mod tests {
         ));
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 3,
+            id: Some(3),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "scene_list", "arguments": {}}),
         };
-        let resp = McpHandler::handle(&req, &mut ctx);
+        let resp =
+            McpHandler::handle(&req, &mut ctx).expect("request with an id must produce a response");
         let nodes = resp.result.unwrap()["nodes"].as_array().unwrap().len();
         assert_eq!(nodes, 1);
     }
@@ -409,11 +449,12 @@ mod tests {
         ctx.time.tick(0.5);
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 4,
+            id: Some(4),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "engine_status", "arguments": {}}),
         };
-        let resp = McpHandler::handle(&req, &mut ctx);
+        let resp =
+            McpHandler::handle(&req, &mut ctx).expect("request with an id must produce a response");
         let result = resp.result.unwrap();
         assert_eq!(result["frame_count"], 1);
     }
@@ -427,7 +468,7 @@ mod tests {
         ));
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 5,
+            id: Some(5),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "scene_remove_node", "arguments": {"id": 0}}),
         };
@@ -444,7 +485,7 @@ mod tests {
         ));
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 6,
+            id: Some(6),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "scene_set_transform", "arguments": {"id": 0, "x": 10.0, "y": 20.0, "z": 30.0}}),
         };
@@ -463,11 +504,12 @@ mod tests {
         let mut ctx = EngineContext::new();
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 7,
+            id: Some(7),
             method: "unknown".to_string(),
             params: serde_json::Value::Null,
         };
-        let resp = McpHandler::handle(&req, &mut ctx);
+        let resp =
+            McpHandler::handle(&req, &mut ctx).expect("request with an id must produce a response");
         assert!(resp.error.is_some());
     }
 
@@ -476,11 +518,12 @@ mod tests {
         let mut ctx = EngineContext::new();
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 8,
+            id: Some(8),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "nonexistent", "arguments": {}}),
         };
-        let resp = McpHandler::handle(&req, &mut ctx);
+        let resp =
+            McpHandler::handle(&req, &mut ctx).expect("request with an id must produce a response");
         assert!(resp.error.is_some());
     }
 
@@ -499,11 +542,90 @@ mod tests {
         let mut ctx = EngineContext::new();
         let req = McpRequest {
             jsonrpc: "2.0".to_string(),
-            id: 9,
+            id: Some(9),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "physics_step", "arguments": {"frames": 10}}),
         };
         let _ = McpHandler::handle(&req, &mut ctx);
         assert_eq!(ctx.time.frame_count, 10);
+    }
+
+    // -----------------------------------------------------------------------
+    // handshake — without `initialize` a client never reaches the tools above
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn initialize_echoes_the_requested_protocol_version_and_names_the_server() {
+        let mut ctx = EngineContext::new();
+        let req = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(1),
+            method: "initialize".to_string(),
+            params: serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "probe", "version": "0.0.0"},
+            }),
+        };
+        let resp = McpHandler::handle(&req, &mut ctx).expect("initialize must be answered");
+        let result = resp.result.expect("initialize returns a result");
+        assert_eq!(result["protocolVersion"], "2025-06-18");
+        assert_eq!(result["serverInfo"]["name"], "alice-game-engine");
+        assert_eq!(result["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+        assert!(
+            result["capabilities"].get("tools").is_some(),
+            "tools capability must be advertised since tools/list is implemented"
+        );
+    }
+
+    #[test]
+    fn initialize_without_a_requested_version_falls_back_to_the_constant() {
+        let mut ctx = EngineContext::new();
+        let req = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(7),
+            method: "initialize".to_string(),
+            params: serde_json::json!({}),
+        };
+        let resp = McpHandler::handle(&req, &mut ctx).expect("initialize must be answered");
+        let result = resp.result.expect("initialize returns a result");
+        assert_eq!(result["protocolVersion"], MCP_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn a_notification_is_not_answered() {
+        // JSON-RPC 2.0: id の無い要求に response を返してはいけない
+        // `notifications/initialized` に応答すると client が session を切る
+        let mut ctx = EngineContext::new();
+        let req = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: None,
+            method: "notifications/initialized".to_string(),
+            params: serde_json::json!({}),
+        };
+        assert!(McpHandler::handle(&req, &mut ctx).is_none());
+    }
+
+    #[test]
+    fn a_notification_parses_even_though_it_has_no_id() {
+        // stdio loop は parse 段で落とさずに handle まで渡す必要がある
+        let req = parse_request(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+            .expect("a notification must parse");
+        assert!(req.id.is_none());
+        assert_eq!(req.method, "notifications/initialized");
+    }
+
+    #[test]
+    fn ping_is_answered_with_an_empty_result() {
+        let mut ctx = EngineContext::new();
+        let req = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(3),
+            method: "ping".to_string(),
+            params: serde_json::json!({}),
+        };
+        let resp = McpHandler::handle(&req, &mut ctx).expect("ping must be answered");
+        assert_eq!(resp.result, Some(serde_json::json!({})));
+        assert!(resp.error.is_none());
     }
 }

@@ -28,8 +28,16 @@ fn main() {
 
         let response = match mcp::parse_request(trimmed) {
             Ok(request) => McpHandler::handle(&request, &mut ctx),
-            Err(e) => mcp::McpResponse::error(0, -32700, &format!("Parse error: {e}")),
+            Err(e) => Some(mcp::McpResponse::error(
+                0,
+                -32700,
+                &format!("Parse error: {e}"),
+            )),
         };
+
+        // notification (= id なし) には応答しない JSON-RPC 2.0 の要求で、
+        // ここで返すと client が `notifications/initialized` の直後に session を切る
+        let Some(response) = response else { continue };
 
         if let Ok(json) = mcp::serialize_response(&response) {
             let _ = writeln!(out, "{json}");
