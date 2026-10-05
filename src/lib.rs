@@ -44,7 +44,7 @@
 //! |----------|---------|
 //! | Core | [`ecs`], [`scene_graph`], [`math`], [`engine`], [`resource`] |
 //! | Rendering | [`renderer`], [`gpu`], [`gpu_mesh`], [`shader`], [`texture`], [`render_pipeline`], [`lod`] |
-//! | Physics | [`physics3d`], [`collision`] |
+//! | Physics (`physics` feature, delegates to ALICE-Physics) | `physics3d`, `collision`, `joint` |
 //! | Audio | [`audio`] |
 //! | Animation | [`animation`] |
 //! | Input | [`input`], [`window`], [`camera_controller`] |
@@ -69,6 +69,7 @@ pub mod battle;
 pub mod bridge;
 pub mod camera_controller;
 pub mod cloth;
+#[cfg(feature = "physics")]
 pub mod collision;
 pub mod ddgi;
 pub mod decal;
@@ -95,6 +96,7 @@ pub mod import;
 pub mod input;
 pub mod inspector;
 pub mod jobs;
+#[cfg(feature = "physics")]
 pub mod joint;
 pub mod llm;
 pub mod lod;
@@ -105,6 +107,7 @@ pub mod mobile;
 pub mod network;
 pub mod notify;
 pub mod ocean;
+#[cfg(feature = "physics")]
 pub mod physics3d;
 pub mod prelude;
 pub mod query;
@@ -186,7 +189,10 @@ pub use bridge::{
 };
 pub use camera_controller::{FpsCamera, OrbitCamera};
 pub use cloth::{ClothConfig, ClothParticle, ClothSim};
-pub use collision::{gjk, ConvexHull, ConvexSphere, GjkResult};
+#[cfg(feature = "physics")]
+pub use collision::{
+    contact, gjk, ConvexContact, ConvexHull, ConvexShape, ConvexSphere, GjkResult,
+};
 pub use ddgi::{dir_to_oct, oct_to_dir, DdgiConfig, DdgiProbe, DdgiVolume};
 pub use decal::{DecalBlendMode, DecalData, DecalDraw};
 pub use easy::{Game, GameBuilder};
@@ -222,7 +228,8 @@ pub use import::{detect_format, ProjectFormat};
 pub use input::{ActionMap, InputState, Key, MouseButton};
 pub use inspector::{Inspector, InspectorRow};
 pub use jobs::{dispatch, execute, wait, JobArgs, JobContext};
-pub use joint::{solve_joints, Joint, JointKind, RagdollDef};
+#[cfg(feature = "physics")]
+pub use joint::{build_ragdoll, Joint, JointKind, RagdollDef};
 #[cfg(feature = "gpu")]
 pub use light_culling::{LightCullingConfig, TileLightList, TiledLightCuller};
 pub use llm::{LlmProvider, LlmRequest, LlmResponse, MockLlm, NpcContext};
@@ -236,7 +243,10 @@ pub use mobile::{
 pub use network::{GameClient, GameHost, NetMessage, NetPeer, PeerId};
 pub use notify::{Notification, NotifyCenter, Severity};
 pub use ocean::{OceanConfig, OceanFrame, OceanSimulator};
-pub use physics3d::{Contact3D, PhysicsWorld, RigidBody};
+#[cfg(feature = "physics")]
+pub use physics3d::{
+    BodyDesc, BodyHandle, BodyKind, Broadphase, Contact3D, JointHandle, PhysicsConfig, PhysicsWorld,
+};
 pub use render_pipeline::{FrameData, MaterialUniforms, MvpUniforms, RenderStats};
 pub use scene2d::{Scene2D, Sprite2D, TileMap};
 pub use scene_graph::{Node, NodeId, NodeKind, SceneGraph};

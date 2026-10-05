@@ -27,7 +27,7 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | Add SDF volume | `NodeKind::Sdf(SdfData { sdf_json: "...", ... })` |
 | Load free SDF asset | `sdf_assets::load_asdf_file("path.asdf.json")` → `add_asdf_to_scene()` |
 | SDF → triangle mesh | `sdf::marching_cubes(node, min, max, res)` or `marching_cubes_parallel()` |
-| Physics simulation | `physics3d::PhysicsWorld` — `.add_body()`, `.step(dt)` (Verlet + CCD) |
+| Physics simulation | `physics3d::PhysicsWorld` (`physics` feature, delegates to ALICE-Physics) — `.add_body(BodyDesc)`, `.update(frame_dt)` / `.step_fixed()`; defaults substeps 4, broadphase DynamicTree |
 | Sound playback | `audio::AudioSource::set_pcm(samples)` or `.set_sample_provider()` |
 | Key/mouse/gamepad | `input::ActionMap::bind_action("jump", InputSource::Key(Key::Space))` |
 | Animate | `animation::AnimationClip` + `Track` + `AnimationPlayer` |
@@ -40,9 +40,10 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | 2D sprites/tiles | `scene2d::Sprite2D`, `TileMap`, `detect_2d_collisions()` |
 | Deferred decals | `scene.add(Node::new("hole", NodeKind::Decal(DecalData::default())))` — OBB extents = `local_transform.scale` |
 | Fork-join jobs | `let ctx = JobContext::new(); execute(&ctx, \|\| ...); dispatch(&ctx, 1000, 32, \|args\| ...); wait(&ctx);` — dedicated rayon pool, Condvar wait, `ctx.fork()` for nested barriers |
-| Slider (prismatic) joint | `Joint::slider(a, b, axis, min_offset, max_offset)` — 1-axis slide, perpendicular lock + min/max clamp |
+| Joints (`physics` feature) | `world.add_joint(Joint::distance(a, b, len))` → `Option<JointHandle>`; `a` / `b` are `BodyHandle`s, the description is read in world space at creation |
+| Slider (prismatic) joint | `Joint::slider(a, b, axis, min_offset, max_offset)` — B stays on the axis line through A, offset clamped |
 | Fixed (weld) joint | `Joint::fixed(a, b, offset)` — holds `B - A == offset` |
-| Cone twist (humanoid) joint | `Joint::cone_twist(a, b, twist_axis, swing_half_angle, twist_half_angle)` — swing clamp; twist limit reserved for future angular solver |
+| Cone twist (humanoid) joint | `Joint::cone_twist(a, b, twist_axis, swing_half_angle, twist_half_angle)` — pivot at A, swing and twist limited from the pose at creation |
 | Tiled light culling (`gpu` feature) | `let culler = TiledLightCuller::new(LightCullingConfig::default(), w, h); let tiles = culler.cull(&lights, view, proj);` — 16-px tiles, max 64 lights/tile, directional listed separately |
 | Tessendorf FFT ocean | `let mut sim = OceanSimulator::new(OceanConfig::default()); let frame = sim.simulate(time);` — heights + normals on a power-of-two grid, no external deps |
 | EnvProbe / IBL | `let cube = Cubemap::new_with_color(32, color); let irr = prefilter_irradiance(&cube, 8); scene.add(Node::new("p", NodeKind::EnvProbe(EnvProbeData::default())))` |
@@ -68,7 +69,7 @@ cargo run --bin mcp_server    # MCP server (stdio JSON-RPC)
 | SIMD batch eval | `simd_eval::eval_sphere_batch(&points, radius)` (8-wide f32x8) |
 | 128-bit position | `fix128::Fix128Vec3::accumulate_f32(dx, dy, dz)` |
 | Plug in ALICE-SDF | `ctx.set_sdf_evaluator(Box::new(impl SdfEvaluator))` |
-| Plug in ALICE-Physics | `ctx.set_collision_provider(Box::new(impl CollisionProvider))` |
+| Plug in ALICE-Physics | `physics` feature: `ctx.physics` (advanced by `Engine::frame`); `PhysicsWorld` also implements `CollisionProvider` |
 | Plug in ALICE-Voice | `source.set_sample_provider(Box::new(impl AudioSampleProvider))` |
 | Plugin system | `ctx.plugins.register(Box::new(impl Plugin))` |
 | Events/timers | `scripting::EventBus`, `Timer` |
@@ -140,7 +141,8 @@ claude mcp add --transport stdio alice-engine -- cargo run --bin mcp_server
 | `scene_remove_node` | Remove node by ID |
 | `scene_set_transform` | Move a node |
 | `engine_status` | Frame count, time, node count |
-| `physics_step` | Step N physics frames |
+| `physics_step` | Advance N frames of 1/60 s (and `ctx.physics` with the `physics` feature) |
+| `physics_add_body` | Add a sphere body to `ctx.physics` (`physics` feature only), returns its id |
 
 ## NPC AI (local LLM)
 
@@ -159,7 +161,7 @@ Replace `MockLlm` with a real `LlmProvider` impl (llama.cpp FFI, ONNX, ALICE-Tra
 GameBuilder → Game                       # easy.rs
 Engine + EngineConfig + EngineContext     # engine.rs
 SceneGraph + Node + NodeId + NodeKind    # scene_graph.rs
-PhysicsWorld + RigidBody + Contact3D     # physics3d.rs
+PhysicsWorld + BodyDesc + BodyHandle + Contact3D     # physics3d.rs (physics feature)
 AudioEngine + AudioSource + AudioBus     # audio.rs
 ActionMap + InputState + Key             # input.rs
 AnimationClip + AnimationPlayer          # animation.rs
@@ -183,7 +185,7 @@ Vec3x8 + eval_sphere_batch              # simd_eval.rs
 | `hello_engine` | full | Headless 300 frames |
 | `spinning_cube` | full | Windowed GPU cube |
 | `pong` | full | 2D pong with AI paddle |
-| `physics_sandbox` | full | 10 balls, damping, sleeping |
+| `physics_sandbox` | physics | 10 balls, damping, sleeping |
 | `npc_chat` | (none) | LLM NPC dialogue |
 | `mcp_controlled` | (none) | MCP-driven scene setup |
 
@@ -216,5 +218,5 @@ Usage: `cp templates/rpg.rs examples/my_game.rs && cargo run --example my_game -
 ## Notes for users
 
 - `ComponentStore<T>` requires `T: Clone`
-- Physics uses Verlet integration (set `prev_position` for initial velocity)
+- Physics needs `--features physics` (not in `full`); set the initial velocity in `BodyDesc::velocity`
 - `dense_slice()` on `ComponentStore` for batch/SIMD access

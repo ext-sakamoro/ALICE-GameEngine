@@ -25,7 +25,7 @@ game.run_headless(300);
 
 Core: `ecs` (SoA), `scene_graph` (mesh+SDF), `math`, `engine`
 Rendering: `renderer`, `gpu`, `shader`, `texture`, `lod`
-Physics: `physics3d` (Verlet, SDF CCD), `collision` (GJK)
+Physics (`physics` feature, delegates to ALICE-Physics, AGPL-3.0-or-later OR commercial): `physics3d` (handle-based world, fixed step, SDF CCD), `joint`, `collision` (GJK / EPA)
 Audio: `audio` (HRTF, bus, PCM, spatial)
 Gameplay: `ability` (GAS), `animation`, `navmesh`, `scripting`, `llm` (NPC AI), `verse` (UE6)
 2D: `scene2d` (Sprite, TileMap)
@@ -58,7 +58,7 @@ Source: <https://github.com/ext-sakamoro/Open-Source-SDF-Assets>
 claude mcp add --transport stdio alice-engine -- cargo run --bin mcp_server
 ```
 
-Tools: `scene_list`, `scene_add_node`, `scene_remove_node`, `scene_set_transform`, `engine_status`, `physics_step`
+Tools: `scene_list`, `scene_add_node`, `scene_remove_node`, `scene_set_transform`, `engine_status`, `physics_step`, `physics_add_body` (`physics` feature only)
 
 ## NPC AI
 
@@ -73,4 +73,4 @@ let reply = npc.respond("Who are you?", &llm).unwrap();
 
 - `--features full` for GPU/audio/SDF
 - `ComponentStore<T>` needs `T: Clone`
-- Physics uses Verlet integration
+- Physics needs `--features physics` (not in `full`); `PhysicsWorld::default()` = gravity −9.81, fixed_dt 1/60, substeps 4, broadphase DynamicTree

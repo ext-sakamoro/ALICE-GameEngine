@@ -44,7 +44,7 @@ Feature flags pick what you compile:
 
 - **Hybrid scene graph** — meshes and SDF volumes coexist in the same tree
 - **Deferred wgpu renderer** with GBuffer, RenderGraph, debug overlay
-- **Verlet physics** + sweep-and-prune broadphase + SDF CCD
+- **Rigid-body physics** delegated to ALICE-Physics (`physics` feature, deterministic fixed point)
 - **HRTF audio** with bus effects, `MusicTrack` BGM cross-fade, `ReverbZone`
 - **Turn-based RPG runtime** — `TurnBattleRunner` (speed-ordered, grid +
   attack-range) + 13 serializable `EventCommand`s + 5 advanced flow
@@ -276,7 +276,7 @@ cargo run --example editor_server_demo --features editor_server # axum ws on 127
 cargo run --example platformer_action --features particles
                                        # sword Hitbox + Curl-Noise dash trail
 cargo run --example spinning_cube --features full
-cargo run --example physics_sandbox --features full
+cargo run --example physics_sandbox --features physics
 ```
 
 Every example fits on one screen — copy `templates/<name>.rs` and rename
@@ -539,37 +539,49 @@ let frustum = scene_graph::Frustum::from_view_projection(vp);
 let visible = scene.frustum_cull(&frustum);
 ```
 
-### Physics — RigidBody & Collision
+### Physics — RigidBody & Collision (`physics` feature)
+
+Rigid-body physics is delegated to [ALICE-Physics](https://github.com/ext-sakamoro/ALICE-Physics)
+(deterministic 128-bit fixed point). It is behind the `physics` feature, which
+is not part of `full`: ALICE-Physics is `AGPL-3.0-or-later OR LicenseRef-Commercial`,
+so a distributed build with this feature is subject to those terms.
 
 ```rust
-use alice_game_engine::physics3d::*;
-use alice_game_engine::math::Vec3;
+use alice_game_engine::physics3d::{BodyDesc, PhysicsConfig, PhysicsWorld};
+use glam::Vec3;
 
-let mut world = PhysicsWorld::new();
-world.gravity = Vec3::new(0.0, -9.81, 0.0);
+// Defaults: gravity (0, -9.81, 0), fixed_dt 1/60, substeps 4,
+// max_steps_per_update 8, broadphase DynamicTree
+let mut world = PhysicsWorld::new(PhysicsConfig::default());
 
-// Dynamic body
-let ball = world.add_body(RigidBody::new(Vec3::new(0.0, 10.0, 0.0), 1.0));
-world.bodies[ball].restitution = 0.7;
-world.bodies[ball].linear_damping = 0.02;
+// Dynamic sphere (mass 1 kg, collision radius 0.5 m)
+let mut desc = BodyDesc::dynamic(Vec3::new(0.0, 10.0, 0.0), 1.0, 0.5);
+desc.restitution = 0.7;
+desc.linear_damping = 0.02; // fraction of velocity lost per second
+let ball = world.add_body(desc);
 
-// Static ground
-world.add_body(RigidBody::new_static(Vec3::new(0.0, 0.0, 0.0)));
+// Static ground: a large sphere whose top is at y = 0
+world.add_body(BodyDesc::fixed(Vec3::new(0.0, -1000.0, 0.0), 1000.0));
 
-// Apply forces
-world.bodies[ball].apply_force(Vec3::new(5.0, 0.0, 0.0));
-world.bodies[ball].apply_impulse(Vec3::new(0.0, 20.0, 0.0));
+// Force over the next fixed step, instant impulse
+world.apply_force(ball, Vec3::new(5.0, 0.0, 0.0));
+world.apply_impulse(ball, Vec3::new(0.0, 20.0, 0.0));
 
-// Simulate (broadphase + narrowphase + resolve integrated)
+// Advance by frame time; runs whole fixed steps, independent of the frame rate
 for _ in 0..600 {
-    world.step(1.0 / 60.0);
+    world.update(1.0 / 60.0);
 }
 
-// Check contacts
-for contact in &world.contacts {
-    println!("Contact: body {} hit body {}", contact.body_a, contact.body_b);
+// Contacts of the last fixed step (normal points from body_a to body_b)
+for contact in world.contacts() {
+    println!("Contact: {:?} hit {:?}", contact.body_a, contact.body_b);
 }
 ```
+
+Handles stay valid across removal of other bodies and a removed handle never
+aliases a later body. Joints (`joint::Joint`), GJK / EPA (`collision`) and
+`CollisionProvider` for `EngineContext` are delegated the same way;
+`EngineContext::physics` is advanced by `Engine::frame`.
 
 ### Audio — Sound Playback & Spatial
 
@@ -1001,10 +1013,10 @@ while !script.is_done() { script.step(&mut ctx); }
         +---------+-------+-------+---------+
         |         |       |       |         |
    scene_graph  ecs   physics3d  audio   input
-   (mesh+SDF)  (ECS)  (impulse) (HRTF)  (action map)
+   (mesh+SDF)  (ECS)  (ALICE-Physics) (HRTF)  (action map)
         |                 |
    +----+----+      broadphase
-   |         |      (sweep-and-prune)
+   |         |      (dynamic AABB tree)
  renderer   sdf
  (wgpu)   (marching cubes)
 ```
@@ -1018,7 +1030,7 @@ while !script.is_done() { script.step(&mut ctx); }
 | sdf | 1,243 | 39 | 7 primitives, 6 boolean ops, Marching Cubes (256 tables), Rayon parallel MC, sphere trace, SDF collider |
 | audio | 1,240 | 47 | Bus effects (ping-pong), HRTF, PCM playback, spatial panning, WAV export, **MusicTrack** (BGM cross-fade), **ReverbZone** (4 presets) |
 | ui | 951 | 30 | Retained-mode widgets, vertical+horizontal layout, focus management, theme |
-| physics3d | 815 | 36 | Verlet integration, sweep-and-prune broadphase, impulse solver, SDF CCD, damping, sleeping |
+| physics3d | 1,632 | 24 | Adapter to ALICE-Physics (`physics` feature): stable handles, fixed-step accumulator, damping, contacts, joints, sleeping |
 | math | 776 | 30 | Vec2/3/4, Mat4, Quat, Color, perspective+orthographic projection |
 | renderer | 773 | 25 | Deferred GBuffer, RenderGraph (Kahn topo sort), DebugRenderer |
 | app | 715 | 13 | `run_windowed()` (winit+wgpu), `HeadlessRunner`, WAV export |
@@ -1040,7 +1052,7 @@ while !script.is_done() { script.step(&mut ctx); }
 | render_pipeline | 354 | 13 | FrameData extraction, MvpUniforms, MaterialUniforms, PipelineState |
 | engine | 354 | 11 | Game loop, System trait, fixed timestep, interpolation alpha |
 | asset | 336 | 13 | OBJ parser, glTF header, SDF JSON loader, asset type detection |
-| collision | 333 | 10 | GJK convex intersection, SDF-mesh hybrid narrowphase |
+| collision | 348 | 14 | GJK / EPA and SDF-mesh narrowphase delegated to ALICE-Physics (`physics` feature) |
 | camera_controller | 322 | 19 | FPS camera (WASD+mouse), Orbit camera (rotate/zoom/pan) |
 | resource | 309 | 12 | Async resource manager, ref counting, load state |
 | easy | 295 | 9 | GameBuilder + Game high-level API (5-line game setup) |

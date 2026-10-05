@@ -85,6 +85,10 @@ pub struct EngineContext {
     /// External world provider (e.g. ALICE-Metaverse).
     pub world_provider: Option<Box<dyn crate::bridge::WorldProvider>>,
 
+    /// Rigid-body world (`alice_physics`), advanced by [`Engine::frame`].
+    #[cfg(feature = "physics")]
+    pub physics: crate::physics3d::PhysicsWorld,
+
     #[cfg(feature = "audio")]
     pub audio: AudioEngine,
 
@@ -108,6 +112,9 @@ impl EngineContext {
             sdf_evaluator: None,
             collision_provider: None,
             world_provider: None,
+
+            #[cfg(feature = "physics")]
+            physics: crate::physics3d::PhysicsWorld::default(),
 
             #[cfg(feature = "audio")]
             audio: AudioEngine::new(),
@@ -178,11 +185,30 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// With the `physics` feature the context's physics world takes its
+    /// gravity, fixed step and step cap from `config`.
+    ///
+    /// # Panics
+    ///
+    /// With the `physics` feature, if `config.fixed_timestep` is not a
+    /// positive finite number.
     #[must_use]
     pub fn new(config: EngineConfig) -> Self {
+        #[allow(unused_mut)]
+        let mut context = EngineContext::new();
+        #[cfg(feature = "physics")]
+        {
+            context.physics =
+                crate::physics3d::PhysicsWorld::new(crate::physics3d::PhysicsConfig {
+                    gravity: config.gravity.0,
+                    fixed_dt: config.fixed_timestep,
+                    max_steps_per_update: config.max_fixed_steps_per_frame,
+                    ..crate::physics3d::PhysicsConfig::default()
+                });
+        }
         Self {
             config,
-            context: EngineContext::new(),
+            context,
             fixed_accumulator: 0.0,
             running: false,
             frame_count: 0,
@@ -214,6 +240,10 @@ impl Engine {
             self.fixed_accumulator -= self.config.fixed_timestep;
             fixed_steps += 1;
         }
+
+        // Built-in rigid-body world (its own fixed-step accumulator)
+        #[cfg(feature = "physics")]
+        self.context.physics.update(dt);
 
         // Step external world provider (e.g. ALICE-Metaverse) before user systems
         if let Some(wp) = self.context.world_provider.as_mut() {
@@ -275,6 +305,37 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "physics")]
+    #[test]
+    fn engine_config_sets_up_and_advances_the_physics_world() {
+        struct Idle;
+        impl System for Idle {}
+        let config = EngineConfig {
+            fixed_timestep: 0.25,
+            max_fixed_steps_per_frame: 2,
+            gravity: Vec3::new(0.0, -2.0, 0.0),
+            ..EngineConfig::default()
+        };
+        let mut engine = Engine::new(config);
+        let pc = engine.context.physics.config();
+        assert_eq!(pc.gravity, glam::Vec3::new(0.0, -2.0, 0.0));
+        assert!((pc.fixed_dt - 0.25).abs() < f32::EPSILON);
+        assert_eq!(pc.max_steps_per_update, 2);
+        let body = engine
+            .context
+            .physics
+            .add_body(crate::physics3d::BodyDesc::dynamic(
+                glam::Vec3::ZERO,
+                1.0,
+                0.0,
+            ));
+        engine.init(&mut Idle);
+        // one frame of 0.5 s = two fixed steps of 0.25 s: v = -2 · 0.5
+        engine.frame(0.5, &mut Idle);
+        let v = engine.context.physics.velocity(body).unwrap();
+        assert!((v.y + 1.0).abs() < 1e-5, "vy {}", v.y);
+    }
 
     struct CounterSystem {
         init_called: bool,

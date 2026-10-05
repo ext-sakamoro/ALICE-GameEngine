@@ -2,6 +2,73 @@
 
 ## [Unreleased]
 
+### Changed — breaking: rigid-body physics delegated to ALICE-Physics (`physics` feature)
+
+- **Breaking:** `physics3d` / `collision` / `joint` moved behind the new
+  `physics` feature (off by default, not part of `full`). It pulls in
+  `alice-physics` (`AGPL-3.0-or-later OR LicenseRef-Commercial`), so a
+  distributed build with this feature is subject to those terms
+- **Breaking:** `physics3d` is handle based: `PhysicsWorld::add_body(BodyDesc)`
+  returns a `BodyHandle` (index + generation), and bodies are read and changed
+  through `position` / `set_velocity` / `apply_impulse` / ... The old
+  `RigidBody` type with pub fields, `PhysicsWorld::bodies` / `contacts` /
+  `gravity` fields, `step(dt)`, `broadphase*` and `resolve_contact` are removed
+- **Breaking:** `joint::solve_joints` (direct position writes) is removed;
+  joints are added with `PhysicsWorld::add_joint` / `remove_joint` and solved
+  by the inner world. `Joint::body_a` / `body_b` are `BodyHandle`s,
+  `RagdollDef` holds handles
+- **Breaking:** `collision::gjk` lost its `max_iterations` argument and
+  `GjkResult::Indeterminate` (two values: `Intersecting` / `Separated`)
+- **Breaking:** `easy::Game::add_physics_body` needs the `physics` feature and
+  returns a `BodyHandle`
+- **Behavior change:** integration is ALICE-Physics XPBD in 128-bit fixed point
+  with substeps; `PhysicsWorld::update(frame_dt)` runs whole fixed steps
+  (results do not depend on the frame rate)
+- **Behavior change:** `linear_damping` / `angular_damping` mean the fraction
+  of velocity lost per second
+- **Behavior change:** `PhysicsConfig::default()` is gravity `(0, -9.81, 0)`,
+  `fixed_dt` 1/60, `substeps` 4, `max_steps_per_update` 8, `broadphase`
+  `DynamicTree` (1000 spheres: about 12 ms per step on an arm64 10-core
+  machine)
+- **Behavior change:** a body collides only with a positive `radius`; joints
+  are read in world space at creation and turn with the bodies; hinge and
+  cone-twist pivot at body A (the cone-twist twist limit is now enforced)
+- **Behavior change:** `collision::mesh_vs_sdf` returns a unit normal (it
+  used to pass `sdf_normal` through unnormalised)
+
+### Fixed
+
+- Two overlapping bodies passed through each other and swapped places (the
+  contact normal and the resolution used opposite directions)
+- `apply_impulse` and contact impulses had no effect on the next step (the
+  integrator did not read the velocity)
+- `easy::Game::add_physics_body` added to a temporary world and always
+  returned 0; bodies now live in `EngineContext::physics`
+- MCP `physics_add_body` was listed but not implemented, and `physics_step`
+  only advanced the clock; both now act on `EngineContext::physics`
+- `joint::build_ragdoll` joined consecutive bones with zero anchors (bones
+  collapsed onto one point); the pivot is now the parent bone
+
+### Added
+
+- `physics3d::BodyHandle` / `JointHandle` (`to_bits` / `from_bits` for text
+  protocols), `BodyDesc`, `BodyKind`, `PhysicsConfig`, `Broadphase`
+- `PhysicsWorld::contacts()` (normal from `body_a` to `body_b`),
+  `set_kinematic_target`, `apply_force` / `apply_torque` (act over the next
+  fixed step), `is_sleeping` / `wake`, `total_kinetic_energy`, `inner()`
+- `collision::contact` (EPA penetration, `ConvexContact`)
+- `impl CollisionProvider for PhysicsWorld` (sphere cast / AABB overlap with
+  each body's own radius)
+- `EngineContext::physics`, set from `EngineConfig` (gravity, fixed step, step
+  cap) and advanced by `Engine::frame`
+- `physics3d::sdf_ccd` delegates to `alice_physics::sdf_ccd::sphere_trace_sdf_field`
+  through `DistanceSdfQuery` (the normal comes from ALICE-Physics' central
+  differences); `collision::mesh_vs_sdf` to
+  `alice_physics::sdf_collider::collide_point_sdf_field`. A sphere that starts
+  inside the surface hits at `time_of_impact = 0`
+- Examples `fps` / `racing` / `sandbox` registered (`physics` feature);
+  `physics_sandbox` and `constraint_demo` now require `physics`
+
 ### Changed — breaking: MCP handshake の実装に伴う `mcp` module の型変更
 
 - **`initialize` を実装** — これが無いため MCP client は接続を完了できず、実装済の

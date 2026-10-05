@@ -38,7 +38,7 @@ alice-game-engine = { version = "0.6", features = ["full"] }
 
 - **ハイブリッドシーングラフ** — メッシュと SDF ボリュームを同じツリーに混在
 - **wgpu Deferred レンダラー** — GBuffer、RenderGraph、debug overlay
-- **Verlet 物理** + sweep-and-prune 広域 + SDF CCD
+- **剛体物理** は ALICE-Physics に委譲 (`physics` feature、決定論的な固定小数点)
 - **HRTF オーディオ** バス効果、`MusicTrack` BGM cross-fade、`ReverbZone`
 - **ターン制 RPG ランタイム** — `TurnBattleRunner` (速度順、grid 位置 +
   攻撃射程) + 13 種の serializable `EventCommand` + 高度フロー 5 種
@@ -122,7 +122,7 @@ cargo run --example fps_combat         # LockOn + hitscan + HitStop
 cargo run --example platformer_action --features particles
                                        # 剣の Hitbox + Curl Noise dash trail
 cargo run --example spinning_cube --features full
-cargo run --example physics_sandbox --features full
+cargo run --example physics_sandbox --features physics
 ```
 
 各 example は 1 画面に収まる短さ。`templates/<name>.rs` をコピーして
@@ -383,10 +383,10 @@ let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
         +---------+-------+-------+---------+
         |         |       |       |         |
    scene_graph  ecs   physics3d  audio   input
-   (メッシュ+SDF) (SoA) (Verlet) (HRTF) (ActionMap)
+   (メッシュ+SDF) (SoA) (ALICE-Physics) (HRTF) (ActionMap)
         |                 |
    +----+----+      broadphase
-   |         |      (Sweep-and-Prune)
+   |         |      (動的 AABB tree)
  renderer   sdf         |
  (wgpu)   (MC+Rayon)   fix128
                         (128bit精度)
@@ -401,7 +401,7 @@ let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
 | sdf | 1,243 | 39 | 7プリミティブ、6ブーリアン演算、正規MC (256テーブル)、Rayon並列MC、球トレース |
 | audio | 1,240 | 47 | バスエフェクト (ピンポン)、HRTF、PCM再生、空間パンニング、WAVエクスポート、**MusicTrack** (BGM cross-fade)、**ReverbZone** (4 preset) |
 | ui | 951 | 30 | 保持モードUI、水平/垂直レイアウト、フォーカス管理、テーマ |
-| physics3d | 815 | 36 | ベルレ積分、SAP broadphase、インパルスソルバー、SDF CCD、ダンピング、スリープ |
+| physics3d | 1,632 | 24 | ALICE-Physics への adapter (`physics` feature): 安定 handle、固定 step の accumulator、ダンピング、接触、joint、スリープ |
 | math | 776 | 30 | Vec2/3/4、Mat4、Quat、Color、透視/正射影投影 |
 | renderer | 773 | 25 | ディファードGBuffer、RenderGraph (Kahnトポソート)、DebugRenderer |
 | app | 715 | 13 | `run_windowed()` (winit+wgpu)、`HeadlessRunner`、WAVエクスポート |
@@ -423,7 +423,7 @@ let target = lock.acquire(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &cands);
 | render_pipeline | 354 | 13 | FrameData抽出、MvpUniforms、MaterialUniforms、PipelineState |
 | engine | 354 | 11 | ゲームループ、System trait、固定タイムステップ、補間アルファ |
 | asset | 336 | 13 | OBJパーサー、glTFヘッダー、SDF JSONローダー |
-| collision | 333 | 10 | GJK凸衝突判定、SDF-メッシュハイブリッドnarrowphase |
+| collision | 348 | 14 | GJK / EPA と SDF-メッシュ narrowphase を ALICE-Physics に委譲 (`physics` feature) |
 | camera_controller | 322 | 19 | FPSカメラ (WASD+マウス)、Orbitカメラ (回転/ズーム/パン) |
 | resource | 309 | 12 | 非同期リソース管理、参照カウント |
 | bridge | 642 | 12 | ALICE-xxx連携トレイト (`SdfEvaluator`/`CollisionProvider`/`AudioSampleProvider`/`WorldProvider`/`TextProcessor`/`AnimationProvider`/`NetworkTransport`/`SdfFontProvider` 等)、プラグインシステム |

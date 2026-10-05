@@ -1,51 +1,59 @@
-//! Physics Sandbox: demonstrates Verlet integration, collision, damping, sleeping.
+//! Physics Sandbox: balls dropped on a ground sphere, simulated by
+//! `alice_physics` through the engine adapter (contacts, damping, sleeping).
 //!
-//! Run: `cargo run --example physics_sandbox --features full`
+//! Run: `cargo run --example physics_sandbox --features physics`
 
-use alice_game_engine::math::Vec3;
-use alice_game_engine::physics3d::*;
+use alice_game_engine::physics3d::{BodyDesc, PhysicsWorld};
+use glam::Vec3;
 
 fn main() {
-    let mut world = PhysicsWorld::new();
+    let mut world = PhysicsWorld::default();
 
-    // Ground
-    world.add_body(RigidBody::new_static(Vec3::ZERO));
+    // Ground: a large static sphere whose top is at y = 0
+    world.add_body(BodyDesc::fixed(Vec3::new(0.0, -1000.0, 0.0), 1000.0));
 
     // Drop 10 balls from increasing heights
-    for i in 0..10 {
-        let mut body = RigidBody::new(Vec3::new(i as f32 * 2.0, 5.0 + i as f32 * 3.0, 0.0), 1.0);
-        body.restitution = 0.6;
-        body.linear_damping = 0.02;
-        world.add_body(body);
-    }
+    let balls: Vec<_> = (0..10)
+        .map(|i| {
+            let mut desc = BodyDesc::dynamic(
+                Vec3::new(i as f32 * 2.0 - 9.0, 5.0 + i as f32 * 3.0, 0.0),
+                1.0,
+                0.5,
+            );
+            desc.restitution = 0.6;
+            desc.linear_damping = 0.02;
+            world.add_body(desc)
+        })
+        .collect();
 
-    println!("Simulating 600 frames...");
-
+    println!("Simulating 10 s at 60 fps...");
     for frame in 0..600 {
-        world.step(1.0 / 60.0);
-
+        world.update(1.0 / 60.0);
         if frame % 60 == 0 {
-            let sleeping = world.bodies.iter().filter(|b| b.sleeping).count();
-            let contacts = world.contacts.len();
+            let sleeping = balls
+                .iter()
+                .filter(|&&b| world.is_sleeping(b) == Some(true))
+                .count();
             println!(
                 "t={:.1}s  contacts={}  sleeping={}/{}",
                 frame as f32 / 60.0,
-                contacts,
+                world.contacts().len(),
                 sleeping,
-                world.body_count()
+                balls.len()
             );
         }
     }
 
     println!("\nFinal positions:");
-    for (i, body) in world.bodies.iter().enumerate().skip(1) {
+    for (i, &b) in balls.iter().enumerate() {
+        let p = world.position(b).unwrap_or_default();
+        let sleeping = world.is_sleeping(b) == Some(true);
         println!(
-            "  Ball {}: ({:.2}, {:.2}, {:.2}) {}",
-            i,
-            body.position.x(),
-            body.position.y(),
-            body.position.z(),
-            if body.sleeping { "[sleeping]" } else { "" }
+            "  Ball {i}: ({:.2}, {:.2}, {:.2}) {}",
+            p.x,
+            p.y,
+            p.z,
+            if sleeping { "[sleeping]" } else { "" }
         );
     }
 }

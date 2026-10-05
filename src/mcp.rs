@@ -11,8 +11,8 @@
 //! | `scene_add_node` | Add a node (mesh/sdf/light/camera) |
 //! | `scene_remove_node` | Remove a node by ID |
 //! | `scene_set_transform` | Set node position/rotation/scale |
-//! | `physics_add_body` | Add a rigid body |
-//! | `physics_step` | Step the physics simulation |
+//! | `physics_add_body` | Add a rigid body to `EngineContext::physics` (`physics` feature only) |
+//! | `physics_step` | Advance the clock by N frames of 1/60 s; with the `physics` feature also the physics world |
 //! | `animation_play` | Play an animation clip |
 //! | `engine_status` | Get frame count, time, node count |
 
@@ -149,10 +149,25 @@ pub fn tool_definitions() -> Vec<McpTool> {
         },
         McpTool {
             name: "physics_step".to_string(),
-            description: "Step the physics simulation by N frames".to_string(),
+            description: "Advance the engine clock by N frames of 1/60 s (and the physics world, when built with it)"
+                .to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {"frames": {"type": "integer", "default": 1}},
+            }),
+        },
+        #[cfg(feature = "physics")]
+        McpTool {
+            name: "physics_add_body".to_string(),
+            description: "Add a sphere body to the physics world, returns its id".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+                    "mass": {"type": "number", "default": 1.0},
+                    "radius": {"type": "number", "default": 0.5},
+                    "kind": {"type": "string", "enum": ["dynamic", "static"], "default": "dynamic"}
+                }
             }),
         },
         McpTool {
@@ -326,10 +341,48 @@ impl McpHandler {
                     .get("frames")
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(1);
+                #[allow(unused_mut)]
+                let mut fixed_steps = 0_u64;
                 for _ in 0..frames {
                     ctx.time.tick(1.0 / 60.0);
+                    #[cfg(feature = "physics")]
+                    {
+                        fixed_steps += u64::from(ctx.physics.update(1.0 / 60.0));
+                    }
                 }
-                McpResponse::success(id, serde_json::json!({"stepped": frames}))
+                McpResponse::success(
+                    id,
+                    serde_json::json!({"stepped": frames, "fixed_steps": fixed_steps}),
+                )
+            }
+            #[cfg(feature = "physics")]
+            "physics_add_body" => {
+                let num = |key: &str, default: f64| {
+                    args.get(key)
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(default) as f32
+                };
+                let position = glam::Vec3::new(num("x", 0.0), num("y", 0.0), num("z", 0.0));
+                let radius = num("radius", 0.5);
+                let desc = match args
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("dynamic")
+                {
+                    "dynamic" => {
+                        crate::physics3d::BodyDesc::dynamic(position, num("mass", 1.0), radius)
+                    }
+                    "static" => crate::physics3d::BodyDesc::fixed(position, radius),
+                    other => {
+                        return McpResponse::error(
+                            id,
+                            -32602,
+                            &format!("Unknown body kind: {other}"),
+                        );
+                    }
+                };
+                let body = ctx.physics.add_body(desc);
+                McpResponse::success(id, serde_json::json!({"body": body.to_bits()}))
             }
             "scene_find_by_name" => {
                 let name_str = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -548,6 +601,46 @@ mod tests {
         };
         let _ = McpHandler::handle(&req, &mut ctx);
         assert_eq!(ctx.time.frame_count, 10);
+    }
+
+    #[cfg(feature = "physics")]
+    #[test]
+    fn physics_add_body_and_step_move_the_body() {
+        let mut ctx = EngineContext::new();
+        let call = |ctx: &mut EngineContext, name: &str, args: serde_json::Value| {
+            let req = McpRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(1),
+                method: "tools/call".to_string(),
+                params: serde_json::json!({"name": name, "arguments": args}),
+            };
+            McpHandler::handle(&req, ctx).expect("request with an id must produce a response")
+        };
+        assert!(tool_definitions()
+            .iter()
+            .any(|t| t.name == "physics_add_body"));
+        let resp = call(
+            &mut ctx,
+            "physics_add_body",
+            serde_json::json!({"y": 10.0, "mass": 2.0}),
+        );
+        let bits = resp.result.unwrap()["body"].as_u64().unwrap();
+        let body = crate::physics3d::BodyHandle::from_bits(bits);
+        assert_eq!(
+            ctx.physics.position(body),
+            Some(glam::Vec3::new(0.0, 10.0, 0.0))
+        );
+        let resp = call(&mut ctx, "physics_step", serde_json::json!({"frames": 60}));
+        assert_eq!(resp.result.unwrap()["fixed_steps"], 60);
+        // 1 s of free fall: v = -g
+        let v = ctx.physics.velocity(body).unwrap();
+        assert!((v.y + 9.81).abs() < 1e-3, "vy {}", v.y);
+        let bad = call(
+            &mut ctx,
+            "physics_add_body",
+            serde_json::json!({"kind": "ghost"}),
+        );
+        assert!(bad.error.is_some());
     }
 
     // -----------------------------------------------------------------------

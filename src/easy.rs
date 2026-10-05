@@ -241,11 +241,40 @@ impl Game {
         false // Headless mode has no input; windowed mode handles via AppCallbacks
     }
 
-    /// Adds a physics body at the given position and returns its index.
-    pub fn add_physics_body(&mut self, x: f32, y: f32, z: f32, mass: f32) -> usize {
-        let body = crate::physics3d::RigidBody::new(Vec3::new(x, y, z), mass);
-        let mut world = crate::physics3d::PhysicsWorld::new();
-        world.add_body(body)
+    /// Adds a dynamic physics body (collision radius 0.5 m) to this game's
+    /// physics world (`engine.context.physics`, advanced every frame) and
+    /// returns its handle (requires the `physics` feature).
+    #[cfg(feature = "physics")]
+    pub fn add_physics_body(
+        &mut self,
+        x: f32,
+        y: f32,
+        z: f32,
+        mass: f32,
+    ) -> crate::physics3d::BodyHandle {
+        self.engine
+            .context
+            .physics
+            .add_body(crate::physics3d::BodyDesc::dynamic(
+                glam::Vec3::new(x, y, z),
+                mass,
+                0.5,
+            ))
+    }
+
+    /// Position of a body added by [`Game::add_physics_body`] (requires the
+    /// `physics` feature).
+    #[cfg(feature = "physics")]
+    #[must_use]
+    pub fn physics_body_position(
+        &self,
+        body: crate::physics3d::BodyHandle,
+    ) -> Option<(f32, f32, f32)> {
+        self.engine
+            .context
+            .physics
+            .position(body)
+            .map(|p| (p.x, p.y, p.z))
     }
 
     /// Returns scene node count.
@@ -287,6 +316,28 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "physics")]
+    #[test]
+    fn physics_bodies_live_in_one_world_and_fall_with_the_frames() {
+        let mut game = GameBuilder::new("Test").build();
+        let a = game.add_physics_body(0.0, 10.0, 0.0, 1.0);
+        let b = game.add_physics_body(5.0, 10.0, 0.0, 2.0);
+        assert_ne!(a, b);
+        assert_eq!(game.engine.context.physics.body_count(), 2);
+        game.run_headless(60);
+        // 60 fixed steps of 1/60 s, S substeps: y = 10 - g h² K(K+1)/2, K = 60 S
+        let k = 60.0 * f64::from(game.engine.context.physics.config().substeps);
+        let h = 1.0 / k;
+        let expected = 10.0 - 9.81 * h * h * k * (k + 1.0) / 2.0;
+        for body in [a, b] {
+            let (_, y, _) = game.physics_body_position(body).unwrap();
+            assert!(
+                (f64::from(y) - expected).abs() < 1e-3,
+                "y {y} vs {expected}"
+            );
+        }
+    }
 
     #[test]
     fn game_builder() {

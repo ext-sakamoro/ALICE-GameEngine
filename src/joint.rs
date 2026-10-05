@@ -1,14 +1,25 @@
-//! Physics joints: distance, hinge, ball, spring constraints.
+//! Physics joints, solved by `alice_physics` through [`PhysicsWorld::add_joint`] (requires the
+//! `physics` feature). The engine keeps the description types; the constraint
+//! law lives in `alice_physics`.
+//!
+//! A [`Joint`] is read in world space against the two bodies' poses at the
+//! moment it is added, then held in the bodies' local frames (it turns with
+//! them).
 //!
 //! ```rust
-//! use alice_game_engine::joint::*;
+//! use alice_game_engine::joint::Joint;
+//! use alice_game_engine::physics3d::{BodyDesc, PhysicsWorld};
+//! use glam::Vec3;
 //!
-//! let joint = Joint::distance(0, 1, 5.0);
-//! assert_eq!(joint.body_a, 0);
+//! let mut world = PhysicsWorld::default();
+//! let a = world.add_body(BodyDesc::fixed(Vec3::ZERO, 0.0));
+//! let b = world.add_body(BodyDesc::dynamic(Vec3::new(5.0, 0.0, 0.0), 1.0, 0.0));
+//! let joint = world.add_joint(Joint::distance(a, b, 5.0));
+//! assert!(joint.is_some());
 //! ```
 
 use crate::math::Vec3;
-use crate::physics3d::PhysicsWorld;
+use crate::physics3d::{BodyHandle, JointHandle, PhysicsWorld};
 
 // ---------------------------------------------------------------------------
 // Joint types
@@ -17,8 +28,8 @@ use crate::physics3d::PhysicsWorld;
 /// Joint constraint between two bodies.
 #[derive(Debug, Clone)]
 pub struct Joint {
-    pub body_a: usize,
-    pub body_b: usize,
+    pub body_a: BodyHandle,
+    pub body_b: BodyHandle,
     pub kind: JointKind,
     pub active: bool,
 }
@@ -26,43 +37,45 @@ pub struct Joint {
 /// Joint variant.
 #[derive(Debug, Clone)]
 pub enum JointKind {
-    /// Fixed distance between two bodies.
+    /// Fixed distance between the two centres (a distance constraint).
     Distance { length: f32 },
-    /// Rotation around a single axis.
+    /// Rotation around a single axis: the pivot is body A's centre, body B
+    /// keeps its distance from it and turns only about `axis` (world space
+    /// at creation). The relative angle is limited to
+    /// `[min_angle, max_angle]` unless the range is the full `[-π, π]`.
     Hinge {
         axis: Vec3,
         min_angle: f32,
         max_angle: f32,
     },
-    /// Free rotation (3 DOF).
+    /// Free rotation (3 DOF): the points `centre_a + anchor_a` and
+    /// `centre_b + anchor_b` (world-space offsets at creation) are held
+    /// together.
     Ball { anchor_a: Vec3, anchor_b: Vec3 },
-    /// Spring with stiffness and damping.
+    /// Spring between the two centres: the force along the line is
+    /// `stiffness · (d - rest_length) + damping · ḋ` (N/m, N·s/m).
     Spring {
         rest_length: f32,
         stiffness: f32,
         damping: f32,
     },
-    /// Prismatic (1-axis slide). Body B is constrained to move along
-    /// `axis` (a unit vector in world space) relative to body A.
-    /// Perpendicular displacement is corrected back to zero each
-    /// iteration; the projected offset is clamped to
+    /// Prismatic (1-axis slide). Body B's centre is held on the line through
+    /// body A's centre along `axis` (world space at creation, then fixed in
+    /// A's frame); the offset along it is clamped to
     /// `[min_offset, max_offset]`.
     Slider {
         axis: Vec3,
         min_offset: f32,
         max_offset: f32,
     },
-    /// Weld constraint that holds the relative world-space offset
-    /// `B - A` at a fixed vector. Rigid attachment for assemblies and
-    /// glued parts.
+    /// Weld: holds `centre_b - centre_a == offset` (world space at creation,
+    /// then turning with A) and locks the relative rotation.
     Fixed { offset: Vec3 },
-    /// Cone-twist constraint (humanoid joint approximation). Constrains
-    /// body B's position relative to body A so that the displacement
-    /// vector stays within a cone whose axis is `twist_axis` and whose
-    /// half-angle is `swing_half_angle`. The `twist_half_angle` field
-    /// is reserved for the rotational twist limit, which the Verlet
-    /// solver records but does not enforce (position-based correction
-    /// cannot represent twist without orientation state).
+    /// Cone-twist (humanoid joint). The pivot is body A's centre and body B
+    /// keeps its distance from it. Body B may swing away from its pose at
+    /// creation by at most `swing_half_angle` (measured on `twist_axis`,
+    /// world space at creation) and twist about that axis by at most
+    /// `twist_half_angle`.
     ConeTwist {
         twist_axis: Vec3,
         swing_half_angle: f32,
@@ -72,7 +85,7 @@ pub enum JointKind {
 
 impl Joint {
     #[must_use]
-    pub const fn distance(body_a: usize, body_b: usize, length: f32) -> Self {
+    pub const fn distance(body_a: BodyHandle, body_b: BodyHandle, length: f32) -> Self {
         Self {
             body_a,
             body_b,
@@ -82,7 +95,7 @@ impl Joint {
     }
 
     #[must_use]
-    pub fn hinge(body_a: usize, body_b: usize, axis: Vec3) -> Self {
+    pub fn hinge(body_a: BodyHandle, body_b: BodyHandle, axis: Vec3) -> Self {
         Self {
             body_a,
             body_b,
@@ -96,7 +109,12 @@ impl Joint {
     }
 
     #[must_use]
-    pub const fn ball(body_a: usize, body_b: usize, anchor_a: Vec3, anchor_b: Vec3) -> Self {
+    pub const fn ball(
+        body_a: BodyHandle,
+        body_b: BodyHandle,
+        anchor_a: Vec3,
+        anchor_b: Vec3,
+    ) -> Self {
         Self {
             body_a,
             body_b,
@@ -107,8 +125,8 @@ impl Joint {
 
     #[must_use]
     pub const fn spring(
-        body_a: usize,
-        body_b: usize,
+        body_a: BodyHandle,
+        body_b: BodyHandle,
         rest_length: f32,
         stiffness: f32,
         damping: f32,
@@ -125,14 +143,12 @@ impl Joint {
         }
     }
 
-    /// Constructs a prismatic (1-axis slide) joint. `axis` should be a
-    /// unit vector in world space; the solver will reject perpendicular
-    /// motion and clamp the projected offset to `[min_offset,
-    /// max_offset]`.
+    /// Constructs a prismatic (1-axis slide) joint (see
+    /// [`JointKind::Slider`]).
     #[must_use]
     pub const fn slider(
-        body_a: usize,
-        body_b: usize,
+        body_a: BodyHandle,
+        body_b: BodyHandle,
         axis: Vec3,
         min_offset: f32,
         max_offset: f32,
@@ -149,11 +165,10 @@ impl Joint {
         }
     }
 
-    /// Constructs a weld (fixed) joint that keeps `B - A == offset`.
-    /// Capture the offset by reading the bodies' world positions at the
-    /// moment the assembly is created.
+    /// Constructs a weld (fixed) joint that keeps `B - A == offset` (see
+    /// [`JointKind::Fixed`]).
     #[must_use]
-    pub const fn fixed(body_a: usize, body_b: usize, offset: Vec3) -> Self {
+    pub const fn fixed(body_a: BodyHandle, body_b: BodyHandle, offset: Vec3) -> Self {
         Self {
             body_a,
             body_b,
@@ -162,15 +177,12 @@ impl Joint {
         }
     }
 
-    /// Constructs a cone-twist joint (humanoid hip / shoulder).
-    /// `twist_axis` is a unit vector in world space, `swing_half_angle`
-    /// is the cone's half-opening in radians. `twist_half_angle` is
-    /// stored but not enforced by the Verlet solver (see
-    /// [`JointKind::ConeTwist`] for the reason).
+    /// Constructs a cone-twist joint (humanoid hip / shoulder, see
+    /// [`JointKind::ConeTwist`]).
     #[must_use]
     pub const fn cone_twist(
-        body_a: usize,
-        body_b: usize,
+        body_a: BodyHandle,
+        body_b: BodyHandle,
         twist_axis: Vec3,
         swing_half_angle: f32,
         twist_half_angle: f32,
@@ -189,429 +201,226 @@ impl Joint {
 }
 
 // ---------------------------------------------------------------------------
-// Joint solver
-// ---------------------------------------------------------------------------
-
-/// Solves all joints against the physics world (position-based).
-///
-/// Single dispatch over seven `JointKind` variants — splitting each arm
-/// into a helper would add indirection without separating concerns,
-/// since every arm shares the same `world.bodies[a/b]` mutable access
-/// pattern.
-#[allow(clippy::too_many_lines)]
-pub fn solve_joints(world: &mut PhysicsWorld, joints: &[Joint], iterations: u32) {
-    for _ in 0..iterations {
-        for joint in joints {
-            if !joint.active {
-                continue;
-            }
-            let a = joint.body_a;
-            let b = joint.body_b;
-            if a >= world.bodies.len() || b >= world.bodies.len() {
-                continue;
-            }
-
-            match &joint.kind {
-                JointKind::Distance { length } => {
-                    let diff = world.bodies[b].position - world.bodies[a].position;
-                    let dist = diff.length();
-                    if dist < 1e-8 {
-                        continue;
-                    }
-                    let error = dist - length;
-                    let dir = diff * dist.recip();
-                    let correction = dir * (error * 0.5);
-
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].position = world.bodies[a].position + correction;
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].position = world.bodies[b].position - correction;
-                    }
-                }
-                JointKind::Spring {
-                    rest_length,
-                    stiffness,
-                    damping,
-                } => {
-                    let diff = world.bodies[b].position - world.bodies[a].position;
-                    let dist = diff.length();
-                    if dist < 1e-8 {
-                        continue;
-                    }
-                    let dir = diff * dist.recip();
-                    let displacement = dist - rest_length;
-                    let rel_vel = world.bodies[b].velocity - world.bodies[a].velocity;
-                    let vel_along = rel_vel.dot(dir);
-
-                    let force_mag = displacement.mul_add(*stiffness, vel_along * damping);
-                    let force = dir * force_mag;
-
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].apply_force(force);
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].apply_force(-force);
-                    }
-                }
-                JointKind::Ball { anchor_a, anchor_b } => {
-                    let world_a = world.bodies[a].position + *anchor_a;
-                    let world_b = world.bodies[b].position + *anchor_b;
-                    let diff = world_b - world_a;
-                    let correction = diff * 0.5;
-
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].position = world.bodies[a].position + correction;
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].position = world.bodies[b].position - correction;
-                    }
-                }
-                JointKind::Hinge { .. } => {
-                    // Simplified: distance constraint + axis alignment
-                    let diff = world.bodies[b].position - world.bodies[a].position;
-                    let dist = diff.length();
-                    if dist < 1e-8 {
-                        continue;
-                    }
-                    let target_dist = 1.0_f32; // default arm length
-                    let error = dist - target_dist;
-                    let dir = diff * dist.recip();
-                    let correction = dir * (error * 0.5);
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].position = world.bodies[a].position + correction;
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].position = world.bodies[b].position - correction;
-                    }
-                }
-                JointKind::Slider {
-                    axis,
-                    min_offset,
-                    max_offset,
-                } => {
-                    // 1. Project displacement onto axis; the perpendicular
-                    //    component is the error we must cancel.
-                    // 2. Clamp the projected scalar to [min, max]; any
-                    //    excess is the second error component along axis.
-                    let axis_norm = axis.length();
-                    if axis_norm < 1e-8 {
-                        continue;
-                    }
-                    let unit = *axis * axis_norm.recip();
-                    let diff = world.bodies[b].position - world.bodies[a].position;
-                    let projected = diff.dot(unit);
-                    let along = unit * projected;
-                    let perpendicular = diff - along;
-
-                    let clamped = projected.clamp(*min_offset, *max_offset);
-                    let along_error = unit * (projected - clamped);
-                    let total_error = perpendicular + along_error;
-                    let correction = total_error * 0.5;
-
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].position = world.bodies[a].position + correction;
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].position = world.bodies[b].position - correction;
-                    }
-                }
-                JointKind::Fixed { offset } => {
-                    // Weld: force `B - A == offset`. Half the error to
-                    // each body so the constraint is symmetric, matching
-                    // the Distance / Ball arms above.
-                    let diff = world.bodies[b].position - world.bodies[a].position;
-                    let error = diff - *offset;
-                    let correction = error * 0.5;
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].position = world.bodies[a].position + correction;
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].position = world.bodies[b].position - correction;
-                    }
-                }
-                JointKind::ConeTwist {
-                    twist_axis,
-                    swing_half_angle,
-                    twist_half_angle: _,
-                } => {
-                    // Position-based swing clamp. We do not enforce the
-                    // twist limit because the Verlet body has no
-                    // orientation state attached to the constraint.
-                    let axis_norm = twist_axis.length();
-                    if axis_norm < 1e-8 {
-                        continue;
-                    }
-                    let unit = *twist_axis * axis_norm.recip();
-                    let diff = world.bodies[b].position - world.bodies[a].position;
-                    let dist = diff.length();
-                    if dist < 1e-8 {
-                        continue;
-                    }
-                    let dir = diff * dist.recip();
-                    let cos_angle = dir.dot(unit).clamp(-1.0, 1.0);
-                    let max_cos = swing_half_angle.cos();
-                    if cos_angle >= max_cos {
-                        // Inside the cone — no correction needed.
-                        continue;
-                    }
-                    // Project `dir` onto the cone surface: keep the
-                    // tangential direction, reduce the radial deviation.
-                    let along_axis = unit * cos_angle;
-                    let tangent = (dir - along_axis).normalize();
-                    let sin_max = swing_half_angle.sin();
-                    let target_dir = unit * max_cos + tangent * sin_max;
-                    let target_pos = world.bodies[a].position + target_dir * dist;
-                    let correction = (target_pos - world.bodies[b].position) * 0.5;
-
-                    if !world.bodies[a].is_static {
-                        world.bodies[a].position = world.bodies[a].position - correction;
-                    }
-                    if !world.bodies[b].is_static {
-                        world.bodies[b].position = world.bodies[b].position + correction;
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Ragdoll builder
 // ---------------------------------------------------------------------------
 
-/// Ragdoll definition: maps skeleton bones to physics bodies + joints.
+/// Ragdoll built by [`build_ragdoll`].
 #[derive(Debug, Clone)]
 pub struct RagdollDef {
-    pub bone_to_body: Vec<(String, usize)>,
-    pub joints: Vec<Joint>,
+    /// Bone name → body.
+    pub bone_to_body: Vec<(String, BodyHandle)>,
+    /// Joints created between consecutive bones.
+    pub joints: Vec<JointHandle>,
 }
 
-/// Creates a simple ragdoll from a skeleton (one body per bone, ball joints).
-#[must_use]
+/// Create one dynamic body per bone (5 kg, collision radius 0.1 m) and a
+/// ball joint between each bone and the previous one. The joint's pivot is
+/// the previous bone's position, so consecutive bones keep their distance.
 pub fn build_ragdoll(skeleton_bones: &[(String, Vec3)], world: &mut PhysicsWorld) -> RagdollDef {
-    let mut bone_to_body = Vec::new();
+    let mut bone_to_body: Vec<(String, BodyHandle)> = Vec::with_capacity(skeleton_bones.len());
     let mut joints = Vec::new();
-
-    for (i, (name, pos)) in skeleton_bones.iter().enumerate() {
-        let body_idx = world.add_body(crate::physics3d::RigidBody::new(*pos, 5.0));
-        bone_to_body.push((name.clone(), body_idx));
-
-        if i > 0 {
-            let parent_body = bone_to_body[i - 1].1;
-            joints.push(Joint::ball(parent_body, body_idx, Vec3::ZERO, Vec3::ZERO));
+    let mut previous: Option<(BodyHandle, Vec3)> = None;
+    for (name, pos) in skeleton_bones {
+        let body = world.add_body(crate::physics3d::BodyDesc::dynamic(pos.0, 5.0, 0.1));
+        if let Some((parent, parent_pos)) = previous {
+            let joint = Joint::ball(parent, body, Vec3::ZERO, parent_pos - *pos);
+            if let Some(handle) = world.add_joint(joint) {
+                joints.push(handle);
+            }
         }
+        bone_to_body.push((name.clone(), body));
+        previous = Some((body, *pos));
     }
-
     RagdollDef {
         bone_to_body,
         joints,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physics3d::*;
+    use crate::physics3d::{BodyDesc, PhysicsConfig};
+    use glam::Vec3 as G;
 
-    #[test]
-    fn distance_joint() {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        world.add_body(RigidBody::new(Vec3::ZERO, 1.0));
-        world.add_body(RigidBody::new(Vec3::new(10.0, 0.0, 0.0), 1.0));
-        let joint = Joint::distance(0, 1, 5.0);
-        solve_joints(&mut world, &[joint], 10);
-        let dist = (world.bodies[1].position - world.bodies[0].position).length();
-        assert!((dist - 5.0).abs() < 0.5);
+    fn world(gravity: G) -> PhysicsWorld {
+        PhysicsWorld::new(PhysicsConfig {
+            gravity,
+            ..PhysicsConfig::default()
+        })
+    }
+
+    fn v(x: f32, y: f32, z: f32) -> Vec3 {
+        Vec3::new(x, y, z)
+    }
+
+    fn run(w: &mut PhysicsWorld, steps: u32) {
+        for _ in 0..steps {
+            w.step_fixed();
+        }
     }
 
     #[test]
-    fn spring_joint() {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let b = world.add_body(RigidBody::new(Vec3::new(3.0, 0.0, 0.0), 1.0));
-        let joint = Joint::spring(a, b, 1.0, 50.0, 5.0);
-        solve_joints(&mut world, &[joint], 1);
-        // Spring should pull body b toward rest length
-        // Force applied, check it's non-zero
-        assert!(world.bodies[b].velocity.length() > 0.0 || true); // force applied to accumulator
+    fn constructors_set_kind_and_active() {
+        let mut w = world(G::ZERO);
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::X, 1.0, 0.0));
+        assert!(matches!(
+            Joint::hinge(a, b, Vec3::Y).kind,
+            JointKind::Hinge { .. }
+        ));
+        assert!(Joint::distance(a, b, 1.0).active);
     }
 
     #[test]
-    fn ball_joint() {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        world.add_body(RigidBody::new(Vec3::ZERO, 1.0));
-        world.add_body(RigidBody::new(Vec3::new(2.0, 0.0, 0.0), 1.0));
-        let joint = Joint::ball(0, 1, Vec3::new(1.0, 0.0, 0.0), Vec3::new(-1.0, 0.0, 0.0));
-        solve_joints(&mut world, &[joint], 10);
+    fn distance_joint_pulls_the_centres_to_the_length() {
+        let mut w = world(G::ZERO);
+        let a = w.add_body(BodyDesc::dynamic(G::ZERO, 1.0, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(10.0, 0.0, 0.0), 1.0, 0.0));
+        assert!(w.add_joint(Joint::distance(a, b, 5.0)).is_some());
+        run(&mut w, 30);
+        let d = w.position(b).unwrap() - w.position(a).unwrap();
+        assert!((d.length() - 5.0).abs() < 1e-3, "distance {}", d.length());
+        // equal masses: the midpoint stays at x = 5
+        let mid = (w.position(a).unwrap() + w.position(b).unwrap()) * 0.5;
+        assert!((mid.x - 5.0).abs() < 1e-3);
     }
 
     #[test]
-    fn hinge_joint() {
-        let joint = Joint::hinge(0, 1, Vec3::Y);
-        assert!(matches!(joint.kind, JointKind::Hinge { .. }));
+    fn inactive_joint_constrains_nothing() {
+        let mut w = world(G::ZERO);
+        let a = w.add_body(BodyDesc::dynamic(G::ZERO, 1.0, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(10.0, 0.0, 0.0), 1.0, 0.0));
+        let mut j = Joint::distance(a, b, 5.0);
+        j.active = false;
+        let h = w.add_joint(j).unwrap();
+        assert!(w.contains_joint(h));
+        run(&mut w, 30);
+        assert_eq!(w.position(b), Some(G::new(10.0, 0.0, 0.0)));
     }
 
     #[test]
-    fn ragdoll_build() {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let bones = vec![
-            ("hip".to_string(), Vec3::new(0.0, 1.0, 0.0)),
-            ("spine".to_string(), Vec3::new(0.0, 1.3, 0.0)),
-            ("head".to_string(), Vec3::new(0.0, 1.7, 0.0)),
-        ];
-        let ragdoll = build_ragdoll(&bones, &mut world);
-        assert_eq!(ragdoll.bone_to_body.len(), 3);
-        assert_eq!(ragdoll.joints.len(), 2);
+    fn spring_oscillates_about_the_static_extension() {
+        // Undamped: the time average of y over many periods is the equilibrium
+        // -1 - m g / k = -1.0981 (period 2π/√(k/m) ≈ 0.63 s, 100 s averaged).
+        let mut w = world(G::new(0.0, -9.81, 0.0));
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(0.0, -1.0, 0.0), 1.0, 0.0));
+        w.add_joint(Joint::spring(a, b, 1.0, 100.0, 0.0)).unwrap();
+        let steps = 6000;
+        let mut sum = 0.0_f64;
+        for _ in 0..steps {
+            w.step_fixed();
+            sum += f64::from(w.position(b).unwrap().y);
+        }
+        let mean = sum / f64::from(steps);
+        assert!((mean + 1.0981).abs() < 2e-3, "mean y {mean}");
     }
 
     #[test]
-    fn joint_inactive() {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        world.add_body(RigidBody::new(Vec3::ZERO, 1.0));
-        world.add_body(RigidBody::new(Vec3::new(10.0, 0.0, 0.0), 1.0));
-        let mut joint = Joint::distance(0, 1, 1.0);
-        joint.active = false;
-        let before = world.bodies[1].position;
-        solve_joints(&mut world, &[joint], 10);
-        assert_eq!(world.bodies[1].position, before);
+    fn ball_joint_holds_the_anchors_together_under_gravity() {
+        // pendulum: pivot at the static body, arm 2 m
+        let mut w = world(G::new(0.0, -9.81, 0.0));
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(2.0, 0.0, 0.0), 1.0, 0.0));
+        w.add_joint(Joint::ball(a, b, Vec3::ZERO, v(-2.0, 0.0, 0.0)))
+            .unwrap();
+        let mut lowest = 0.0_f32;
+        for _ in 0..120 {
+            w.step_fixed();
+            let p = w.position(b).unwrap();
+            assert!((p.length() - 2.0).abs() < 1e-2, "arm {p:?}");
+            lowest = lowest.min(p.y);
+        }
+        // it passes the bottom of the circle
+        assert!(lowest < -1.95, "lowest {lowest}");
     }
 
     #[test]
-    fn joint_constructors() {
-        let _ = Joint::distance(0, 1, 5.0);
-        let _ = Joint::hinge(0, 1, Vec3::Y);
-        let _ = Joint::ball(0, 1, Vec3::ZERO, Vec3::ZERO);
-        let _ = Joint::spring(0, 1, 2.0, 100.0, 10.0);
-        let _ = Joint::slider(0, 1, Vec3::X, -1.0, 1.0);
-        let _ = Joint::fixed(0, 1, Vec3::new(1.0, 0.0, 0.0));
-        let _ = Joint::cone_twist(0, 1, Vec3::Y, 0.5, 0.3);
+    fn hinge_keeps_the_body_in_the_plane_normal_to_the_axis() {
+        let mut w = world(G::new(0.0, -9.81, -3.0));
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(1.5, 0.0, 0.0), 1.0, 0.0));
+        w.add_joint(Joint::hinge(a, b, Vec3::Z)).unwrap();
+        run(&mut w, 120);
+        let p = w.position(b).unwrap();
+        assert!(p.z.abs() < 1e-2, "out of plane {p:?}");
+        assert!((p.length() - 1.5).abs() < 1e-2, "arm {p:?}");
+        assert!(p.y < -0.5);
     }
 
     #[test]
-    fn slider_locks_perpendicular_to_axis() {
-        // Body B sits perpendicular to the X axis; the solver must pull
-        // it back onto the axis line.
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let b = world.add_body(RigidBody::new(Vec3::new(0.5, 1.0, 0.0), 1.0));
-        let joint = Joint::slider(a, b, Vec3::X, -2.0, 2.0);
-        solve_joints(&mut world, &[joint], 20);
-        // Y component should have collapsed onto the axis.
-        assert!(world.bodies[b].position.y().abs() < 0.05);
+    fn slider_keeps_the_body_on_the_axis_and_clamps_the_offset() {
+        let mut w = world(G::new(0.0, -9.81, 0.0));
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(1.0, 0.0, 0.0), 1.0, 0.0));
+        w.add_joint(Joint::slider(a, b, Vec3::X, 0.0, 2.0)).unwrap();
+        w.set_velocity(b, G::new(5.0, 0.0, 0.0));
+        run(&mut w, 120);
+        let p = w.position(b).unwrap();
+        assert!(p.y.abs() < 1e-2 && p.z.abs() < 1e-2, "off axis {p:?}");
+        assert!(p.x <= 2.0 + 1e-2, "past the limit {p:?}");
     }
 
     #[test]
-    fn slider_clamps_min_max_offset() {
-        // B starts 5 units along the axis but max_offset is 1.
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let b = world.add_body(RigidBody::new(Vec3::new(5.0, 0.0, 0.0), 1.0));
-        let joint = Joint::slider(a, b, Vec3::X, -1.0, 1.0);
-        solve_joints(&mut world, &[joint], 20);
-        // Projected scalar should be within [-1, 1].
-        let projected = world.bodies[b].position.x();
-        assert!(projected <= 1.01, "expected <= 1.0, got {projected}");
-        assert!(projected >= -1.01);
+    fn fixed_joint_holds_the_offset_under_gravity() {
+        let mut w = world(G::new(0.0, -9.81, 0.0));
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(1.0, 1.0, 0.0), 1.0, 0.0));
+        w.add_joint(Joint::fixed(a, b, v(1.0, 1.0, 0.0))).unwrap();
+        run(&mut w, 120);
+        assert!((w.position(b).unwrap() - G::new(1.0, 1.0, 0.0)).length() < 1e-2);
     }
 
     #[test]
-    fn fixed_keeps_relative_position() {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let b = world.add_body(RigidBody::new(Vec3::new(2.0, 1.0, 0.0), 1.0));
-        let joint = Joint::fixed(a, b, Vec3::new(1.0, 0.0, 0.0));
-        solve_joints(&mut world, &[joint], 20);
-        let diff = world.bodies[b].position - world.bodies[a].position;
-        assert!((diff.x() - 1.0).abs() < 0.01, "diff.x = {}", diff.x());
-        assert!(diff.y().abs() < 0.01, "diff.y = {}", diff.y());
-        assert!(diff.z().abs() < 0.01, "diff.z = {}", diff.z());
-    }
-
-    #[test]
-    fn cone_twist_swing_within_limit_no_correction() {
-        // 10° displacement, 45° cone limit → no correction.
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let angle = 10.0_f32.to_radians();
-        let dir = Vec3::new(angle.sin(), angle.cos(), 0.0);
-        let b = world.add_body(RigidBody::new(dir, 1.0));
-        let before = world.bodies[b].position;
-        let joint = Joint::cone_twist(a, b, Vec3::Y, 45.0_f32.to_radians(), 0.5);
-        solve_joints(&mut world, &[joint], 5);
-        let delta = (world.bodies[b].position - before).length();
-        assert!(delta < 1e-4, "should not have moved, but delta = {delta}");
-    }
-
-    #[test]
-    fn cone_twist_swing_limit_clamps_to_cone() {
-        // 80° displacement, 30° cone limit → body should be pushed back
-        // onto the cone surface.
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let start_angle = 80.0_f32.to_radians();
-        let start = Vec3::new(start_angle.sin(), start_angle.cos(), 0.0);
-        let b = world.add_body(RigidBody::new(start, 1.0));
-        let cone_limit = 30.0_f32.to_radians();
-        let joint = Joint::cone_twist(a, b, Vec3::Y, cone_limit, 0.5);
-        solve_joints(&mut world, &[joint], 30);
-        let dir = world.bodies[b].position.normalize();
-        let cos_angle = dir.dot(Vec3::Y);
-        let resulting_angle = cos_angle.acos();
-        // Allow a small tolerance for the iterative half-correction.
+    fn cone_twist_limits_the_swing() {
+        // hanging along -Y, pushed sideways: the swing stays within 30°
+        let mut w = world(G::ZERO);
+        let a = w.add_body(BodyDesc::fixed(G::ZERO, 0.0));
+        let b = w.add_body(BodyDesc::dynamic(G::new(0.0, -1.0, 0.0), 1.0, 0.0));
+        let swing = 30_f32.to_radians();
+        w.add_joint(Joint::cone_twist(a, b, v(0.0, -1.0, 0.0), swing, 0.5))
+            .unwrap();
+        w.set_velocity(b, G::new(4.0, 0.0, 0.0));
+        let mut widest = 0.0_f32;
+        for _ in 0..120 {
+            w.step_fixed();
+            let p = w.position(b).unwrap();
+            widest = widest.max(p.normalize().dot(G::NEG_Y).clamp(-1.0, 1.0).acos());
+            assert!((p.length() - 1.0).abs() < 2e-2, "arm {p:?}");
+        }
         assert!(
-            resulting_angle <= cone_limit + 0.1,
-            "expected <= {cone_limit} rad, got {resulting_angle} rad",
+            widest <= swing + 0.05,
+            "swing {} > {}",
+            widest.to_degrees(),
+            swing.to_degrees()
+        );
+        assert!(
+            widest > swing * 0.5,
+            "it did swing ({})",
+            widest.to_degrees()
         );
     }
 
     #[test]
-    fn existing_distance_constraint_still_works() {
-        // Smoke test: the original arms must continue to converge after
-        // the enum was extended.
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        world.add_body(RigidBody::new(Vec3::ZERO, 1.0));
-        world.add_body(RigidBody::new(Vec3::new(8.0, 0.0, 0.0), 1.0));
-        let joint = Joint::distance(0, 1, 3.0);
-        solve_joints(&mut world, &[joint], 30);
-        let dist = (world.bodies[1].position - world.bodies[0].position).length();
-        assert!((dist - 3.0).abs() < 0.5);
-    }
-
-    #[test]
-    fn solve_handles_mixed_joint_types() {
-        // Mix Distance + Slider + Fixed + ConeTwist in one solver call
-        // and confirm the iteration completes without panicking.
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vec3::ZERO;
-        let a = world.add_body(RigidBody::new_static(Vec3::ZERO));
-        let b = world.add_body(RigidBody::new(Vec3::new(1.0, 0.0, 0.0), 1.0));
-        let c = world.add_body(RigidBody::new(Vec3::new(2.0, 0.5, 0.0), 1.0));
-        let d = world.add_body(RigidBody::new(Vec3::new(0.0, 2.0, 0.0), 1.0));
-
-        let joints = vec![
-            Joint::distance(a, b, 1.0),
-            Joint::slider(b, c, Vec3::X, 0.0, 2.0),
-            Joint::fixed(a, d, Vec3::new(0.0, 2.0, 0.0)),
-            Joint::cone_twist(a, b, Vec3::Y, 45.0_f32.to_radians(), 0.5),
+    fn ragdoll_has_one_body_per_bone_and_keeps_bone_lengths() {
+        let mut w = world(G::new(0.0, -9.81, 0.0));
+        let bones = vec![
+            ("hip".to_string(), v(0.0, 1.0, 0.0)),
+            ("knee".to_string(), v(0.0, 0.5, 0.0)),
+            ("ankle".to_string(), v(0.0, 0.1, 0.0)),
         ];
-        solve_joints(&mut world, &joints, 10);
-        // After solving the static body must not have moved.
-        assert_eq!(world.bodies[a].position, Vec3::ZERO);
+        let doll = build_ragdoll(&bones, &mut w);
+        assert_eq!(doll.bone_to_body.len(), 3);
+        assert_eq!(doll.joints.len(), 2);
+        assert_eq!(doll.bone_to_body[1].0, "knee");
+        assert!(doll.joints.iter().all(|&j| w.contains_joint(j)));
+        let body = |i: usize| doll.bone_to_body[i].1;
+        w.apply_impulse(body(2), G::new(3.0, 0.0, 0.0));
+        run(&mut w, 30);
+        let d01 = (w.position(body(0)).unwrap() - w.position(body(1)).unwrap()).length();
+        let d12 = (w.position(body(1)).unwrap() - w.position(body(2)).unwrap()).length();
+        assert!((d01 - 0.5).abs() < 1e-2, "{d01}");
+        assert!((d12 - 0.4).abs() < 1e-2, "{d12}");
     }
 }

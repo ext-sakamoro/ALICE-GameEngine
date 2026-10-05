@@ -31,12 +31,19 @@ audio_output = ["audio", "cpal"]
 network_udp = ["tokio"]
 editor_server = ["axum", "tokio", "tokio/macros", "tokio/rt-multi-thread"]
 full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
+# Rigid-body physics delegated to ALICE-Physics (physics3d / collision / joint).
+# ALICE-Physics is AGPL-3.0-or-later OR LicenseRef-Commercial: enabling this
+# feature makes a distributed build subject to those terms. Kept out of `full`.
+physics = ["dep:alice-physics"]
 
 [dependencies]
 glam = { version = "0.29", features = ["serde"] }
 # SDF law の単一 source (primitive / smooth op の距離関数を委譲、独自コピーを持たない)
 alice-sdf = { version = "1.9.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
+# Physics law source (optional, see the `physics` feature). Pinned by rev until a
+# release that contains the APIs used here is published.
+alice-physics = { git = "https://github.com/ext-sakamoro/ALICE-Physics.git", rev = "51b34e4dbfef88b7510728e7befdb08f88f5f536", default-features = false, features = ["std"], optional = true }
 serde_json = "1.0"
 log = "0.4"
 rayon = "1.10"
@@ -81,7 +88,7 @@ required-features = ["full"]
 
 [[example]]
 name = "physics_sandbox"
-required-features = ["full"]
+required-features = ["physics"]
 
 [[example]]
 name = "npc_chat"
@@ -121,6 +128,22 @@ path = "templates/job_system_demo.rs"
 [[example]]
 name = "constraint_demo"
 path = "templates/constraint_demo.rs"
+required-features = ["physics"]
+
+[[example]]
+name = "fps"
+path = "templates/fps.rs"
+required-features = ["physics"]
+
+[[example]]
+name = "racing"
+path = "templates/racing.rs"
+required-features = ["physics"]
+
+[[example]]
+name = "sandbox"
+path = "templates/sandbox.rs"
+required-features = ["physics"]
 
 [[example]]
 name = "light_culling_demo"

@@ -27,5 +27,6 @@ pub use crate::jobs::{JobArgs, JobContext};
 #[cfg(feature = "gpu")]
 pub use crate::light_culling::{LightCullingConfig, TileLightList, TiledLightCuller};
 pub use crate::ocean::{OceanConfig, OceanFrame, OceanSimulator};
-pub use crate::physics3d::{PhysicsWorld, RigidBody};
+#[cfg(feature = "physics")]
+pub use crate::physics3d::{BodyDesc, BodyHandle, PhysicsWorld};
 pub use crate::scripting::{Event, EventBus};
