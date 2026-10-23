@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 依存: `alice-physics` の git 依存 (rev `51b34e4`) に `version = "1.5"` を書いた (その rev の版は 1.5.0) version の無い git 依存は publish する crate で版に置き換えられず、固定した commit の版とも比べられない 解決される commit は変わらない
+
 ### Changed — breaking: rigid-body physics delegated to ALICE-Physics (`physics` feature)
 
 - **Breaking:** `physics3d` / `collision` / `joint` moved behind the new

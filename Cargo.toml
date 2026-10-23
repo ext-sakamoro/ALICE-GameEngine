@@ -43,7 +43,7 @@ alice-sdf = { version = "1.9.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 # Physics law source (optional, see the `physics` feature). Pinned by rev until a
 # release that contains the APIs used here is published.
-alice-physics = { git = "https://github.com/ext-sakamoro/ALICE-Physics.git", rev = "51b34e4dbfef88b7510728e7befdb08f88f5f536", default-features = false, features = ["std"], optional = true }
+alice-physics = { git = "https://github.com/ext-sakamoro/ALICE-Physics.git", rev = "51b34e4dbfef88b7510728e7befdb08f88f5f536", version = "1.5", default-features = false, features = ["std"], optional = true }
 serde_json = "1.0"
 log = "0.4"
 rayon = "1.10"
