@@ -6,6 +6,7 @@
 
 - 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `3c7367f`、7.0.0) に変更
 - 依存: `alice-physics` の git 依存を rev `391971e6` (4.0.0) に変更
+- CI: `physics` feature の clippy と test を ubuntu で実行する job を追加 (test は binary ごとの最小件数 lib 1044 / physics_hub_analytic 23 / physics_hub_degenerate 10 を `scripts/min_passed.py` で検査)、preflight にも同じ step を追加
 
 ### Fixed
 

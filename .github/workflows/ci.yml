@@ -38,6 +38,21 @@ jobs:
       - name: Doc-tests
         run: cargo test --doc --features full
 
+  physics:
+    name: physics feature (ALICE-Physics)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy (physics)
+        run: cargo clippy --features physics -- -W clippy::all
+      - name: Test (physics)
+        run: |
+          set -o pipefail
+          cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10
+
   mobile-build:
     name: mobile build smoke (iOS + Android cargo check)
     runs-on: macos-latest

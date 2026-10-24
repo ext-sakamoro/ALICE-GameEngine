@@ -37,6 +37,10 @@ relint
 step "ci.yml / test: Doc check (RUSTDOCFLAGS=-Dwarnings)"
 ( export CARGO_TERM_COLOR="always" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --features full )
 
+step "ci.yml / physics: Clippy (physics)"
+relint
+( export CARGO_TERM_COLOR="always"; cargo clippy --features physics -- -W clippy::all )
+
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
 rustup target list --installed | grep -q '^aarch64-apple-ios$' || rustup target add aarch64-apple-ios
 ( export CARGO_TERM_COLOR="always"; cargo check --target aarch64-apple-ios --no-default-features )
@@ -57,6 +61,13 @@ step "ci.yml / test: Test (default features)"
 
 step "ci.yml / test: Test (full features)"
 ( export CARGO_TERM_COLOR="always"; cargo test --features full )
+
+step "ci.yml / physics: Test (physics)"
+(
+  export CARGO_TERM_COLOR="always"
+  set -o pipefail
+  cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10
+)
 
 step "ci.yml / test: Doc-tests"
 ( export CARGO_TERM_COLOR="always"; cargo test --doc --features full )
