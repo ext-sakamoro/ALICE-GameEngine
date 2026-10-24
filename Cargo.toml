@@ -1,8 +1,9 @@
 [package]
 name = "alice-game-engine"
+publish = false
 version = "0.6.0"
 edition = "2021"
-license = "MIT OR LicenseRef-Commercial"
+license = "LicenseRef-Proprietary"
 description = "Hybrid mesh+SDF game engine — ECS, deferred renderer, spatial audio, UI, particles, navmesh"
 repository = "https://github.com/ext-sakamoro/ALICE-GameEngine"
 authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]

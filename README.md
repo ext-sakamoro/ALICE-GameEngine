@@ -1200,9 +1200,6 @@ integration sketches in `templates/multiplayer_battle.rs`).
 
 ## License
 
-Dual licensed under **MIT** and **Commercial**.
+`LicenseRef-Proprietary`. The text is [LICENSE-Proprietary](LICENSE-Proprietary).
 
-- **MIT** — Free for open source and commercial use under $100K/year with attribution. See [LICENSE](LICENSE).
-- **Commercial** — Required for proprietary SaaS or high-revenue products. See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL).
-
-Contact: sakamoro@alicelaw.net
+Enquiries: https://extoria.co.jp/

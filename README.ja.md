@@ -517,9 +517,6 @@ trait は engine 側に定義のみ、adapter 実装は下流クレートに置�
 
 ## ライセンス
 
-**MIT** と **Commercial** のデュアルライセンス。
+`LicenseRef-Proprietary` 条文は [LICENSE-Proprietary](LICENSE-Proprietary)
 
-- **MIT** — オープンソースおよび年間$100K未満の商用利用はアトリビューション付きで無料。[LICENSE](LICENSE) 参照。
-- **Commercial** — プロプライエタリSaaSまたは高収益製品には商用ライセンスが必要。[LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) 参照。
-
-お問い合わせ: sakamoro@alicelaw.net
+Enquiries: https://extoria.co.jp/
