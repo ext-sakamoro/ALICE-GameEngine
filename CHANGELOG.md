@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed — dependencies
+
+- 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `3c7367f`、7.0.0) に変更
+- 依存: `alice-physics` の git 依存を rev `391971e6` (4.0.0) に変更
+
 ### Fixed
 
 - 依存: `alice-physics` の git 依存 (rev `51b34e4`) に `version = "1.5"` を書いた (その rev の版は 1.5.0) version の無い git 依存は publish する crate で版に置き換えられず、固定した commit の版とも比べられない 解決される commit は変わらない
