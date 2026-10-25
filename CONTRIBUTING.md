@@ -24,4 +24,4 @@ cargo fmt -- --check
 
 ## License
 
-Dual license: MIT OR Commercial.
+LicenseRef-Proprietary (see `LICENSE-Proprietary`).

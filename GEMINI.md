@@ -25,7 +25,7 @@ game.run_headless(300);
 
 Core: `ecs` (SoA), `scene_graph` (mesh+SDF), `math`, `engine`
 Rendering: `renderer`, `gpu`, `shader`, `texture`, `lod`
-Physics (`physics` feature, delegates to ALICE-Physics, AGPL-3.0-or-later OR commercial): `physics3d` (handle-based world, fixed step, SDF CCD), `joint`, `collision` (GJK / EPA)
+Physics (`physics` feature, delegates to ALICE-Physics): `physics3d` (handle-based world, fixed step, SDF CCD), `joint`, `collision` (GJK / EPA)
 Audio: `audio` (HRTF, bus, PCM, spatial)
 Gameplay: `ability` (GAS), `animation`, `navmesh`, `scripting`, `llm` (NPC AI), `verse` (UE6)
 2D: `scene2d` (Sprite, TileMap)

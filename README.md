@@ -543,8 +543,7 @@ let visible = scene.frustum_cull(&frustum);
 
 Rigid-body physics is delegated to [ALICE-Physics](https://github.com/ext-sakamoro/ALICE-Physics)
 (deterministic 128-bit fixed point). It is behind the `physics` feature, which
-is not part of `full`: ALICE-Physics is `AGPL-3.0-or-later OR LicenseRef-Commercial`,
-so a distributed build with this feature is subject to those terms.
+is not part of `full`.
 
 ```rust
 use alice_game_engine::physics3d::{BodyDesc, PhysicsConfig, PhysicsWorld};

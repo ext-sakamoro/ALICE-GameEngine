@@ -33,8 +33,7 @@ network_udp = ["tokio"]
 editor_server = ["axum", "tokio", "tokio/macros", "tokio/rt-multi-thread"]
 full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
 # Rigid-body physics delegated to ALICE-Physics (physics3d / collision / joint).
-# ALICE-Physics is AGPL-3.0-or-later OR LicenseRef-Commercial: enabling this
-# feature makes a distributed build subject to those terms. Kept out of `full`.
+# Kept out of `full`.
 physics = ["dep:alice-physics"]
 
 [dependencies]
