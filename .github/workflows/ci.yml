@@ -60,6 +60,21 @@ jobs:
           set -o pipefail
           cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10 vrm_reader=10 vrm0_reader=8 vrm_node_matrix=6
 
+  lol-measure:
+    name: lol-measure feature (alice-lol-humanoid rig)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy (lol-measure)
+        run: cargo clippy --features lol-measure --all-targets -- -W clippy::all
+      - name: Test (lol-measure)
+        run: |
+          set -o pipefail
+          cargo test --features lol-measure --test vrm_measure 2>&1 | python3 scripts/min_passed.py vrm_measure=4
+
   each-feature:
     name: each feature builds on its own
     runs-on: ubuntu-latest

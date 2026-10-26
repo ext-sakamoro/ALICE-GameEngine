@@ -137,6 +137,8 @@ pub mod virtual_shadow;
 pub mod volumetric_clouds;
 pub mod vrm;
 pub mod vrm0;
+#[cfg(feature = "lol-measure")]
+pub mod vrm_measure;
 pub mod vrm_pose;
 pub mod vrm_render;
 

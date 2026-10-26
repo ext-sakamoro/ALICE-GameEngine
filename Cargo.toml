@@ -35,8 +35,11 @@ full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
 # Rigid-body physics delegated to ALICE-Physics (physics3d / collision / joint).
 # Kept out of `full`.
 physics = ["dep:alice-physics"]
+# Measure a VRM body in the units of the proportion laws (alice-lol-humanoid's rig)
+lol-measure = ["dep:alice-lol-humanoid"]
 
 [dependencies]
+alice-lol-humanoid = { git = "https://github.com/ext-sakamoro/ALICE-LOL", rev = "f204e14f0859f316e85adaaf3c50c5b86d050ff1", version = "0.1.0", optional = true }
 glam = { version = "0.29", features = ["serde"] }
 # SDF law の単一 source (primitive / smooth op の距離関数を委譲、独自コピーを持たない)
 alice-sdf = { git = "https://github.com/ext-sakamoro/ALICE-SDF", rev = "3c7367f09ec50881cd698545aae56700458fc15b", version = "7.0.0", default-features = false }
