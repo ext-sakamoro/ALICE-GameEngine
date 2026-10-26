@@ -27,6 +27,12 @@ jobs:
         run: cargo clippy -- -W clippy::all
       - name: Clippy (full features)
         run: cargo clippy --features full -- -W clippy::all
+      # the VRM fixture is the bytes scripts/vrm_fixture.py writes from the specifications
+      - name: VRM fixture (independent writer)
+        shell: bash
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" scripts/vrm_fixture.py --check
       - name: Test (default features)
         run: cargo test
       - name: Test (full features)

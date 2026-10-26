@@ -202,7 +202,8 @@ pub struct GltfHeader {
 }
 
 /// VRM 1.0 / 1.1 header fields parsed from a `.vrm` GLB container's
-/// `VRMC_vrm` JSON extension. Scaffold — only spec/meta is decoded.
+/// `VRMC_vrm` JSON extension (spec version, name, first author); the whole file is read by
+/// [`crate::vrm::read_vrm`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VrmHeader {
     pub spec_version: String,
@@ -211,25 +212,18 @@ pub struct VrmHeader {
 }
 
 /// Try to extract a VRM 1.x header from a JSON chunk.
+///
+/// Read through [`crate::vrm::read_vrm_json`]: `None` when that refuses the chunk (not VRM 1.x,
+/// a VRM 0.x file, or a meta field the specification requires is absent or out of its set).
+/// `author` is the first of the authors; the meta with every licence field is
+/// [`crate::vrm::VrmMeta`].
 #[must_use]
 pub fn parse_vrm_json(json: &str) -> Option<VrmHeader> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let vrm = v.get("extensions")?.get("VRMC_vrm")?;
-    let meta = vrm.get("meta")?;
+    let doc = crate::vrm::read_vrm_json(json).ok()?;
     Some(VrmHeader {
-        spec_version: vrm.get("specVersion")?.as_str()?.to_string(),
-        title: meta
-            .get("name")
-            .and_then(|n| n.as_str())
-            .unwrap_or("")
-            .to_string(),
-        author: meta
-            .get("authors")
-            .and_then(|a| a.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
+        spec_version: doc.spec_version,
+        title: doc.meta.name,
+        author: doc.meta.authors.into_iter().next().unwrap_or_default(),
     })
 }
 
@@ -260,56 +254,36 @@ pub struct VrmExtract {
 }
 
 /// Parse the full humanoid + expression data out of a VRM JSON chunk.
-/// Missing sections are returned as empty `Vec`s, not errors.
+///
+/// Read through [`crate::vrm::read_vrm_json`] (`None` when that refuses the chunk). Each preset
+/// expression gives the weight of its first morph target bind (0 without one); every bind,
+/// the custom expressions and the targets are in [`crate::vrm::VrmDocument`].
 #[must_use]
 pub fn parse_vrm_full(json: &str) -> Option<VrmExtract> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let header = parse_vrm_json(json)?;
-    let vrm = v.get("extensions")?.get("VRMC_vrm")?;
-
-    let bones: Vec<VrmBoneBinding> = vrm
-        .get("humanoid")
-        .and_then(|h| h.get("humanBones"))
-        .and_then(|hb| hb.as_object())
-        .map(|map| {
-            map.iter()
-                .filter_map(|(name, value)| {
-                    let node = value.get("node")?.as_u64()?;
-                    #[allow(clippy::cast_possible_truncation)]
-                    Some(VrmBoneBinding {
-                        bone_name: name.clone(),
-                        node_index: node as u32,
-                    })
-                })
-                .collect()
+    let doc = crate::vrm::read_vrm_json(json).ok()?;
+    let bones = doc
+        .bones
+        .iter()
+        .map(|(name, node)| VrmBoneBinding {
+            bone_name: name.clone(),
+            node_index: *node,
         })
-        .unwrap_or_default();
-
-    let expressions: Vec<VrmExpressionBinding> = vrm
-        .get("expressions")
-        .and_then(|e| e.get("preset"))
-        .and_then(|p| p.as_object())
-        .map(|map| {
-            map.iter()
-                .map(|(preset, value)| {
-                    let weight = value
-                        .get("morphTargetBinds")
-                        .and_then(|b| b.as_array())
-                        .and_then(|arr| arr.first())
-                        .and_then(|first| first.get("weight"))
-                        .and_then(|w| w.as_f64())
-                        .unwrap_or(0.0) as f32;
-                    VrmExpressionBinding {
-                        preset: preset.clone(),
-                        weight,
-                    }
-                })
-                .collect()
+        .collect();
+    let expressions = doc
+        .expressions
+        .iter()
+        .filter(|e| e.preset)
+        .map(|e| VrmExpressionBinding {
+            preset: e.name.clone(),
+            weight: e.binds.first().map_or(0.0, |b| b.weight),
         })
-        .unwrap_or_default();
-
+        .collect();
     Some(VrmExtract {
-        header,
+        header: VrmHeader {
+            spec_version: doc.spec_version,
+            title: doc.meta.name,
+            author: doc.meta.authors.into_iter().next().unwrap_or_default(),
+        },
         bones,
         expressions,
     })

@@ -134,6 +134,7 @@ pub mod ui_animation;
 pub mod verse;
 pub mod virtual_shadow;
 pub mod volumetric_clouds;
+pub mod vrm;
 
 // ---------------------------------------------------------------------------
 // Feature-gated modules

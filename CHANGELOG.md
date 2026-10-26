@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `vrm` module: VRM 1.0 の読み手 `read_vrm` (GLB の JSON / BIN chunk、`VRMC_vrm` の meta を license の全項目で (`VrmMeta`、仕様の既定値と値の集合で検査、範囲外は `VrmError::BadValue`、`licenseUrl` 無しは `Missing`)、humanoid の骨、全ての表情の morph target の bind (preset と custom)、mesh の POSITION / NORMAL / TEXCOORD_0 / JOINTS_0 / WEIGHTS_0 (正規化整数を含む) / indices / morph target の差分、skin と逆 bind 行列、node) `split_glb` / `read_vrm_json` も公開 長さと offset は使う前に bytes と照らし、file が言う数で確保しない 壊れた file は `VrmError`、VRM 0.x は `VrmError::Vrm0` 試験 `tests/vrm_reader.rs` (9 件) は `scripts/vrm_fixture.py` (標準 library の Python、仕様から bytes を手で並べる) が書いた `tests/data/vrm/tiny.vrm` と期待値 `expected.txt` で照合し、全ての前置部分と全 byte の反転で panic しないこと、範囲外の参照の拒否を確かめる CI の test job と preflight で `scripts/vrm_fixture.py --check` を走らせる
+
 ### Changed — dependencies
 
 - 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `3c7367f`、7.0.0) に変更
@@ -12,6 +16,7 @@
 
 - `window` feature を単独で有効にすると build できなかった (`ui_renderer` が `window` だけで gate され、`ui` feature の `crate::ui` を使っていた) `ui_renderer` を `window` と `ui` の両方で gate する
 - CI: Cargo.toml の各 feature を単独で `cargo check --lib --no-default-features --features <f>` する job と `scripts/each_feature.py` を追加 (feature の一覧は Cargo.toml から読む、check の失敗と 0 件は失敗、`python` / `godot` / `default` / `full` は理由付きで除外、Linux では `audio_output` のために ALSA の header を入れる)、preflight にも同じ step を追加
+- `parse_vrm_json` / `parse_vrm_full` を `vrm::read_vrm_json` の上で読む (JSON を 2 か所で読まない) 表情の重みは従来どおり最初の bind の値 meta の必須項目が欠けた・値が仕様の外の chunk は `None` になる
 - 依存: `alice-physics` の git 依存 (rev `51b34e4`) に `version = "1.5"` を書いた (その rev の版は 1.5.0) version の無い git 依存は publish する crate で版に置き換えられず、固定した commit の版とも比べられない 解決される commit は変わらない
 
 ### Changed — breaking: rigid-body physics delegated to ALICE-Physics (`physics` feature)

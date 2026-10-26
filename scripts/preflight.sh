@@ -55,6 +55,9 @@ rustup target list --installed | grep -q '^aarch64-linux-android$' || rustup tar
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
 
+step "ci.yml / test: VRM fixture (independent writer)"
+python3 scripts/vrm_fixture.py --check
+
 if [[ $quick -eq 1 ]]; then
   echo; echo "preflight --quick OK (test / bench suites skipped)"; exit 0
 fi

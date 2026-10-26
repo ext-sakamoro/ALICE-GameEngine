@@ -119,15 +119,17 @@ Feature flags pick what you compile:
 - **Virtual shadow scaffold** — `VirtualShadowMap` UE5-style page
   allocator (allocate / release / lookup)
 - **Editor browser UI** — embedded HTML at `http://127.0.0.1:8088/`
-- **Asset I/O** — VRM 1.x meta + FBX binary header + USD ASCII
-  recognisers (scaffold)
+- **Asset I/O** — VRM 1.0 reader (`vrm::read_vrm`: GLB chunks, the full meta with
+  every licence field, humanoid bones, every expression bind, positions / normals /
+  joints / weights / indices / morph target deltas, skins, nodes; a broken file is an
+  error, not a panic) + FBX binary header + USD ASCII recognisers
 - **TUTORIAL.md** — five-step getting started
 - **TLAS bottom-up driver** — `Bvh::levels_bottom_up()` +
   `gpu_bvh_interior_refit_compute` for one-loop GPU refit
 - **Cubemap sky render driver** —
   `CubemapCaptureTargets::render_sky_to_faces` populates the probe
 - **VRM full extract** — `parse_vrm_full` returns bones +
-  expressions, not just meta
+  expressions, not just meta (read through `vrm::read_vrm_json`)
 - **`virtual_shadow` GPU atlas** — `VirtualShadowGpu` allocates the
   Depth32Float atlas + comparison sampler · `render_caster_to_page`
   per-page depth driver
