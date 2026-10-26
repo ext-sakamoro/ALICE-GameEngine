@@ -148,7 +148,7 @@ pub mod renderer;
 #[cfg(feature = "gpu")]
 pub mod light_culling;
 
-#[cfg(feature = "window")]
+#[cfg(all(feature = "window", feature = "ui"))]
 pub mod ui_renderer;
 
 pub mod window;

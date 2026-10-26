@@ -41,6 +41,9 @@ step "ci.yml / physics: Clippy (physics)"
 relint
 ( export CARGO_TERM_COLOR="always"; cargo clippy --features physics -- -W clippy::all )
 
+step "ci.yml / each-feature: cargo check --lib for each feature alone"
+( export CARGO_TERM_COLOR="always"; python3 scripts/each_feature.py )
+
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
 rustup target list --installed | grep -q '^aarch64-apple-ios$' || rustup target add aarch64-apple-ios
 ( export CARGO_TERM_COLOR="always"; cargo check --target aarch64-apple-ios --no-default-features )

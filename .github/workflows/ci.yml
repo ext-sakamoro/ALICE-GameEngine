@@ -53,6 +53,20 @@ jobs:
           set -o pipefail
           cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10
 
+  each-feature:
+    name: each feature builds on its own
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # audio_output (cpal) links ALSA on Linux
+      - name: Install ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      # every feature of Cargo.toml (scripts/each_feature.py reads the table) with
+      # --no-default-features; a failed check or nothing checked fails the step
+      - name: cargo check --lib for each feature alone
+        run: python3 scripts/each_feature.py
+
   mobile-build:
     name: mobile build smoke (iOS + Android cargo check)
     runs-on: macos-latest

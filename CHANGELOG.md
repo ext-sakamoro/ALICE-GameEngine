@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `window` feature を単独で有効にすると build できなかった (`ui_renderer` が `window` だけで gate され、`ui` feature の `crate::ui` を使っていた) `ui_renderer` を `window` と `ui` の両方で gate する
+- CI: Cargo.toml の各 feature を単独で `cargo check --lib --no-default-features --features <f>` する job と `scripts/each_feature.py` を追加 (feature の一覧は Cargo.toml から読む、check の失敗と 0 件は失敗、`python` / `godot` / `default` / `full` は理由付きで除外、Linux では `audio_output` のために ALSA の header を入れる)、preflight にも同じ step を追加
 - 依存: `alice-physics` の git 依存 (rev `51b34e4`) に `version = "1.5"` を書いた (その rev の版は 1.5.0) version の無い git 依存は publish する crate で版に置き換えられず、固定した commit の版とも比べられない 解決される commit は変わらない
 
 ### Changed — breaking: rigid-body physics delegated to ALICE-Physics (`physics` feature)
