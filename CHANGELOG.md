@@ -4,11 +4,13 @@
 
 ### 破壊的変更
 
+- `vrm_render::ToonParams` の `threshold` を MToon の `shading_shift` と `shading_toony` に替えた (以前の `threshold: x` は `shading_shift: -x, shading_toony: 1.0` と同じ描画)
 - `humanoid::HumanoidBone` を VRM 1.0 の 55 骨 (指 30 本を含む) に、`ExpressionChannel` を VRM 1.0 の 18 preset (`Relaxed` / `Blink` / `LookUp` / `LookDown` / `LookLeft` / `LookRight` を追加) にした 網羅的な `match` は新しい variant の arm が要る 骨と表情は仕様の名前と相互に変換できる (`vrm_name` / `from_vrm_name`、`ExpressionChannel::presets`)、仕様に無い表情の名前は `Custom`
 - `ExpressionSet::iter` は channel の順 (preset は enum の順、custom は名前の順) に並ぶ (以前は HashMap の順で決まっていなかった)
 
 ### Added
 
+- VRM の材質: 読み手は `VrmModel::materials` (`Material`: 名前、`pbrMetallicRoughness.baseColorFactor` (既定 1)、`VRMC_materials_mtoon` の `MToon` (`shadeColorFactor` 既定 0、`shadingShiftFactor` 既定 0、`shadingToonyFactor` 既定 0.9、0..=1 の外は拒否))、`MeshPrimitive::material` (存在しない材質の index は拒否) を読む toon 描画は MToon 1.0 の陰影 (`s = dot(n, l) + shift`、`t = clamp((s + 1 - toony) / (2 - 2 toony), 0, 1)`、toony 1 で 0 の段差、色 = `mix(shade, base, t)`) にし、`ToonParams::from_material` で材質から parameter を作る 試験 `tests/vrm_mtoon.rs` (CPU 4 件 + GPU 1 件、値は fixture の材質から手で計算、GPU の試験は CI の `gpu-oracle` で lavapipe に走らせ件数を確かめる) fixture に MToon の材質を足した
 - VRM の視線: 読み手は `VRMC_vrm.lookAt` を `VrmDocument::look_at` (`LookAt`: 型 `LookAtKind::Bone` / `Expression`、`offsetFromHeadBone`、4 つの `RangeMap` (仕様の既定は入力の上限 90 度・出力 10)) に読む `VrmPose::set_look(yaw_left_deg, pitch_up_deg)`: 表情の型は lookLeft / lookRight を水平の outer の map、lookUp / lookDown を垂直の map で重みに (0..=1)、骨の型は目の骨を +Y (yaw、外向きは outer・内向きは inner の map) と -X (pitch) に map した度数だけ休止の回転の後に回す 重みが 0 でない視線の表情が model に無ければ `PoseError::UnknownExpression`、lookAt が無ければ `PoseError::NoLookAt` range map は仕様に既定値が無く、省略時は参照実装と同じく両方の型で 90 → 10 (表情の重みは 0..=1 に clamp するので 9 度で飽和)、入力の上限が 0 の時は入力が 0 なら 0、それ以外は出力の scale (仕様の推奨) 試験 `tests/vrm_look_at.rs` (8 件、fixture の対応表から手で計算) fixture に lookAt と lookLeft / lookUp を足した
 - `VrmPose::posed_normals`: morph target の法線の差分を掛け、混ぜた skinning 行列 (skin が無ければ node の world 行列) の 3x3 の逆転置で回し、長さを 1 に戻した法線 法線の無い primitive は `PoseError::NoNormals` `MeshPrimitive::target_normals` (morph target の NORMAL、無い target は `None`) 例 `vrm_toon_offscreen` は pose した法線で描く fixture の target 0 に法線の差分を足した
 - `call_fx` module: RGBA8 の画像に通話の劣化 (block 化・色ずれ・色の bit 数・走査線・noise) を整数の算術だけで掛ける `apply` / `CallFx` (同じ画像と parameter なら全 target で同じ bytes)、映像のコマ止めの `FrameHold` 試験 `tests/call_fx.rs` (5 件、手で計算した小さな場合と、独立実装 `scripts/call_fx_reference.py` (標準 library の Python) が書いた 9 件の結果の SHA-256) CI の test job と preflight で `scripts/call_fx_reference.py --check` を走らせる 例 `vrm_toon_offscreen` に劣化の段 (0〜3) の引数を足した 開発用の依存に `sha2` を足した

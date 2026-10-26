@@ -2,9 +2,9 @@
 //!
 //! The vertices come already posed ([`crate::vrm_pose::VrmPose::posed_positions`]), so the
 //! skinning and the morph targets are the CPU's, one implementation for both the image and
-//! anything that hashes or compares the pose. The shader lights a fragment with the base
-//! colour when `dot(normal, light)` is at least the threshold, and with the shade colour
-//! otherwise. [`toon_wgsl`] is plain text (validated by naga in the tests); the renderer is
+//! anything that hashes or compares the pose. The shader is `MToon` 1.0's shading:
+//! `s = dot(normal, light) + shift`, `t = clamp((s + 1 - toony) / (2 - 2 toony), 0, 1)` (a step at
+//! `s = 0` when toony is 1), colour = `mix(shade, base, t)`. [`toon_wgsl`] is plain text (validated by naga in the tests); the renderer is
 //! behind the `gpu` feature.
 
 /// The WGSL of the toon pipeline: `vs_main` / `fs_main`, one uniform block at group 0
@@ -15,8 +15,10 @@ struct Params {
     view_proj: mat4x4<f32>,
     base_color: vec4<f32>,
     shade_color: vec4<f32>,
-    // xyz: the direction towards the light; w: the threshold of dot(normal, light)
+    // xyz: the direction towards the light; w: the shading shift
     light: vec4<f32>,
+    // x: the shading toony factor (0..=1)
+    shading: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -41,8 +43,16 @@ fn vs_main(v: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
-    let lit = dot(normalize(f.normal), normalize(params.light.xyz)) >= params.light.w;
-    return select(params.shade_color, params.base_color, lit);
+    let s = dot(normalize(f.normal), normalize(params.light.xyz)) + params.light.w;
+    let toony = params.shading.x;
+    let width = 2.0 - 2.0 * toony;
+    var t: f32;
+    if (width <= 0.0) {
+        t = select(0.0, 1.0, s >= 0.0);
+    } else {
+        t = clamp((s + 1.0 - toony) / width, 0.0, 1.0);
+    }
+    return mix(params.shade_color, params.base_color, t);
 }
 "
 }
@@ -58,10 +68,42 @@ pub struct ToonParams {
     pub shade_color: [f32; 4],
     /// The direction towards the light (need not be unit length)
     pub light_dir: [f32; 3],
-    /// A fragment is lit when `dot(normal, light) >= threshold`
-    pub threshold: f32,
+    /// `MToon` `shadingShiftFactor`: added to `dot(normal, light)`
+    pub shading_shift: f32,
+    /// `MToon` `shadingToonyFactor` (0..=1): 1 is a hard step at 0, lower values a wider ramp
+    pub shading_toony: f32,
     /// The colour the image is cleared to
     pub clear: [f32; 4],
+}
+
+impl ToonParams {
+    /// The parameters of a material: its base colour, and its `MToon` shade colour, shift and
+    /// toony (a material without `MToon` is drawn in its base colour alone: shade = base)
+    #[must_use]
+    pub fn from_material(
+        m: &crate::vrm::Material,
+        view_proj: [f32; 16],
+        light_dir: [f32; 3],
+        clear: [f32; 4],
+    ) -> Self {
+        let (shade, shift, toony) = m.mtoon.map_or(
+            (
+                [m.base_color[0], m.base_color[1], m.base_color[2]],
+                0.0,
+                1.0,
+            ),
+            |t| (t.shade_color, t.shading_shift, t.shading_toony),
+        );
+        Self {
+            view_proj,
+            base_color: m.base_color,
+            shade_color: [shade[0], shade[1], shade[2], m.base_color[3]],
+            light_dir,
+            shading_shift: shift,
+            shading_toony: toony,
+            clear,
+        }
+    }
 }
 
 /// Why a draw failed
@@ -280,7 +322,13 @@ mod gpu {
             let mut uni: Vec<f32> = p.view_proj.to_vec();
             uni.extend_from_slice(&p.base_color);
             uni.extend_from_slice(&p.shade_color);
-            uni.extend_from_slice(&[p.light_dir[0], p.light_dir[1], p.light_dir[2], p.threshold]);
+            uni.extend_from_slice(&[
+                p.light_dir[0],
+                p.light_dir[1],
+                p.light_dir[2],
+                p.shading_shift,
+            ]);
+            uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
             let ubuf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {

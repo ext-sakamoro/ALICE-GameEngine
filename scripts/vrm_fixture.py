@@ -105,7 +105,7 @@ def build():
     bin_ = pad4(bin_)
     doc = {
         "asset": {"version": "2.0", "generator": "vrm_fixture.py"},
-        "extensionsUsed": ["VRMC_vrm"],
+        "extensionsUsed": ["VRMC_vrm", "VRMC_materials_mtoon"],
         "buffers": [{"byteLength": len(bin_)}],
         "bufferViews": views,
         "accessors": accessors,
@@ -114,6 +114,7 @@ def build():
                 "attributes": {"POSITION": 0, "NORMAL": 1, "JOINTS_0": 2, "WEIGHTS_0": 3},
                 "indices": 4,
                 "targets": [{"POSITION": 5, "NORMAL": 8}, {"POSITION": 6}],
+                "material": 0,
             }, {
                 "attributes": {"POSITION": 9, "JOINTS_0": 2, "WEIGHTS_0": 10},
                 "indices": 11,
@@ -121,6 +122,17 @@ def build():
             "weights": [0.0, 0.0],
         }],
         "skins": [{"joints": [1, 2], "inverseBindMatrices": 7}],
+        # one MToon material on the first primitive; the second primitive has none
+        "materials": [{
+            "name": "skin",
+            "pbrMetallicRoughness": {"baseColorFactor": [1.0, 0.5, 0.25, 1.0]},
+            "extensions": {"VRMC_materials_mtoon": {
+                "specVersion": "1.0",
+                "shadeColorFactor": [0.25, 0.125, 0.5],
+                "shadingShiftFactor": -0.25,
+                "shadingToonyFactor": 0.75,
+            }},
+        }],
         "nodes": [
             {"name": "body", "mesh": 0, "skin": 0},
             {"name": "hips", "children": [2]},
@@ -178,6 +190,8 @@ def expected():
     rows += ["expression preset aa 0:0:1.0", "expression preset blink binary",
              "expression preset happy 0:1:1.0 0:0:0.5", "expression preset lookLeft 0:1:1.0",
              "expression preset lookUp 0:0:1.0", "expression custom smirk 0:1:0.25"]
+    rows += ["material 0 skin base 1.0 0.5 0.25 1.0 shade 0.25 0.125 0.5 shift -0.25 toony 0.75",
+             "primitive 0 material 0", "primitive 1 material none"]
     rows += ["lookat type expression", "lookat offset 0.0 0.0625 0.125",
              "lookat horizontalInner 60.0 1.0", "lookat horizontalOuter 60.0 1.0",
              "lookat verticalDown 40.0 0.5", "lookat verticalUp 40.0 0.5"]

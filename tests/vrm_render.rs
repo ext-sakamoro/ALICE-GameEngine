@@ -69,7 +69,8 @@ mod gpu {
             base_color: [1.0, 0.0, 0.0, 1.0],
             shade_color: [0.0, 0.0, 1.0, 1.0],
             light_dir: light,
-            threshold: 0.0,
+            shading_shift: 0.0,
+            shading_toony: 1.0,
             clear: [0.0, 0.0, 0.0, 1.0],
         }
     }

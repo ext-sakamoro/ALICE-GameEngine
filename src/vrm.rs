@@ -501,6 +501,30 @@ pub struct MeshPrimitive {
     pub targets: Vec<Vec<[f32; 3]>>,
     /// Morph target normal deltas, one entry per target (`None` when the target has none)
     pub target_normals: Vec<Option<Vec<[f32; 3]>>>,
+    /// `material`: an index into [`VrmModel::materials`]
+    pub material: Option<u32>,
+}
+
+/// The `MToon` 1.0 shading parameters of a material (`VRMC_materials_mtoon`)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MToon {
+    /// `shadeColorFactor` (default 0, 0, 0)
+    pub shade_color: [f32; 3],
+    /// `shadingShiftFactor` (default 0)
+    pub shading_shift: f32,
+    /// `shadingToonyFactor` (default 0.9)
+    pub shading_toony: f32,
+}
+
+/// A material: its base colour and, for an `MToon` material, the `MToon` parameters
+#[derive(Debug, Clone, PartialEq)]
+pub struct Material {
+    /// `name`
+    pub name: Option<String>,
+    /// `pbrMetallicRoughness.baseColorFactor` (default 1, 1, 1, 1)
+    pub base_color: [f32; 4],
+    /// `extensions.VRMC_materials_mtoon`, when present
+    pub mtoon: Option<MToon>,
 }
 
 /// A skin: its joint nodes and their inverse bind matrices (column-major)
@@ -542,6 +566,54 @@ pub struct VrmModel {
     pub skins: Vec<Skin>,
     /// The nodes
     pub nodes: Vec<Node>,
+    /// The materials
+    pub materials: Vec<Material>,
+}
+
+fn read_material(m: &Value, path: &str) -> Result<Material, VrmError> {
+    let base_color = match m.get("pbrMetallicRoughness") {
+        Some(pbr) => floats_n(
+            pbr,
+            "baseColorFactor",
+            [1.0; 4],
+            &format!("{path}.pbrMetallicRoughness"),
+        )?,
+        None => [1.0; 4],
+    };
+    let mtoon = match m
+        .get("extensions")
+        .and_then(|e| e.get("VRMC_materials_mtoon"))
+    {
+        None => None,
+        Some(t) => {
+            let mp = format!("{path}.extensions.VRMC_materials_mtoon");
+            let num = |k: &str, d: f32| -> Result<f32, VrmError> {
+                match t.get(k) {
+                    None => Ok(d),
+                    #[allow(clippy::cast_possible_truncation)]
+                    Some(x) => x
+                        .as_f64()
+                        .map(|x| x as f32)
+                        .filter(|x| x.is_finite())
+                        .ok_or_else(|| VrmError::BadValue(format!("{mp}.{k}"))),
+                }
+            };
+            let toony = num("shadingToonyFactor", 0.9)?;
+            if !(0.0..=1.0).contains(&toony) {
+                return Err(VrmError::BadValue(format!("{mp}.shadingToonyFactor")));
+            }
+            Some(MToon {
+                shade_color: floats_n(t, "shadeColorFactor", [0.0; 3], &mp)?,
+                shading_shift: num("shadingShiftFactor", 0.0)?,
+                shading_toony: toony,
+            })
+        }
+    };
+    Ok(Material {
+        name: path_str(m, "name", path)?,
+        base_color,
+        mtoon,
+    })
 }
 
 struct Accessors<'a> {
@@ -811,6 +883,7 @@ fn read_primitive(acc: &Accessors<'_>, p: &Value, path: &str) -> Result<MeshPrim
         indices,
         targets,
         target_normals,
+        material: opt_attr(p, "material", path)?,
     })
 }
 
@@ -850,6 +923,20 @@ pub fn read_vrm(data: &[u8]) -> Result<VrmModel, VrmError> {
         }
         meshes.push(out);
     }
+    let materials = list("materials")?
+        .iter()
+        .enumerate()
+        .map(|(i, m)| read_material(m, &format!("materials[{i}]")))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (m, prims) in meshes.iter().enumerate() {
+        for (k, p) in prims.iter().enumerate() {
+            if p.material.is_some_and(|i| i as usize >= materials.len()) {
+                return Err(VrmError::OutOfRange(format!(
+                    "meshes[{m}].primitives[{k}].material"
+                )));
+            }
+        }
+    }
     let nodes_json = list("nodes")?;
     let (skins, nodes) = read_skins_and_nodes(&acc, &nodes_json, &list("skins")?, meshes.len())?;
     let node_count = nodes.len();
@@ -887,6 +974,7 @@ pub fn read_vrm(data: &[u8]) -> Result<VrmModel, VrmError> {
         meshes,
         skins,
         nodes,
+        materials,
     })
 }
 

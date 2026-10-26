@@ -40,7 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             base_color: [0.95, 0.8, 0.75, 1.0],
             shade_color: [0.6, 0.45, 0.5, 1.0],
             light_dir: [0.3, 0.5, 1.0],
-            threshold: 0.2,
+            shading_shift: -0.2,
+            shading_toony: 0.9,
             clear: [0.05, 0.05, 0.08, 1.0],
         },
     )?;
