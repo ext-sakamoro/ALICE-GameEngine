@@ -67,6 +67,7 @@ pub mod asset;
 pub mod audio_output;
 pub mod battle;
 pub mod bridge;
+pub mod call_fx;
 pub mod camera_controller;
 pub mod cloth;
 #[cfg(feature = "physics")]

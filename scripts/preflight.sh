@@ -65,6 +65,7 @@ actionlint .github/workflows/*.yml
 
 step "ci.yml / test: VRM fixture (independent writer)"
 python3 scripts/vrm_fixture.py --check
+python3 scripts/call_fx_reference.py --check
 
 if [[ $quick -eq 1 ]]; then
   echo; echo "preflight --quick OK (test / bench suites skipped)"; exit 0

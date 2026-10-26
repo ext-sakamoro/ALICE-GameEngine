@@ -67,6 +67,8 @@ winit = { version = "0.30", optional = true }
 axum = { version = "0.7", features = ["ws"], optional = true }
 
 [dev-dependencies]
+# digests of the call_fx results compared with scripts/call_fx_reference.py
+sha2 = "0.10"
 approx = "0.5"
 naga = { version = "25", default-features = false, features = ["wgsl-in"] }
 

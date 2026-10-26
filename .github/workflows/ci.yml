@@ -33,6 +33,7 @@ jobs:
         run: |
           PY=$(command -v python3 || command -v python)
           "$PY" scripts/vrm_fixture.py --check
+          "$PY" scripts/call_fx_reference.py --check
       - name: Test (default features)
         run: cargo test
       - name: Test (full features)
