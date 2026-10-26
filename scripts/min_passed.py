@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Check that `cargo test` output ran at least N tests in each named test binary.
 
-usage: cargo test ... 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 ...
+usage: cargo test ... 2>&1 | python3 scripts/min_passed.py [--no-ignored] lib=1044 physics_hub_analytic=23 ...
 
 A binary is named by its `Running` line: `unittests src/lib.rs` is `lib`, `tests/foo.rs` is `foo`.
 Fails when a named binary did not run, ran fewer tests than its minimum, or a test failed.
+With --no-ignored it also fails when a named binary ignored a test (for a run with
+--include-ignored, where an ignored test means one the run was meant to execute did not).
 """
 
 import re
@@ -12,7 +14,7 @@ import sys
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+)")
-RESULT = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed")
+RESULT = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
 
 
 def binary_name(path: str) -> str:
@@ -23,7 +25,9 @@ def binary_name(path: str) -> str:
 
 def main() -> int:
     want = {}
-    for arg in sys.argv[1:]:
+    args = sys.argv[1:]
+    no_ignored = "--no-ignored" in args
+    for arg in (a for a in args if a != "--no-ignored"):
         name, _, n = arg.partition("=")
         want[name] = int(n)
     if not want:
@@ -31,6 +35,7 @@ def main() -> int:
         return 2
 
     got = {}
+    ignored = {}
     current = None
     failed = 0
     for raw in sys.stdin:
@@ -43,6 +48,7 @@ def main() -> int:
         m = RESULT.match(line)
         if m and current is not None:
             got[current] = int(m.group(1))
+            ignored[current] = int(m.group(3))
             failed += int(m.group(2))
             current = None
 
@@ -52,6 +58,8 @@ def main() -> int:
             bad.append(f"{name}: did not run")
         elif got[name] < n:
             bad.append(f"{name}: {got[name]} passed, expected at least {n}")
+        if no_ignored and ignored.get(name, 0):
+            bad.append(f"{name}: {ignored[name]} ignored")
     if failed:
         bad.append(f"{failed} test(s) failed")
     compared = sum(1 for name in want if name in got)

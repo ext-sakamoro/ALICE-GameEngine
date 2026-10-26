@@ -48,8 +48,9 @@ step "ci.yml / gpu-oracle: GPU tests (--include-ignored, this machine's adapter)
 (
   export CARGO_TERM_COLOR="always"
   set -o pipefail
-  cargo test --features gpu --lib hd2d_postfx -- --include-ignored 2>&1 | python3 scripts/min_passed.py lib=15
-  cargo test --features gpu --test vrm_render --test vrm_mtoon -- --include-ignored 2>&1 | python3 scripts/min_passed.py vrm_render=4 vrm_mtoon=4
+  python3 scripts/test_min_passed.py
+  cargo test --features gpu --lib hd2d_postfx -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored lib=15
+  cargo test --features gpu --test vrm_render --test vrm_mtoon -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored vrm_render=4 vrm_mtoon=5
 )
 
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
