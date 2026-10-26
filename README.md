@@ -123,6 +123,9 @@ Feature flags pick what you compile:
   every licence field, humanoid bones, every expression bind, positions / normals /
   joints / weights / indices / morph target deltas, skins, nodes; a broken file is an
   error, not a panic) + FBX binary header + USD ASCII recognisers
+- **VRM pose (CPU)** — `vrm_pose::VrmPose`: expression weights → morph target
+  weights → morph targets → node transforms → linear blend skinning
+  (`cargo run --example vrm_pose_demo`)
 - **TUTORIAL.md** — five-step getting started
 - **TLAS bottom-up driver** — `Bvh::levels_bottom_up()` +
   `gpu_bvh_interior_refit_compute` for one-loop GPU refit
