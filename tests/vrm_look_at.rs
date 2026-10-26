@@ -219,3 +219,36 @@ fn an_input_maximum_of_zero_gives_the_scale_for_any_non_zero_input() {
     assert_eq!(m.map(0.01), 0.75);
     assert_eq!(m.map(-30.0), 0.75);
 }
+
+#[test]
+fn a_negative_or_non_numeric_range_value_is_refused() {
+    use alice_game_engine::vrm::{read_vrm_json, split_glb, VrmError};
+    let glb = split_glb(TINY).unwrap();
+    let base: serde_json::Value = serde_json::from_str(glb.json).unwrap();
+    for (map, key, bad) in [
+        (
+            "rangeMapHorizontalOuter",
+            "inputMaxValue",
+            serde_json::json!(-1.0),
+        ),
+        ("rangeMapVerticalUp", "outputScale", serde_json::json!(-0.5)),
+        (
+            "rangeMapVerticalDown",
+            "inputMaxValue",
+            serde_json::json!("40"),
+        ),
+    ] {
+        let mut j = base.clone();
+        j["extensions"]["VRMC_vrm"]["lookAt"][map][key] = bad;
+        let want = format!("lookAt.{map}.{key}");
+        assert!(
+            matches!(read_vrm_json(&j.to_string()), Err(VrmError::BadValue(ref p)) if *p == want),
+            "{want}"
+        );
+    }
+    // 0 is allowed (the specification's minimum)
+    let mut j = base;
+    j["extensions"]["VRMC_vrm"]["lookAt"]["rangeMapVerticalUp"]["outputScale"] = 0.into();
+    let l = read_vrm_json(&j.to_string()).unwrap().look_at.unwrap();
+    assert_eq!(l.vertical_up.output_scale, 0.0);
+}
