@@ -514,6 +514,27 @@ pub struct MToon {
     pub shading_shift: f32,
     /// `shadingToonyFactor` (default 0.9)
     pub shading_toony: f32,
+    /// `outlineWidthMode` (default `none`)
+    pub outline_width_mode: OutlineWidthMode,
+    /// `outlineWidthFactor` (default 0, not negative): metres in world mode, a fraction of the
+    /// screen height in screen mode
+    pub outline_width: f32,
+    /// `outlineColorFactor` (default 0, 0, 0)
+    pub outline_color: [f32; 3],
+    /// `outlineLightingMixFactor` (default 1, 0..=1): how much the surface's lit colour tints
+    /// the outline
+    pub outline_lighting_mix: f32,
+}
+
+/// `MToon`'s `outlineWidthMode`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlineWidthMode {
+    /// `none`: no outline
+    None,
+    /// `worldCoordinates`: the width is a distance in the model's space
+    World,
+    /// `screenCoordinates`: the width is a fraction of the screen height
+    Screen,
 }
 
 /// A material: its base colour and, for an `MToon` material, the `MToon` parameters
@@ -602,10 +623,28 @@ fn read_material(m: &Value, path: &str) -> Result<Material, VrmError> {
             if !(0.0..=1.0).contains(&toony) {
                 return Err(VrmError::BadValue(format!("{mp}.shadingToonyFactor")));
             }
+            let outline_width_mode = match path_str(t, "outlineWidthMode", &mp)?.as_deref() {
+                None | Some("none") => OutlineWidthMode::None,
+                Some("worldCoordinates") => OutlineWidthMode::World,
+                Some("screenCoordinates") => OutlineWidthMode::Screen,
+                Some(_) => return Err(VrmError::BadValue(format!("{mp}.outlineWidthMode"))),
+            };
+            let outline_width = num("outlineWidthFactor", 0.0)?;
+            if outline_width < 0.0 {
+                return Err(VrmError::BadValue(format!("{mp}.outlineWidthFactor")));
+            }
+            let outline_lighting_mix = num("outlineLightingMixFactor", 1.0)?;
+            if !(0.0..=1.0).contains(&outline_lighting_mix) {
+                return Err(VrmError::BadValue(format!("{mp}.outlineLightingMixFactor")));
+            }
             Some(MToon {
                 shade_color: floats_n(t, "shadeColorFactor", [0.0; 3], &mp)?,
                 shading_shift: num("shadingShiftFactor", 0.0)?,
                 shading_toony: toony,
+                outline_width_mode,
+                outline_width,
+                outline_color: floats_n(t, "outlineColorFactor", [0.0; 3], &mp)?,
+                outline_lighting_mix,
             })
         }
     };

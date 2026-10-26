@@ -85,14 +85,14 @@ jobs:
       - name: Install Mesa Vulkan (lavapipe)
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
       # the #[ignore = "needs a working GPU adapter"] tests run here; min_passed fails when a
-      # binary ran fewer tests than named (hd2d_postfx 15 in the library, vrm_render 4, vrm_mtoon 5, vrm_render_parts 3, vrm_face_paint 5)
+      # binary ran fewer tests than named (hd2d_postfx 15 in the library, vrm_render 4, vrm_mtoon 5, vrm_render_parts 3, vrm_face_paint 5, vrm_outline 7)
       # or (--no-ignored) left any test ignored
       - name: GPU tests (--include-ignored)
         run: |
           set -o pipefail
           python3 scripts/test_min_passed.py
           cargo test --features gpu --lib hd2d_postfx -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored lib=15
-          cargo test --features gpu --test vrm_render --test vrm_mtoon --test vrm_render_parts --test vrm_face_paint -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored vrm_render=4 vrm_mtoon=5 vrm_render_parts=3 vrm_face_paint=5
+          cargo test --features gpu --test vrm_render --test vrm_mtoon --test vrm_render_parts --test vrm_face_paint --test vrm_outline -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored vrm_render=4 vrm_mtoon=5 vrm_render_parts=3 vrm_face_paint=5 vrm_outline=7
 
   mobile-build:
     name: mobile build smoke (iOS + Android cargo check)

@@ -10,8 +10,10 @@
 //! an expression is a change of the shapes' numbers. [`toon_wgsl`] is plain text (validated by
 //! naga in the tests); the renderer is behind the `gpu` feature.
 
-/// The WGSL of the toon pipeline: `vs_main` / `fs_main`, one uniform block at group 0
+/// The WGSL of the toon pipeline: `vs_main` / `fs_main` for the surface and `vs_outline` /
+/// `fs_outline` for its inverted-hull outline, one uniform block at group 0
 #[must_use]
+#[allow(clippy::too_many_lines)] // the shader's text
 pub const fn toon_wgsl() -> &'static str {
     r"
 struct Params {
@@ -22,6 +24,10 @@ struct Params {
     light: vec4<f32>,
     // x: the shading toony factor (0..=1)
     shading: vec4<f32>,
+    // x: outline width, y: mode (0 none, 1 world, 2 screen), z: lighting mix, w: image aspect
+    outline: vec4<f32>,
+    // rgb: outline colour
+    outline_color: vec4<f32>,
     // world -> face plane: xy are the paint coordinates, z the depth along the face's forward
     to_face: mat4x4<f32>,
     // x: the number of shapes, y: the least face depth that is painted
@@ -47,6 +53,36 @@ struct VsOut {
 fn vs_main(v: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = params.view_proj * vec4<f32>(v.position, 1.0);
+    out.normal = v.normal;
+    out.world = v.position;
+    return out;
+}
+
+// The outline hull: the surface pushed out along its normal, drawn with front faces culled
+// (MToon 1.0): in world mode by the width in model units, in screen mode by the width as a
+// fraction of the image height, in the direction the normal points on screen
+@vertex
+fn vs_outline(v: VsIn) -> VsOut {
+    var out: VsOut;
+    let n = normalize(v.normal);
+    let width = params.outline.x;
+    if (params.outline.y < 1.5) {
+        out.clip = params.view_proj * vec4<f32>(v.position + n * width, 1.0);
+    } else {
+        let c = params.view_proj * vec4<f32>(v.position, 1.0);
+        let aspect = params.outline.w;
+        // the normal's direction in clip space (as UniVRM's MToon takes it)
+        let nc = (params.view_proj * vec4<f32>(n, 0.0)).xy;
+        let len = length(nc);
+        var dir = vec2<f32>(0.0, 0.0);
+        if (len > 0.0) {
+            dir = nc / len;
+        }
+        // NDC spans 2 over the image height; x is divided by the aspect so a width across is the
+        // same number of pixels as one up; times w, so the width holds at any depth
+        let off = dir * (2.0 * width) * vec2<f32>(1.0 / aspect, 1.0);
+        out.clip = vec4<f32>(c.xy + off * c.w, c.zw);
+    }
     out.normal = v.normal;
     out.world = v.position;
     return out;
@@ -86,9 +122,9 @@ fn shape_distance(i: u32, p: vec2<f32>) -> f32 {
     return d - s1.w;
 }
 
-@fragment
-fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
-    let s = dot(normalize(f.normal), normalize(params.light.xyz)) + params.light.w;
+// the surface's toon colour at a normal (MToon 1.0 shading)
+fn toon(normal: vec3<f32>) -> vec4<f32> {
+    let s = dot(normalize(normal), normalize(params.light.xyz)) + params.light.w;
     let toony = params.shading.x;
     let width = 2.0 - 2.0 * toony;
     var t: f32;
@@ -97,7 +133,20 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     } else {
         t = clamp((s + 1.0 - toony) / width, 0.0, 1.0);
     }
-    var color = mix(params.shade_color, params.base_color, t);
+    return mix(params.shade_color, params.base_color, t);
+}
+
+// the outline colour, tinted by the surface's lit colour by the lighting mix
+@fragment
+fn fs_outline(f: VsOut) -> @location(0) vec4<f32> {
+    let lit = toon(f.normal).rgb;
+    let c = params.outline_color.rgb * mix(vec3<f32>(1.0, 1.0, 1.0), lit, params.outline.z);
+    return vec4<f32>(c, 1.0);
+}
+
+@fragment
+fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
+    var color = toon(f.normal);
     let count = u32(params.paint.x);
     if (count > 0u) {
         let q = (params.to_face * vec4<f32>(f.world, 1.0)).xyz;
@@ -303,6 +352,64 @@ fn paint_words(p: Option<&FacePaint>) -> Vec<f32> {
     w
 }
 
+/// An inverted-hull outline (`MToon` 1.0's outline)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Outline {
+    /// `World` (width in model units) or `Screen` (width as a fraction of the image height)
+    pub mode: OutlineMode,
+    /// The width (not negative)
+    pub width: f32,
+    /// The colour
+    pub color: [f32; 3],
+    /// How much the surface's lit colour tints the outline (0..=1): colour * mix(1, lit, this)
+    pub lighting_mix: f32,
+}
+
+/// How an [`Outline`]'s width is measured
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlineMode {
+    /// In model units, so the line thins with distance
+    World,
+    /// As a fraction of the image height, the same at any distance
+    Screen,
+}
+
+impl Outline {
+    /// The outline of a material: `None` when it has no `MToon`, its mode is `none` or its width
+    /// is 0
+    #[must_use]
+    pub fn from_material(m: &crate::vrm::Material) -> Option<Self> {
+        let t = m.mtoon?;
+        let mode = match t.outline_width_mode {
+            crate::vrm::OutlineWidthMode::None => return None,
+            crate::vrm::OutlineWidthMode::World => OutlineMode::World,
+            crate::vrm::OutlineWidthMode::Screen => OutlineMode::Screen,
+        };
+        (t.outline_width > 0.0).then_some(Self {
+            mode,
+            width: t.outline_width,
+            color: t.outline_color,
+            lighting_mix: t.outline_lighting_mix,
+        })
+    }
+}
+
+fn check_outline(o: &Outline) -> Result<(), RenderError> {
+    if !(o.width.is_finite() && o.width >= 0.0) {
+        return Err(RenderError::BadOutline(format!("width {}", o.width)));
+    }
+    if !(0.0..=1.0).contains(&o.lighting_mix) {
+        return Err(RenderError::BadOutline(format!(
+            "lighting mix {}",
+            o.lighting_mix
+        )));
+    }
+    if !o.color.iter().all(|x| x.is_finite()) {
+        return Err(RenderError::BadOutline("a non-finite colour".into()));
+    }
+    Ok(())
+}
+
 /// One primitive of a multi-part draw: its mesh and the parameters it is lit and seen with
 #[derive(Debug, Clone, Copy)]
 pub struct ToonPart<'a> {
@@ -316,6 +423,8 @@ pub struct ToonPart<'a> {
     pub params: ToonParams,
     /// Shapes painted on this part, if any
     pub paint: Option<&'a FacePaint>,
+    /// The part's outline, if any
+    pub outline: Option<Outline>,
 }
 
 /// Why a draw failed
@@ -330,6 +439,9 @@ pub enum RenderError {
     Readback(String),
     /// A face paint that [`check_paint`] refuses
     BadPaint(String),
+    /// An outline with a negative or non-finite width, a lighting mix outside 0..=1 or a
+    /// non-finite colour
+    BadOutline(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -339,6 +451,7 @@ impl std::fmt::Display for RenderError {
             Self::BadMesh(e) => write!(f, "bad mesh: {e}"),
             Self::Readback(e) => write!(f, "readback failed: {e}"),
             Self::BadPaint(e) => write!(f, "bad paint: {e}"),
+            Self::BadOutline(e) => write!(f, "bad outline: {e}"),
         }
     }
 }
@@ -392,7 +505,8 @@ pub use gpu::ToonRenderer;
 #[cfg(feature = "gpu")]
 mod gpu {
     use super::{
-        check_mesh, check_paint, paint_words, toon_wgsl, RenderError, ToonParams, ToonPart,
+        check_mesh, check_outline, check_paint, paint_words, toon_wgsl, OutlineMode, RenderError,
+        ToonParams, ToonPart,
     };
     use wgpu::util::DeviceExt;
 
@@ -404,9 +518,61 @@ mod gpu {
         device: wgpu::Device,
         queue: wgpu::Queue,
         pipeline: wgpu::RenderPipeline,
+        outline_pipeline: wgpu::RenderPipeline,
         layout: wgpu::BindGroupLayout,
         width: u32,
         height: u32,
+    }
+
+    /// A pipeline of the toon shader with these entry points, culling `cull`
+    fn toon_pipeline(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+        vs: &str,
+        fs: &str,
+        cull: Option<wgpu::Face>,
+    ) -> wgpu::RenderPipeline {
+        let vertex_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(vs),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some(vs),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: 24,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &vertex_attrs,
+                }],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some(fs),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: cull,
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        })
     }
 
     impl ToonRenderer {
@@ -457,46 +623,21 @@ mod gpu {
                 bind_group_layouts: &[&layout],
                 push_constant_ranges: &[],
             });
-            let vertex_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("vrm toon"),
-                layout: Some(&pl),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: 24,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &vertex_attrs,
-                    }],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+            let pipeline = toon_pipeline(&device, &shader, &pl, "vs_main", "fs_main", None);
+            // the hull's front faces would cover the surface; its back faces show around it
+            let outline_pipeline = toon_pipeline(
+                &device,
+                &shader,
+                &pl,
+                "vs_outline",
+                "fs_outline",
+                Some(wgpu::Face::Front),
+            );
             Ok(Self {
                 device,
                 queue,
                 pipeline,
+                outline_pipeline,
                 layout,
                 width,
                 height,
@@ -522,6 +663,7 @@ mod gpu {
                     indices,
                     params: *p,
                     paint: None,
+                    outline: None,
                 }],
                 p.clear,
             )
@@ -547,6 +689,14 @@ mod gpu {
             for (i, part) in parts.iter().enumerate() {
                 check_mesh(part.positions, part.normals, part.indices)
                     .map_err(|e| RenderError::BadMesh(format!("part {i}: {e}")))?;
+                if let Some(o) = &part.outline {
+                    check_outline(o).map_err(|e| match e {
+                        RenderError::BadOutline(m) => {
+                            RenderError::BadOutline(format!("part {i}: {m}"))
+                        }
+                        other => other,
+                    })?;
+                }
                 if let Some(paint) = part.paint {
                     check_paint(paint).map_err(|e| match e {
                         RenderError::BadPaint(m) => RenderError::BadPaint(format!("part {i}: {m}")),
@@ -588,6 +738,18 @@ mod gpu {
                         p.shading_shift,
                     ]);
                     uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
+                    #[allow(clippy::cast_precision_loss)]
+                    let aspect = self.width as f32 / self.height as f32;
+                    let (width, mode, mix, color) =
+                        part.outline.map_or((0.0, 0.0, 0.0, [0.0; 3]), |o| {
+                            let mode = match o.mode {
+                                OutlineMode::World => 1.0,
+                                OutlineMode::Screen => 2.0,
+                            };
+                            (o.width, mode, o.lighting_mix, o.color)
+                        });
+                    uni.extend_from_slice(&[width, mode, mix, aspect]);
+                    uni.extend_from_slice(&[color[0], color[1], color[2], 1.0]);
                     uni.extend(paint_words(part.paint));
                     let ubuf = self
                         .device
@@ -606,7 +768,8 @@ mod gpu {
                     });
                     #[allow(clippy::cast_possible_truncation)]
                     let count = part.indices.len() as u32;
-                    (vbuf, ibuf, bind, count)
+                    let outlined = part.outline.is_some_and(|o| o.width > 0.0);
+                    (vbuf, ibuf, bind, count, outlined)
                 })
                 .collect();
             let size = wgpu::Extent3d {
@@ -664,8 +827,18 @@ mod gpu {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
+                // the outline hulls, then the surfaces (the depth buffer orders them)
+                pass.set_pipeline(&self.outline_pipeline);
+                for (vbuf, ibuf, bind, count, outlined) in &uploads {
+                    if *outlined {
+                        pass.set_bind_group(0, bind, &[]);
+                        pass.set_vertex_buffer(0, vbuf.slice(..));
+                        pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..*count, 0, 0..1);
+                    }
+                }
                 pass.set_pipeline(&self.pipeline);
-                for (vbuf, ibuf, bind, count) in &uploads {
+                for (vbuf, ibuf, bind, count, _) in &uploads {
                     pass.set_bind_group(0, bind, &[]);
                     pass.set_vertex_buffer(0, vbuf.slice(..));
                     pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);

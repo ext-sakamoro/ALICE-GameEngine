@@ -1,5 +1,5 @@
 //! Poses a VRM model (an expression at full weight), draws every primitive of its first mesh
-//! (each with its material, one depth buffer) with the toon shader into an offscreen 256 x 256 image, degrades it like a failing video call
+//! (each with its material and its `MToon` outline, one depth buffer) with the toon shader into an offscreen 256 x 256 image, degrades it like a failing video call
 //! (`call_fx`, level 0 to 3) and writes it as a binary PPM.
 //!
 //! ```sh
@@ -9,7 +9,7 @@
 use alice_game_engine::call_fx::{apply, CallFx};
 use alice_game_engine::vrm::read_vrm;
 use alice_game_engine::vrm_pose::VrmPose;
-use alice_game_engine::vrm_render::{ToonParams, ToonPart, ToonRenderer};
+use alice_game_engine::vrm_render::{Outline, ToonParams, ToonPart, ToonRenderer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -49,22 +49,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let params = prim.material.map_or(plain, |m| {
                 ToonParams::from_material(&model.materials[m as usize], VIEW_PROJ, LIGHT, CLEAR)
             });
+            // the material's MToon outline, when it has one
+            let outline = prim
+                .material
+                .and_then(|m| Outline::from_material(&model.materials[m as usize]));
             Ok((
                 pose.posed_positions(0, k)?,
                 pose.posed_normals(0, k)?,
                 indices,
                 params,
+                outline,
             ))
         })
         .collect::<Result<Vec<_>, alice_game_engine::vrm_pose::PoseError>>()?;
     let parts: Vec<ToonPart<'_>> = meshes
         .iter()
-        .map(|(positions, normals, indices, params)| ToonPart {
+        .map(|(positions, normals, indices, params, outline)| ToonPart {
             positions,
             normals,
             indices,
             params: *params,
             paint: None,
+            outline: *outline,
         })
         .collect();
     let (w, h) = (256u32, 256u32);
