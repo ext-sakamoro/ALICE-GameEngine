@@ -71,6 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             params: *params,
             paint: None,
             outline: *outline,
+            surface: None,
         })
         .collect();
     let (w, h) = (256u32, 256u32);

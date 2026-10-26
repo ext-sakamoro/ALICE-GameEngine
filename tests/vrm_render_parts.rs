@@ -49,6 +49,7 @@ mod gpu {
             params: params(color),
             paint: None,
             outline: None,
+            surface: None,
         }
     }
 

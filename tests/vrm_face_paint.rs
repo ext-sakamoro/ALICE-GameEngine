@@ -162,6 +162,7 @@ mod gpu {
             },
             paint: p,
             outline: None,
+            surface: None,
         };
         ToonRenderer::new_headless(64, 64)
             .expect("a GPU")
@@ -248,6 +249,7 @@ mod gpu {
             },
             paint: p,
             outline: None,
+            surface: None,
         };
         let r = ToonRenderer::new_headless(64, 64)
             .expect("a GPU")
