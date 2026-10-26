@@ -18,6 +18,8 @@ RESULT = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) igno
 
 
 def binary_name(path: str) -> str:
+    # cargo prints the path with the platform's separator (tests\foo.rs on Windows)
+    path = path.replace("\\", "/")
     if path == "src/lib.rs":
         return "lib"
     return path.rsplit("/", 1)[-1].removesuffix(".rs")

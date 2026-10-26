@@ -8,10 +8,10 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("min_passed.py")
 
 
-def out(*binaries):
+def out(*binaries, sep="/"):
     lines = []
     for name, passed, failed, ignored in binaries:
-        lines.append(f"     Running tests/{name}.rs (target/debug/deps/{name}-0123)")
+        lines.append(f"     Running tests{sep}{name}.rs (target{sep}debug{sep}deps{sep}{name}-0123.exe)")
         lines.append(
             f"test result: ok. {passed} passed; {failed} failed; {ignored} ignored; "
             "0 measured; 0 filtered out; finished in 0.01s"
@@ -37,6 +37,9 @@ CASES = [
     ("--no-ignored with none ignored", out(("a", 5, 0, 0)), ["--no-ignored", "a=5"], 0),
     ("nothing compared", "no test output\n", ["a=1"], 1),
     ("no binary named", out(("a", 5, 0, 0)), ["--no-ignored"], 2),
+    # Windows prints the paths with backslashes
+    ("a Windows path", out(("a", 5, 0, 0), sep="\\"), ["a=5"], 0),
+    ("a Windows library", "     Running unittests src\\lib.rs (x.exe)\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n", ["lib=3"], 0),
 ]
 
 
