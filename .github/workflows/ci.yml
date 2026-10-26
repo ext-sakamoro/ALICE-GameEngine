@@ -73,6 +73,24 @@ jobs:
       - name: cargo check --lib for each feature alone
         run: python3 scripts/each_feature.py
 
+  gpu-oracle:
+    name: GPU oracles on a software adapter (lavapipe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # lavapipe (Mesa's software Vulkan) is the adapter wgpu picks on a runner without a GPU;
+      # the GPU tests request an adapter with expect(), so a missing one fails, never skips
+      - name: Install Mesa Vulkan (lavapipe)
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      # the #[ignore = "needs a working GPU adapter"] tests run here; min_passed fails when a
+      # binary ran fewer tests than named (hd2d_postfx 15 in the library, vrm_render 4)
+      - name: GPU tests (--include-ignored)
+        run: |
+          set -o pipefail
+          cargo test --features gpu --lib hd2d_postfx -- --include-ignored 2>&1 | python3 scripts/min_passed.py lib=15
+          cargo test --features gpu --test vrm_render -- --include-ignored 2>&1 | python3 scripts/min_passed.py vrm_render=4
+
   mobile-build:
     name: mobile build smoke (iOS + Android cargo check)
     runs-on: macos-latest

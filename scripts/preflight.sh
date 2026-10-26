@@ -44,6 +44,14 @@ relint
 step "ci.yml / each-feature: cargo check --lib for each feature alone"
 ( export CARGO_TERM_COLOR="always"; python3 scripts/each_feature.py )
 
+step "ci.yml / gpu-oracle: GPU tests (--include-ignored, this machine's adapter)"
+(
+  export CARGO_TERM_COLOR="always"
+  set -o pipefail
+  cargo test --features gpu --lib hd2d_postfx -- --include-ignored 2>&1 | python3 scripts/min_passed.py lib=15
+  cargo test --features gpu --test vrm_render -- --include-ignored 2>&1 | python3 scripts/min_passed.py vrm_render=4
+)
+
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
 rustup target list --installed | grep -q '^aarch64-apple-ios$' || rustup target add aarch64-apple-ios
 ( export CARGO_TERM_COLOR="always"; cargo check --target aarch64-apple-ios --no-default-features )

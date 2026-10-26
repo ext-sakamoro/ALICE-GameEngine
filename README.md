@@ -126,6 +126,8 @@ Feature flags pick what you compile:
 - **VRM pose (CPU)** — `vrm_pose::VrmPose`: expression weights → morph target
   weights → morph targets → node transforms → linear blend skinning
   (`cargo run --example vrm_pose_demo`)
+- **VRM toon offscreen** — `vrm_render::ToonRenderer` draws a posed primitive with a
+  two-tone shader into an image (`cargo run --example vrm_toon_offscreen --features gpu`)
 - **TUTORIAL.md** — five-step getting started
 - **TLAS bottom-up driver** — `Bvh::levels_bottom_up()` +
   `gpu_bvh_interior_refit_compute` for one-loop GPU refit
