@@ -64,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             normals,
             indices,
             params: *params,
+            paint: None,
         })
         .collect();
     let (w, h) = (256u32, 256u32);

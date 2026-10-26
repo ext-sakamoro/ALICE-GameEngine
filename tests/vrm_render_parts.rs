@@ -47,6 +47,7 @@ mod gpu {
             normals: &UP,
             indices: &TRI,
             params: params(color),
+            paint: None,
         }
     }
 

@@ -4,8 +4,11 @@
 //! skinning and the morph targets are the CPU's, one implementation for both the image and
 //! anything that hashes or compares the pose. The shader is `MToon` 1.0's shading:
 //! `s = dot(normal, light) + shift`, `t = clamp((s + 1 - toony) / (2 - 2 toony), 0, 1)` (a step at
-//! `s = 0` when toony is 1), colour = `mix(shade, base, t)`. [`toon_wgsl`] is plain text (validated by naga in the tests); the renderer is
-//! behind the `gpu` feature.
+//! `s = 0` when toony is 1), colour = `mix(shade, base, t)`. A part may carry a [`FacePaint`]:
+//! 2D shapes (ellipses and strokes) on a plane in front of the face, evaluated per fragment as
+//! signed distances, so eyes, brows and a mouth are laws on the surface rather than meshes, and
+//! an expression is a change of the shapes' numbers. [`toon_wgsl`] is plain text (validated by
+//! naga in the tests); the renderer is behind the `gpu` feature.
 
 /// The WGSL of the toon pipeline: `vs_main` / `fs_main`, one uniform block at group 0
 #[must_use]
@@ -19,6 +22,12 @@ struct Params {
     light: vec4<f32>,
     // x: the shading toony factor (0..=1)
     shading: vec4<f32>,
+    // world -> face plane: xy are the paint coordinates, z the depth along the face's forward
+    to_face: mat4x4<f32>,
+    // x: the number of shapes, y: the least face depth that is painted
+    paint: vec4<f32>,
+    // 3 vec4 per shape: (kind, p0.x, p0.y, p1.x), (p1.y, p2.x, p2.y, half width), colour
+    shapes: array<vec4<f32>, 96>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -31,6 +40,7 @@ struct VsIn {
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
+    @location(1) world: vec3<f32>,
 };
 
 @vertex
@@ -38,7 +48,42 @@ fn vs_main(v: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = params.view_proj * vec4<f32>(v.position, 1.0);
     out.normal = v.normal;
+    out.world = v.position;
     return out;
+}
+
+fn segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let ab = b - a;
+    let h = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
+    return length(p - a - ab * h);
+}
+
+fn bez(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, t: f32) -> vec2<f32> {
+    let u = 1.0 - t;
+    return u * u * a + 2.0 * u * t * b + t * t * c;
+}
+
+// signed distance of shape i at p (negative inside)
+fn shape_distance(i: u32, p: vec2<f32>) -> f32 {
+    let s0 = params.shapes[3u * i];
+    let s1 = params.shapes[3u * i + 1u];
+    if (s0.x < 0.5) {
+        // ellipse: centre s0.yz, radii (s0.w, s1.x); the sign is exact
+        let r = vec2<f32>(s0.w, s1.x);
+        return (length((p - s0.yz) / r) - 1.0) * min(r.x, r.y);
+    }
+    // stroke: the quadratic curve a = s0.yz, b = (s0.w, s1.x), c = s1.yz, sampled at 9 points
+    let a = s0.yz;
+    let b = vec2<f32>(s0.w, s1.x);
+    let c = s1.yz;
+    var d = 1e9;
+    var prev = a;
+    for (var k = 1u; k <= 8u; k = k + 1u) {
+        let next = bez(a, b, c, f32(k) / 8.0);
+        d = min(d, segment(p, prev, next));
+        prev = next;
+    }
+    return d - s1.w;
 }
 
 @fragment
@@ -52,7 +97,20 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     } else {
         t = clamp((s + 1.0 - toony) / width, 0.0, 1.0);
     }
-    return mix(params.shade_color, params.base_color, t);
+    var color = mix(params.shade_color, params.base_color, t);
+    let count = u32(params.paint.x);
+    if (count > 0u) {
+        let q = (params.to_face * vec4<f32>(f.world, 1.0)).xyz;
+        if (q.z >= params.paint.y) {
+            // in order: a later shape is drawn over an earlier one, flat (unlit)
+            for (var i = 0u; i < count; i = i + 1u) {
+                if (shape_distance(i, q.xy) <= 0.0) {
+                    color = params.shapes[3u * i + 2u];
+                }
+            }
+        }
+    }
+    return color;
 }
 "
 }
@@ -106,6 +164,145 @@ impl ToonParams {
     }
 }
 
+/// The most shapes a [`FacePaint`] holds
+pub const MAX_PAINT_SHAPES: usize = 32;
+
+/// A 2D shape of a [`FacePaint`], in face-plane coordinates
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PaintShape {
+    /// The inside of an axis-aligned ellipse
+    Ellipse {
+        /// Centre
+        center: [f32; 2],
+        /// Radii along x and y (both > 0)
+        radii: [f32; 2],
+        /// Colour
+        color: [f32; 4],
+    },
+    /// Every point within `half_width` of the quadratic curve from `a` through control `b` to
+    /// `c` (the curve is sampled at 9 points, t = 0, 1/8, ..., 1)
+    Stroke {
+        /// Start
+        a: [f32; 2],
+        /// Control point
+        b: [f32; 2],
+        /// End
+        c: [f32; 2],
+        /// Half the width (> 0)
+        half_width: f32,
+        /// Colour
+        color: [f32; 4],
+    },
+}
+
+/// Shapes painted on a part: a fragment at world `w` is taken to the face plane by `to_face`
+/// (`q = to_face * (w, 1)`), and where `q.z >= min_depth` the last shape whose signed distance
+/// at `q.xy` is <= 0 gives its colour, flat (unlit)
+#[derive(Debug, Clone, PartialEq)]
+pub struct FacePaint {
+    /// Column-major world -> face-plane matrix
+    pub to_face: [f32; 16],
+    /// The least face depth that is painted (keeps the back of a head clear)
+    pub min_depth: f32,
+    /// The shapes, drawn in order (at most [`MAX_PAINT_SHAPES`])
+    pub shapes: Vec<PaintShape>,
+}
+
+/// Checks a paint: at most [`MAX_PAINT_SHAPES`] shapes, every number finite, radii and half
+/// widths positive
+///
+/// # Errors
+///
+/// [`RenderError::BadPaint`]
+pub fn check_paint(p: &FacePaint) -> Result<(), RenderError> {
+    if p.shapes.len() > MAX_PAINT_SHAPES {
+        return Err(RenderError::BadPaint(format!(
+            "{} shapes, at most {MAX_PAINT_SHAPES}",
+            p.shapes.len()
+        )));
+    }
+    if !p.to_face.iter().all(|x| x.is_finite()) || !p.min_depth.is_finite() {
+        return Err(RenderError::BadPaint("a non-finite matrix or depth".into()));
+    }
+    for (i, s) in p.shapes.iter().enumerate() {
+        let (nums, size): (Vec<f32>, [f32; 2]) = match *s {
+            PaintShape::Ellipse {
+                center,
+                radii,
+                color,
+            } => (
+                center.iter().chain(&radii).chain(&color).copied().collect(),
+                radii,
+            ),
+            PaintShape::Stroke {
+                a,
+                b,
+                c,
+                half_width,
+                color,
+            } => (
+                a.iter()
+                    .chain(&b)
+                    .chain(&c)
+                    .chain(&[half_width])
+                    .chain(&color)
+                    .copied()
+                    .collect(),
+                [half_width; 2],
+            ),
+        };
+        if !nums.iter().all(|x| x.is_finite()) {
+            return Err(RenderError::BadPaint(format!(
+                "shape {i}: a non-finite number"
+            )));
+        }
+        if size.iter().any(|&r| r <= 0.0) {
+            return Err(RenderError::BadPaint(format!(
+                "shape {i}: a radius or half width that is not positive"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The uniform words of a paint (after the toon parameters): the matrix, the header and 96 vec4
+fn paint_words(p: Option<&FacePaint>) -> Vec<f32> {
+    let mut w = Vec::with_capacity(16 + 4 + 96 * 4);
+    let identity = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    w.extend_from_slice(&p.map_or(identity, |p| p.to_face));
+    #[allow(clippy::cast_precision_loss)]
+    let count = p.map_or(0, |p| p.shapes.len()) as f32;
+    w.extend_from_slice(&[count, p.map_or(0.0, |p| p.min_depth), 0.0, 0.0]);
+    for s in p.map_or(&[][..], |p| &p.shapes[..]) {
+        match *s {
+            PaintShape::Ellipse {
+                center,
+                radii,
+                color,
+            } => {
+                w.extend_from_slice(&[0.0, center[0], center[1], radii[0]]);
+                w.extend_from_slice(&[radii[1], 0.0, 0.0, 0.0]);
+                w.extend_from_slice(&color);
+            }
+            PaintShape::Stroke {
+                a,
+                b,
+                c,
+                half_width,
+                color,
+            } => {
+                w.extend_from_slice(&[1.0, a[0], a[1], b[0]]);
+                w.extend_from_slice(&[b[1], c[0], c[1], half_width]);
+                w.extend_from_slice(&color);
+            }
+        }
+    }
+    w.resize(16 + 4 + 96 * 4, 0.0);
+    w
+}
+
 /// One primitive of a multi-part draw: its mesh and the parameters it is lit and seen with
 #[derive(Debug, Clone, Copy)]
 pub struct ToonPart<'a> {
@@ -117,6 +314,8 @@ pub struct ToonPart<'a> {
     pub indices: &'a [u32],
     /// The material, light and view of this part (its `clear` is not used)
     pub params: ToonParams,
+    /// Shapes painted on this part, if any
+    pub paint: Option<&'a FacePaint>,
 }
 
 /// Why a draw failed
@@ -129,6 +328,8 @@ pub enum RenderError {
     BadMesh(String),
     /// The image could not be read back
     Readback(String),
+    /// A face paint that [`check_paint`] refuses
+    BadPaint(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -137,6 +338,7 @@ impl std::fmt::Display for RenderError {
             Self::NoDevice(e) => write!(f, "no GPU device: {e}"),
             Self::BadMesh(e) => write!(f, "bad mesh: {e}"),
             Self::Readback(e) => write!(f, "readback failed: {e}"),
+            Self::BadPaint(e) => write!(f, "bad paint: {e}"),
         }
     }
 }
@@ -189,7 +391,9 @@ pub use gpu::ToonRenderer;
 
 #[cfg(feature = "gpu")]
 mod gpu {
-    use super::{check_mesh, toon_wgsl, RenderError, ToonParams, ToonPart};
+    use super::{
+        check_mesh, check_paint, paint_words, toon_wgsl, RenderError, ToonParams, ToonPart,
+    };
     use wgpu::util::DeviceExt;
 
     const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -317,6 +521,7 @@ mod gpu {
                     normals,
                     indices,
                     params: *p,
+                    paint: None,
                 }],
                 p.clear,
             )
@@ -342,6 +547,12 @@ mod gpu {
             for (i, part) in parts.iter().enumerate() {
                 check_mesh(part.positions, part.normals, part.indices)
                     .map_err(|e| RenderError::BadMesh(format!("part {i}: {e}")))?;
+                if let Some(paint) = part.paint {
+                    check_paint(paint).map_err(|e| match e {
+                        RenderError::BadPaint(m) => RenderError::BadPaint(format!("part {i}: {m}")),
+                        other => other,
+                    })?;
+                }
             }
             let uploads: Vec<_> = parts
                 .iter()
@@ -377,6 +588,7 @@ mod gpu {
                         p.shading_shift,
                     ]);
                     uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
+                    uni.extend(paint_words(part.paint));
                     let ubuf = self
                         .device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
