@@ -211,19 +211,19 @@ pub struct VrmHeader {
     pub author: String,
 }
 
-/// Try to extract a VRM 1.x header from a JSON chunk.
+/// Try to extract a VRM header (1.x or 0.x) from a JSON chunk.
 ///
-/// Read through [`crate::vrm::read_vrm_json`]: `None` when that refuses the chunk (not VRM 1.x,
-/// a VRM 0.x file, or a meta field the specification requires is absent or out of its set).
-/// `author` is the first of the authors; the meta with every licence field is
-/// [`crate::vrm::VrmMeta`].
+/// Read through [`crate::vrm::read_vrm_json`]: `None` when that refuses the chunk (not VRM, or
+/// a meta field the specification requires is absent or out of its set). A VRM 0.x file reads
+/// too. `author` is the first of the authors; the meta with every licence field is
+/// [`crate::vrm::Licence`].
 #[must_use]
 pub fn parse_vrm_json(json: &str) -> Option<VrmHeader> {
     let doc = crate::vrm::read_vrm_json(json).ok()?;
     Some(VrmHeader {
         spec_version: doc.spec_version,
-        title: doc.meta.name,
-        author: doc.meta.authors.into_iter().next().unwrap_or_default(),
+        title: doc.meta.title().to_owned(),
+        author: doc.meta.author().to_owned(),
     })
 }
 
@@ -281,8 +281,8 @@ pub fn parse_vrm_full(json: &str) -> Option<VrmExtract> {
     Some(VrmExtract {
         header: VrmHeader {
             spec_version: doc.spec_version,
-            title: doc.meta.name,
-            author: doc.meta.authors.into_iter().next().unwrap_or_default(),
+            title: doc.meta.title().to_owned(),
+            author: doc.meta.author().to_owned(),
         },
         bones,
         expressions,

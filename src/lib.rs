@@ -136,6 +136,7 @@ pub mod verse;
 pub mod virtual_shadow;
 pub mod volumetric_clouds;
 pub mod vrm;
+pub mod vrm0;
 pub mod vrm_pose;
 pub mod vrm_render;
 

@@ -1,11 +1,11 @@
-//! VRM 1.0 reader: the GLB container, the `VRMC_vrm` extension (meta with every licence field,
+//! VRM reader: the GLB container, the `VRMC_vrm` extension (meta with every licence field,
 //! humanoid bones, expressions with every morph target bind) and the mesh data a renderer
 //! needs (positions, normals, joints, weights, indices, morph target deltas, skins, nodes).
 //!
 //! Every length and offset in the file is checked against the bytes before it is used, and no
 //! allocation is sized by a number the file states without that check: a broken file is an
-//! error, never a panic. VRM 0.x (`extensions.VRM`) is named as [`VrmError::Vrm0`], not read
-//! as an empty model.
+//! error, never a panic. A VRM 0.x file (`extensions.VRM`) is read into the same model, turned
+//! to face +Z, with its own licence fields kept verbatim ([`crate::vrm0`]).
 //!
 //! References: glTF 2.0 (GLB container, accessors) and `VRMC_vrm` 1.0 (meta, humanoid,
 //! expressions).
@@ -26,10 +26,8 @@ pub enum VrmError {
     BadChunk,
     /// The JSON does not parse
     Json(String),
-    /// A glTF file without the `VRMC_vrm` extension
+    /// A glTF file with neither the `VRMC_vrm` nor the 0.x `VRM` extension
     NotVrm,
-    /// A VRM 0.x file (`extensions.VRM`), which this reader does not read
-    Vrm0,
     /// A field the specification requires is absent (its JSON path)
     Missing(String),
     /// A field has a value of the wrong type or outside the specification's set (its JSON path)
@@ -46,8 +44,7 @@ impl std::fmt::Display for VrmError {
             Self::UnsupportedVersion(v) => write!(f, "GLB container version {v}, expected 2"),
             Self::BadChunk => f.write_str("the GLB chunks are not JSON then BIN, 4-byte aligned"),
             Self::Json(e) => write!(f, "the JSON chunk does not parse: {e}"),
-            Self::NotVrm => f.write_str("a glTF file without the VRMC_vrm extension"),
-            Self::Vrm0 => f.write_str("a VRM 0.x file (extensions.VRM), not read"),
+            Self::NotVrm => f.write_str("a glTF file without the VRMC_vrm or VRM extension"),
             Self::Missing(p) => write!(f, "{p} is required and absent"),
             Self::BadValue(p) => write!(f, "{p} has a value outside the specification"),
             Self::OutOfRange(p) => write!(f, "{p} points outside the data"),
@@ -243,14 +240,44 @@ pub struct LookAt {
     pub vertical_up: RangeMap,
 }
 
-/// The `VRMC_vrm` extension
+/// The licence a model is under, in the terms of the version it was written in: the 0.x fields
+/// do not translate to the 1.0 ones, so neither is made from the other
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Licence {
+    /// A VRM 1.0 meta
+    Vrm1(VrmMeta),
+    /// A VRM 0.x meta
+    Vrm0(crate::vrm0::Vrm0Meta),
+}
+
+impl Licence {
+    /// The model's name (`name` in 1.0, `title` in 0.x; empty when 0.x states none)
+    #[must_use]
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Vrm1(m) => &m.name,
+            Self::Vrm0(m) => m.title.as_deref().unwrap_or(""),
+        }
+    }
+
+    /// The first author (empty when none is stated)
+    #[must_use]
+    pub fn author(&self) -> &str {
+        match self {
+            Self::Vrm1(m) => m.authors.first().map_or("", String::as_str),
+            Self::Vrm0(m) => m.author.as_deref().unwrap_or(""),
+        }
+    }
+}
+
+/// The `VRMC_vrm` extension, or a 0.x `VRM` extension read into the same terms
 #[derive(Debug, Clone, PartialEq)]
 pub struct VrmDocument {
-    /// `specVersion`
+    /// `specVersion` (`0.0` for a 0.x file that states none)
     pub spec_version: String,
-    /// The meta
-    pub meta: VrmMeta,
-    /// `(bone name, node index)`, in the order of the bone names
+    /// The meta, in the terms of the file's version
+    pub meta: Licence,
+    /// `(bone name, node index)`, in the order of the bone names (1.0 names for a 0.x file)
     pub bones: Vec<(String, u32)>,
     /// The presets in the order of their names, then the custom ones in the order of theirs
     pub expressions: Vec<VrmExpression>,
@@ -295,7 +322,7 @@ fn read_look_at(v: &Value) -> Result<LookAt, VrmError> {
     })
 }
 
-fn path_str(v: &Value, key: &str, path: &str) -> Result<Option<String>, VrmError> {
+pub(crate) fn path_str(v: &Value, key: &str, path: &str) -> Result<Option<String>, VrmError> {
     match v.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
@@ -334,7 +361,7 @@ fn path_strings(v: &Value, key: &str, path: &str) -> Result<Vec<String>, VrmErro
     }
 }
 
-fn index(v: &Value, key: &str, path: &str) -> Result<u32, VrmError> {
+pub(crate) fn index(v: &Value, key: &str, path: &str) -> Result<u32, VrmError> {
     let n = v
         .get(key)
         .ok_or_else(|| VrmError::Missing(format!("{path}.{key}")))?
@@ -433,20 +460,26 @@ fn read_expressions(
     Ok(())
 }
 
-/// Reads the `VRMC_vrm` extension of a glTF JSON chunk
+/// Reads the `VRMC_vrm` extension of a glTF JSON chunk, or its 0.x `VRM` extension
 ///
 /// # Errors
 ///
-/// [`VrmError::Json`], [`VrmError::Vrm0`], [`VrmError::NotVrm`], [`VrmError::Missing`] or
-/// [`VrmError::BadValue`]
+/// [`VrmError::Json`], [`VrmError::NotVrm`], [`VrmError::Missing`], [`VrmError::BadValue`] or
+/// (a 0.x bind naming a mesh no node holds) [`VrmError::OutOfRange`]
 pub fn read_vrm_json(json: &str) -> Result<VrmDocument, VrmError> {
     let v: Value = serde_json::from_str(json).map_err(|e| VrmError::Json(e.to_string()))?;
     let ext = v.get("extensions");
     let Some(vrm) = ext.and_then(|e| e.get("VRMC_vrm")) else {
-        return Err(if ext.and_then(|e| e.get("VRM")).is_some() {
-            VrmError::Vrm0
-        } else {
-            VrmError::NotVrm
+        let Some(vrm0) = ext.and_then(|e| e.get("VRM")) else {
+            return Err(VrmError::NotVrm);
+        };
+        let d = crate::vrm0::read_document(&v, vrm0)?;
+        return Ok(VrmDocument {
+            spec_version: d.spec_version,
+            meta: Licence::Vrm0(d.meta),
+            bones: d.bones,
+            expressions: d.expressions,
+            look_at: d.look_at,
         });
     };
     let spec_version = path_str(vrm, "specVersion", "VRMC_vrm")?
@@ -475,7 +508,7 @@ pub fn read_vrm_json(json: &str) -> Result<VrmDocument, VrmError> {
     let look_at = vrm.get("lookAt").map(read_look_at).transpose()?;
     Ok(VrmDocument {
         spec_version,
-        meta,
+        meta: Licence::Vrm1(meta),
         bones,
         expressions,
         look_at,
@@ -825,7 +858,7 @@ fn opt_attr(attrs: &Value, key: &str, path: &str) -> Result<Option<u32>, VrmErro
     index(attrs, key, path).map(Some)
 }
 
-fn floats_n<const N: usize>(
+pub(crate) fn floats_n<const N: usize>(
     v: &Value,
     key: &str,
     default: [f32; N],
@@ -926,7 +959,7 @@ fn read_primitive(acc: &Accessors<'_>, p: &Value, path: &str) -> Result<MeshPrim
     })
 }
 
-/// Reads a VRM 1.0 file whole
+/// Reads a VRM file whole (1.0, or 0.x turned to face +Z)
 ///
 /// # Errors
 ///
@@ -962,11 +995,15 @@ pub fn read_vrm(data: &[u8]) -> Result<VrmModel, VrmError> {
         }
         meshes.push(out);
     }
-    let materials = list("materials")?
+    let mut materials = list("materials")?
         .iter()
         .enumerate()
         .map(|(i, m)| read_material(m, &format!("materials[{i}]")))
         .collect::<Result<Vec<_>, _>>()?;
+    let vrm0 = json.get("extensions").and_then(|e| e.get("VRM"));
+    if let (Licence::Vrm0(_), Some(vrm0)) = (&document.meta, vrm0) {
+        crate::vrm0::apply_materials(vrm0, &mut materials)?;
+    }
     for (m, prims) in meshes.iter().enumerate() {
         for (k, p) in prims.iter().enumerate() {
             if p.material.is_some_and(|i| i as usize >= materials.len()) {
@@ -977,7 +1014,11 @@ pub fn read_vrm(data: &[u8]) -> Result<VrmModel, VrmError> {
         }
     }
     let nodes_json = list("nodes")?;
-    let (skins, nodes) = read_skins_and_nodes(&acc, &nodes_json, &list("skins")?, meshes.len())?;
+    let (mut skins, mut nodes) =
+        read_skins_and_nodes(&acc, &nodes_json, &list("skins")?, meshes.len())?;
+    if matches!(document.meta, Licence::Vrm0(_)) {
+        crate::vrm0::turn_around(&mut meshes, &mut skins, &mut nodes);
+    }
     let node_count = nodes.len();
     let check_node = |i: u32, p: &str| {
         if (i as usize) < node_count {

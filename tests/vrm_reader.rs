@@ -7,7 +7,7 @@
 //! the full meta with its licence fields, the humanoid bones and every expression bind); the
 //! reader must recover each of them. The values are not produced by this crate.
 
-use alice_game_engine::vrm::{read_vrm, read_vrm_json, split_glb, VrmError};
+use alice_game_engine::vrm::{read_vrm, read_vrm_json, split_glb, Licence, VrmError};
 
 const TINY: &[u8] = include_bytes!("data/vrm/tiny.vrm");
 const EXPECTED: &str = include_str!("data/vrm/expected.txt");
@@ -36,7 +36,9 @@ fn the_glb_splits_into_its_json_and_bin_chunks() {
 #[test]
 fn the_meta_has_every_licence_field() {
     let doc = read_vrm_json(split_glb(TINY).unwrap().json).expect("reads");
-    let m = &doc.meta;
+    let Licence::Vrm1(m) = &doc.meta else {
+        panic!("a 1.0 file has a 1.0 meta")
+    };
     let got: Vec<(String, String)> = vec![
         (
             "allowAntisocialOrHateUsage".into(),
@@ -232,10 +234,10 @@ fn broken_files_are_refused() {
 fn json_that_breaks_the_rules_is_refused() {
     let glb = split_glb(TINY).unwrap();
     let base = glb.json.trim_end();
-    // VRM 0.x is named, not silently unread
+    // VRM 0.x is read under its own licence terms (tests/vrm0_reader.rs), not as 1.0
     assert!(matches!(
         read_vrm_json(r#"{"asset":{"version":"2.0"},"extensions":{"VRM":{"meta":{}}}}"#),
-        Err(VrmError::Vrm0)
+        Ok(d) if matches!(d.meta, Licence::Vrm0(_))
     ));
     assert!(matches!(
         read_vrm_json(r#"{"asset":{"version":"2.0"}}"#),
@@ -276,7 +278,9 @@ fn json_that_breaks_the_rules_is_refused() {
     ] {
         assert!(meta.remove(k).is_some(), "{k} is in the fixture");
     }
-    let m = read_vrm_json(&lean.to_string()).expect("reads").meta;
+    let Licence::Vrm1(m) = read_vrm_json(&lean.to_string()).expect("reads").meta else {
+        panic!("a 1.0 file has a 1.0 meta")
+    };
     assert_eq!(
         (
             m.avatar_permission.as_str(),
