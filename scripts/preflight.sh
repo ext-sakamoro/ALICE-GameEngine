@@ -82,7 +82,7 @@ step "ci.yml / physics: Test (physics)"
 (
   export CARGO_TERM_COLOR="always"
   set -o pipefail
-  cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10 vrm_reader=10 vrm0_reader=8
+  cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10 vrm_reader=10 vrm0_reader=8 vrm_node_matrix=6
 )
 
 step "ci.yml / test: Doc-tests"

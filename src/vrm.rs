@@ -1110,6 +1110,7 @@ fn read_skins_and_nodes(
         if skin.is_some_and(|s| s as usize >= skins.len()) {
             return Err(VrmError::OutOfRange(format!("{path}.skin")));
         }
+        let (translation, rotation, scale) = node_trs(n, &path)?;
         let children = match n.get("children") {
             None => Vec::new(),
             Some(c) => c
@@ -1129,10 +1130,128 @@ fn read_skins_and_nodes(
             mesh,
             skin,
             children,
-            translation: floats_n(n, "translation", [0.0; 3], &path)?,
-            rotation: floats_n(n, "rotation", [0.0, 0.0, 0.0, 1.0], &path)?,
-            scale: floats_n(n, "scale", [1.0; 3], &path)?,
+            translation,
+            rotation,
+            scale,
         });
     }
     Ok((skins, nodes))
+}
+
+/// A node's translation, rotation (x, y, z, w) and scale: as given, or read from its `matrix`
+///
+/// glTF 2.0 § 5.25: a node gives either `matrix` (column-major, M = T · R · S) or any of
+/// `translation` / `rotation` / `scale`, not both, and a matrix must decompose into TRS. The
+/// matrix is refused ([`VrmError::BadValue`] at `nodes[i].matrix`) beside TRS, when not finite,
+/// when its last row is not 0 0 0 1, when a column has no length (no rotation to read) and when
+/// its columns are not at right angles (a shear). A matrix that mirrors (determinant below 0)
+/// reads as a negative x scale. A zero scale is refused too, although glTF allows it: a column of
+/// length 0 leaves its axis of the rotation unknown, and this reader does not guess one.
+// exact comparisons: the matrix's last row must be exactly 0 0 0 1; no fused multiply-add, so a
+// file reads to the same bits on every target
+#[allow(clippy::float_cmp, clippy::suboptimal_flops)]
+fn node_trs(n: &Value, path: &str) -> Result<([f32; 3], [f32; 4], [f32; 3]), VrmError> {
+    if n.get("matrix").is_none() {
+        return Ok((
+            floats_n(n, "translation", [0.0; 3], path)?,
+            floats_n(n, "rotation", [0.0, 0.0, 0.0, 1.0], path)?,
+            floats_n(n, "scale", [1.0; 3], path)?,
+        ));
+    }
+    let bad = || VrmError::BadValue(format!("{path}.matrix"));
+    if ["translation", "rotation", "scale"]
+        .iter()
+        .any(|k| n.get(k).is_some())
+    {
+        return Err(bad());
+    }
+    let m: [f32; 16] = floats_n(n, "matrix", [0.0; 16], path)?;
+    if m.iter().any(|x| !x.is_finite())
+        || m[3] != 0.0
+        || m[7] != 0.0
+        || m[11] != 0.0
+        || m[15] != 1.0
+    {
+        return Err(bad());
+    }
+    let col = |c: usize| [m[4 * c], m[4 * c + 1], m[4 * c + 2]];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let cols = [col(0), col(1), col(2)];
+    let mut scale = cols.map(|c| dot(c, c).sqrt());
+    if scale.iter().any(|&s| s <= f32::EPSILON) {
+        return Err(bad());
+    }
+    let mut r = [0.0_f32; 9];
+    for (c, v) in cols.iter().enumerate() {
+        for k in 0..3 {
+            r[3 * c + k] = v[k] / scale[c];
+        }
+    }
+    let rc = |c: usize| [r[3 * c], r[3 * c + 1], r[3 * c + 2]];
+    // at right angles: a shear is not a rotation times a scale
+    if [(0, 1), (0, 2), (1, 2)]
+        .iter()
+        .any(|&(a, b)| dot(rc(a), rc(b)).abs() > 1e-4)
+    {
+        return Err(bad());
+    }
+    // a mirror: the x axis turned round, its scale negative
+    let x = rc(0);
+    let (y, z) = (rc(1), rc(2));
+    let det = dot(
+        x,
+        [
+            y[1] * z[2] - y[2] * z[1],
+            y[2] * z[0] - y[0] * z[2],
+            y[0] * z[1] - y[1] * z[0],
+        ],
+    );
+    if det < 0.0 {
+        scale[0] = -scale[0];
+        for v in &mut r[0..3] {
+            *v = -*v;
+        }
+    }
+    // rotation matrix (column-major, r[3c + row]) to a quaternion, from its largest component
+    let e = |row: usize, c: usize| r[3 * c + row];
+    let (m00, m11, m22) = (e(0, 0), e(1, 1), e(2, 2));
+    let trace = m00 + m11 + m22;
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [
+            (e(2, 1) - e(1, 2)) / s,
+            (e(0, 2) - e(2, 0)) / s,
+            (e(1, 0) - e(0, 1)) / s,
+            0.25 * s,
+        ]
+    } else if m00 > m11 && m00 > m22 {
+        let s = (1.0 + m00 - m11 - m22).sqrt() * 2.0;
+        [
+            0.25 * s,
+            (e(0, 1) + e(1, 0)) / s,
+            (e(0, 2) + e(2, 0)) / s,
+            (e(2, 1) - e(1, 2)) / s,
+        ]
+    } else if m11 > m22 {
+        let s = (1.0 + m11 - m00 - m22).sqrt() * 2.0;
+        [
+            (e(0, 1) + e(1, 0)) / s,
+            0.25 * s,
+            (e(1, 2) + e(2, 1)) / s,
+            (e(0, 2) - e(2, 0)) / s,
+        ]
+    } else {
+        let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0;
+        [
+            (e(0, 2) + e(2, 0)) / s,
+            (e(1, 2) + e(2, 1)) / s,
+            0.25 * s,
+            (e(1, 0) - e(0, 1)) / s,
+        ]
+    };
+    // unit length (the columns are at right angles only to within the tolerance), and w not
+    // negative: one of the two quaternions of a rotation, always the same one
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    let q = q.map(|v| if q[3] < 0.0 { -v / len } else { v / len });
+    Ok(([m[12], m[13], m[14]], q, scale))
 }
