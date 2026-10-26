@@ -45,4 +45,12 @@ bone hips 1
 expression preset aa 0:0:1.0
 expression preset blink binary
 expression preset happy 0:1:1.0 0:0:0.5
+expression preset lookLeft 0:1:1.0
+expression preset lookUp 0:0:1.0
 expression custom smirk 0:1:0.25
+lookat type expression
+lookat offset 0.0 0.0625 0.125
+lookat horizontalInner 60.0 1.0
+lookat horizontalOuter 60.0 1.0
+lookat verticalDown 40.0 0.5
+lookat verticalUp 40.0 0.5

@@ -134,7 +134,7 @@ fn the_humanoid_bones_and_every_expression_bind() {
         })
         .collect();
     let want: Vec<String> = rows("expression ").iter().map(|r| r.join(" ")).collect();
-    assert_eq!(want.len(), 4);
+    assert_eq!(want.len(), 6);
     assert_eq!(exprs, want);
 }
 

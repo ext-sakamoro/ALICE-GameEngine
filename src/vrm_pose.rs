@@ -31,6 +31,8 @@ pub enum PoseError {
     JointOutOfRange(usize),
     /// The primitive of that mesh has no normals
     NoNormals(usize),
+    /// The model has no `lookAt`
+    NoLookAt,
 }
 
 impl std::fmt::Display for PoseError {
@@ -47,6 +49,7 @@ impl std::fmt::Display for PoseError {
             }
             Self::JointOutOfRange(v) => write!(f, "vertex {v} names a joint past the skin"),
             Self::NoNormals(m) => write!(f, "the primitive of mesh {m} has no normals"),
+            Self::NoLookAt => f.write_str("the model has no lookAt"),
         }
     }
 }
@@ -147,6 +150,92 @@ impl<'a> VrmPose<'a> {
             }
         }
         missing
+    }
+
+    /// Points the gaze `yaw_left_deg` degrees to the model's left (negative: right) and
+    /// `pitch_up_deg` degrees up (negative: down), through the model's `lookAt`
+    ///
+    /// Expression type: `lookLeft` / `lookRight` take the horizontal outer map of the yaw,
+    /// `lookUp` / `lookDown` the vertical maps of the pitch (clamped to 0..=1); the opposite one
+    /// is set to 0 when the model has it. Bone type: each eye bone turns by the mapped degrees
+    /// about +Y (yaw; the outer map when the eye turns outward, the inner one inward) and about
+    /// -X (pitch), after its rest rotation.
+    ///
+    /// # Errors
+    ///
+    /// [`PoseError::NotFinite`], [`PoseError::NoLookAt`], or [`PoseError::UnknownExpression`]
+    /// naming a look expression the model lacks for a non-zero weight
+    pub fn set_look(&mut self, yaw_left_deg: f32, pitch_up_deg: f32) -> Result<(), PoseError> {
+        if !yaw_left_deg.is_finite() || !pitch_up_deg.is_finite() {
+            return Err(PoseError::NotFinite);
+        }
+        let la = self.model.document.look_at.ok_or(PoseError::NoLookAt)?;
+        match la.kind {
+            crate::vrm::LookAtKind::Expression => {
+                let h = la.horizontal_outer.map(yaw_left_deg).clamp(0.0, 1.0);
+                let (left, right) = if yaw_left_deg > 0.0 {
+                    (h, 0.0)
+                } else {
+                    (0.0, h)
+                };
+                let v = if pitch_up_deg > 0.0 {
+                    la.vertical_up.map(pitch_up_deg)
+                } else {
+                    la.vertical_down.map(pitch_up_deg)
+                }
+                .clamp(0.0, 1.0);
+                let (up, down) = if pitch_up_deg > 0.0 {
+                    (v, 0.0)
+                } else {
+                    (0.0, v)
+                };
+                for (name, w) in [
+                    ("lookLeft", left),
+                    ("lookRight", right),
+                    ("lookUp", up),
+                    ("lookDown", down),
+                ] {
+                    let i = self
+                        .model
+                        .document
+                        .expressions
+                        .iter()
+                        .position(|e| e.name == name);
+                    match (i, w > 0.0) {
+                        (Some(i), _) => self.expression[i] = w,
+                        (None, true) => return Err(PoseError::UnknownExpression(name.to_owned())),
+                        (None, false) => {}
+                    }
+                }
+            }
+            crate::vrm::LookAtKind::Bone => {
+                for (eye, outward_is_left) in [("leftEye", true), ("rightEye", false)] {
+                    let Some(&(_, node)) = self.model.document.bones.iter().find(|(b, _)| b == eye)
+                    else {
+                        continue;
+                    };
+                    let node = node as usize;
+                    let outward = (yaw_left_deg > 0.0) == outward_is_left;
+                    let map = if outward {
+                        la.horizontal_outer
+                    } else {
+                        la.horizontal_inner
+                    };
+                    let yaw = map.map(yaw_left_deg).copysign(yaw_left_deg);
+                    let pitch = if pitch_up_deg > 0.0 {
+                        la.vertical_up.map(pitch_up_deg)
+                    } else {
+                        -la.vertical_down.map(pitch_up_deg)
+                    };
+                    let rest = self.model.nodes[node].rotation;
+                    let q = glam::Quat::from_array(rest)
+                        * glam::Quat::from_rotation_y(yaw.to_radians())
+                        * glam::Quat::from_rotation_x(-pitch.to_radians());
+                    self.rotation[node] = q.to_array();
+                }
+            }
+        }
+        Ok(())
     }
 
     const fn node(&self, node: usize) -> Result<(), PoseError> {

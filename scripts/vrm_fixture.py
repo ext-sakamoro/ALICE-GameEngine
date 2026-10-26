@@ -132,6 +132,16 @@ def build():
             "specVersion": "1.0",
             "meta": META,
             "humanoid": {"humanBones": {"hips": {"node": 1}, "head": {"node": 2}}},
+            # an expression-type look at: 30 degrees left maps to lookLeft at 0.5 of the way to the
+            # 60-degree input maximum times the output scale 1.0; up maps 20 of 40 degrees by 0.5
+            "lookAt": {
+                "type": "expression",
+                "offsetFromHeadBone": [0.0, 0.0625, 0.125],
+                "rangeMapHorizontalInner": {"inputMaxValue": 60.0, "outputScale": 1.0},
+                "rangeMapHorizontalOuter": {"inputMaxValue": 60.0, "outputScale": 1.0},
+                "rangeMapVerticalDown": {"inputMaxValue": 40.0, "outputScale": 0.5},
+                "rangeMapVerticalUp": {"inputMaxValue": 40.0, "outputScale": 0.5},
+            },
             "expressions": {
                 "preset": {
                     "aa": {"morphTargetBinds": [{"node": 0, "index": 0, "weight": 1.0}]},
@@ -139,6 +149,8 @@ def build():
                                                    {"node": 0, "index": 0, "weight": 0.5}],
                               "isBinary": False},
                     "blink": {"morphTargetBinds": [], "isBinary": True},
+                    "lookLeft": {"morphTargetBinds": [{"node": 0, "index": 1, "weight": 1.0}]},
+                    "lookUp": {"morphTargetBinds": [{"node": 0, "index": 0, "weight": 1.0}]},
                 },
                 "custom": {"smirk": {"morphTargetBinds": [{"node": 0, "index": 1, "weight": 0.25}]}},
             },
@@ -164,7 +176,11 @@ def expected():
     rows += [f"p2indices {' '.join(map(str, P2_INDICES))}"]
     rows += ["bone head 2", "bone hips 1"]
     rows += ["expression preset aa 0:0:1.0", "expression preset blink binary",
-             "expression preset happy 0:1:1.0 0:0:0.5", "expression custom smirk 0:1:0.25"]
+             "expression preset happy 0:1:1.0 0:0:0.5", "expression preset lookLeft 0:1:1.0",
+             "expression preset lookUp 0:0:1.0", "expression custom smirk 0:1:0.25"]
+    rows += ["lookat type expression", "lookat offset 0.0 0.0625 0.125",
+             "lookat horizontalInner 60.0 1.0", "lookat horizontalOuter 60.0 1.0",
+             "lookat verticalDown 40.0 0.5", "lookat verticalUp 40.0 0.5"]
     return "\n".join(rows) + "\n"
 
 

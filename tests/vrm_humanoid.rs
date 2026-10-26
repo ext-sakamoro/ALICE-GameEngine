@@ -141,10 +141,10 @@ fn an_expression_set_drives_a_pose_and_names_what_the_model_lacks() {
     let mut set = ExpressionSet::new();
     set.set(ExpressionChannel::Aa, 1.0);
     set.set(ExpressionChannel::Custom("smirk".into()), 0.5);
-    set.set(ExpressionChannel::LookUp, 1.0);
+    set.set(ExpressionChannel::LookDown, 1.0);
     let missing = pose.apply_expression_set(&set);
-    // the fixture has aa, happy, blink and the custom smirk; lookUp is not in it
-    assert_eq!(missing, vec!["lookUp".to_owned()]);
+    // the fixture has aa, happy, blink, lookLeft, lookUp and the custom smirk; lookDown is not in it
+    assert_eq!(missing, vec!["lookDown".to_owned()]);
     // aa at 1.0 binds target 0 at 1.0; smirk at 0.5 binds target 1 at 0.5 x 0.25 = 0.125
     assert_eq!(pose.morph_weights(0), vec![1.0, 0.125]);
 }

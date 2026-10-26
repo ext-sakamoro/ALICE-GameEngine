@@ -183,6 +183,66 @@ pub struct VrmExpression {
     pub is_binary: bool,
 }
 
+/// How a model looks at a target: by turning its eye bones, or by its look expressions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookAtKind {
+    /// `bone`: the `leftEye` / `rightEye` bones turn; a range map's output is degrees
+    Bone,
+    /// `expression`: `lookLeft` / `lookRight` / `lookUp` / `lookDown` take weights; a range
+    /// map's output is a weight
+    Expression,
+}
+
+/// A look-at range map: an input angle up to `input_max_value` degrees maps linearly to
+/// `output_scale` (degrees for the bone type, a weight for the expression type). The
+/// specification gives no default for an absent map; this reader takes 90 and 10 for both
+/// types, as the reference implementation does (so an expression weight, clamped to 1,
+/// saturates at 9 degrees)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeMap {
+    /// `inputMaxValue` (degrees)
+    pub input_max_value: f32,
+    /// `outputScale`
+    pub output_scale: f32,
+}
+
+impl RangeMap {
+    /// The specification's default map
+    pub const DEFAULT: Self = Self {
+        input_max_value: 90.0,
+        output_scale: 10.0,
+    };
+
+    /// The output for an input angle (its magnitude is used; past the input maximum the
+    /// output is the scale). With an input maximum of 0 the output is 0 for an input of 0 and
+    /// the scale otherwise (the specification's recommendation, which avoids dividing by 0)
+    #[must_use]
+    pub fn map(self, angle_deg: f32) -> f32 {
+        let a = angle_deg.abs();
+        if self.input_max_value <= 0.0 {
+            return if a == 0.0 { 0.0 } else { self.output_scale };
+        }
+        a.min(self.input_max_value) / self.input_max_value * self.output_scale
+    }
+}
+
+/// The `VRMC_vrm` `lookAt`
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LookAt {
+    /// `type`
+    pub kind: LookAtKind,
+    /// `offsetFromHeadBone` (the eyes' position from the head bone)
+    pub offset_from_head_bone: [f32; 3],
+    /// `rangeMapHorizontalInner`
+    pub horizontal_inner: RangeMap,
+    /// `rangeMapHorizontalOuter`
+    pub horizontal_outer: RangeMap,
+    /// `rangeMapVerticalDown`
+    pub vertical_down: RangeMap,
+    /// `rangeMapVerticalUp`
+    pub vertical_up: RangeMap,
+}
+
 /// The `VRMC_vrm` extension
 #[derive(Debug, Clone, PartialEq)]
 pub struct VrmDocument {
@@ -194,6 +254,45 @@ pub struct VrmDocument {
     pub bones: Vec<(String, u32)>,
     /// The presets in the order of their names, then the custom ones in the order of theirs
     pub expressions: Vec<VrmExpression>,
+    /// `lookAt`, when the model has one
+    pub look_at: Option<LookAt>,
+}
+
+fn read_range_map(v: &Value, key: &str) -> Result<RangeMap, VrmError> {
+    let Some(m) = v.get(key) else {
+        return Ok(RangeMap::DEFAULT);
+    };
+    let num = |k: &str, d: f32| -> Result<f32, VrmError> {
+        match m.get(k) {
+            None => Ok(d),
+            #[allow(clippy::cast_possible_truncation)]
+            Some(x) => x
+                .as_f64()
+                .map(|x| x as f32)
+                .filter(|x| x.is_finite() && *x >= 0.0)
+                .ok_or_else(|| VrmError::BadValue(format!("lookAt.{key}.{k}"))),
+        }
+    };
+    Ok(RangeMap {
+        input_max_value: num("inputMaxValue", RangeMap::DEFAULT.input_max_value)?,
+        output_scale: num("outputScale", RangeMap::DEFAULT.output_scale)?,
+    })
+}
+
+fn read_look_at(v: &Value) -> Result<LookAt, VrmError> {
+    let kind = match path_str(v, "type", "lookAt")?.as_deref() {
+        None | Some("bone") => LookAtKind::Bone,
+        Some("expression") => LookAtKind::Expression,
+        Some(_) => return Err(VrmError::BadValue("lookAt.type".into())),
+    };
+    Ok(LookAt {
+        kind,
+        offset_from_head_bone: floats_n(v, "offsetFromHeadBone", [0.0; 3], "lookAt")?,
+        horizontal_inner: read_range_map(v, "rangeMapHorizontalInner")?,
+        horizontal_outer: read_range_map(v, "rangeMapHorizontalOuter")?,
+        vertical_down: read_range_map(v, "rangeMapVerticalDown")?,
+        vertical_up: read_range_map(v, "rangeMapVerticalUp")?,
+    })
 }
 
 fn path_str(v: &Value, key: &str, path: &str) -> Result<Option<String>, VrmError> {
@@ -373,11 +472,13 @@ pub fn read_vrm_json(json: &str) -> Result<VrmDocument, VrmError> {
     let ex = vrm.get("expressions");
     read_expressions(ex.and_then(|e| e.get("preset")), true, &mut expressions)?;
     read_expressions(ex.and_then(|e| e.get("custom")), false, &mut expressions)?;
+    let look_at = vrm.get("lookAt").map(read_look_at).transpose()?;
     Ok(VrmDocument {
         spec_version,
         meta,
         bones,
         expressions,
+        look_at,
     })
 }
 
