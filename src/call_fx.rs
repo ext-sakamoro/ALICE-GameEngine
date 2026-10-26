@@ -10,7 +10,8 @@
 //! 4. `scanline_every` k (k > 0): rows with `y % k == k - 1` are multiplied by `scanline_dim / 256`
 //! 5. `noise` a (a > 0): a xorshift64 generator seeded with `seed` (0 is replaced by a fixed odd
 //!    constant) gives one value per pixel in row-major order; channel c adds
-//!    `((value >> 16c) & 0xFFFF) % (2a + 1) - a`, clamped to 0..=255
+//!    `((value >> 16c) & 0xFFFF) % (2a + 1) - a`, clamped to 0..=255 — uniform over -a..=a up to
+//!    the modulo bias of 65536 values onto 2a + 1 (at most 511, since `a` is a `u8`)
 //!
 //! `scripts/call_fx_reference.py` is an independent implementation of the same definition.
 

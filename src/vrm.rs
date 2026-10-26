@@ -398,6 +398,8 @@ pub struct MeshPrimitive {
     pub indices: Option<Vec<u32>>,
     /// Morph target position deltas, one list per target
     pub targets: Vec<Vec<[f32; 3]>>,
+    /// Morph target normal deltas, one entry per target (`None` when the target has none)
+    pub target_normals: Vec<Option<Vec<[f32; 3]>>>,
 }
 
 /// A skin: its joint nodes and their inverse bind matrices (column-major)
@@ -680,6 +682,7 @@ fn read_primitive(acc: &Accessors<'_>, p: &Value, path: &str) -> Result<MeshPrim
         }
     }
     let mut targets = Vec::new();
+    let mut target_normals = Vec::new();
     if let Some(ts) = p.get("targets") {
         let ts = ts
             .as_array()
@@ -688,7 +691,14 @@ fn read_primitive(acc: &Accessors<'_>, p: &Value, path: &str) -> Result<MeshPrim
             let tp = format!("{path}.targets[{k}]");
             let d = acc.floats::<3>(index(t, "POSITION", &tp)?, "VEC3")?;
             same(d.len(), &format!("targets[{k}].POSITION"))?;
-            targets.push(d);
+            let tn = opt_attr(t, "NORMAL", &tp)?
+                .map(|i| acc.floats::<3>(i, "VEC3"))
+                .transpose()?;
+            if let Some(tn) = &tn {
+                same(tn.len(), &format!("targets[{k}].NORMAL"))?;
+            }
+            targets.extend([d]);
+            target_normals.extend([tn]);
         }
     }
     Ok(MeshPrimitive {
@@ -699,6 +709,7 @@ fn read_primitive(acc: &Accessors<'_>, p: &Value, path: &str) -> Result<MeshPrim
         weights,
         indices,
         targets,
+        target_normals,
     })
 }
 

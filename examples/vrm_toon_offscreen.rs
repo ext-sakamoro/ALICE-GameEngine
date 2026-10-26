@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let prim = &model.meshes[0][0];
     let positions = pose.posed_positions(0, 0)?;
-    let normals = prim.normals.clone().ok_or("the primitive has no normals")?;
+    let normals = pose.posed_normals(0, 0)?;
     let indices = prim.indices.clone().ok_or("the primitive has no indices")?;
     let (w, h) = (256u32, 256u32);
     let image = ToonRenderer::new_headless(w, h)?.draw(

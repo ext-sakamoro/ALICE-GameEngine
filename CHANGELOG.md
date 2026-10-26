@@ -9,6 +9,7 @@
 
 ### Added
 
+- `VrmPose::posed_normals`: morph target の法線の差分を掛け、混ぜた skinning 行列 (skin が無ければ node の world 行列) の 3x3 の逆転置で回し、長さを 1 に戻した法線 法線の無い primitive は `PoseError::NoNormals` `MeshPrimitive::target_normals` (morph target の NORMAL、無い target は `None`) 例 `vrm_toon_offscreen` は pose した法線で描く fixture の target 0 に法線の差分を足した
 - `call_fx` module: RGBA8 の画像に通話の劣化 (block 化・色ずれ・色の bit 数・走査線・noise) を整数の算術だけで掛ける `apply` / `CallFx` (同じ画像と parameter なら全 target で同じ bytes)、映像のコマ止めの `FrameHold` 試験 `tests/call_fx.rs` (5 件、手で計算した小さな場合と、独立実装 `scripts/call_fx_reference.py` (標準 library の Python) が書いた 9 件の結果の SHA-256) CI の test job と preflight で `scripts/call_fx_reference.py --check` を走らせる 例 `vrm_toon_offscreen` に劣化の段 (0〜3) の引数を足した 開発用の依存に `sha2` を足した
 - `vrm_render` module: pose した VRM の primitive を 2 階調の toon shader で画面外の画像に描く `ToonRenderer` (`gpu` feature、RGBA8 を上の行から返す) と、shader の WGSL `toon_wgsl` (naga で検査)、upload の前に mesh を検査する `check_mesh` skinning と morph は CPU の `VrmPose` の結果を使う 試験 `tests/vrm_render.rs` (shader の検査と mesh の拒否は常に、GPU の 2 件は手で計算した被覆と明暗を画素で確かめる) CI に software の adapter (Mesa の lavapipe) で `#[ignore]` の GPU 試験を走らせる job `gpu-oracle` を追加 (hd2d_postfx の GPU 試験も含む、走った件数を `scripts/min_passed.py` で確かめ、adapter が無ければ失敗)、preflight にも同じ step を追加 例 `examples/vrm_toon_offscreen.rs` (PPM を書き出す)
 - `Humanoid::bind_from_vrm_document`: VRM の文書の骨を全部結び、仕様に無い骨の名前を返す (`bind_from_vrm` は黙って落としていた) `VrmPose::apply_expression_set`: `ExpressionSet` の channel を同じ VRM 名の表情に掛け、model に無い表情の名前を返す 試験 `tests/vrm_humanoid.rs` (5 件、仕様から写した骨 55 と preset 18 の名前の表で照合)
@@ -23,6 +24,7 @@
 
 ### Fixed
 
+- `call_fx` の doc に noise の分布 (65536 値を 2a + 1 に畳む剰余の偏りを除いて一様、`a` は `u8` なので 2a + 1 は最大 511) を書いた
 - `vrm_pose::VrmPose::new` は範囲外の子の index を panic でなく `PoseError::NoSuchNode` で拒否する (公開の `VrmModel` を手で組んだ場合) `set_rotation` は長さの 2 乗が 1 から 1e-4 を超えて離れた quaternion を `PoseError::NotUnitRotation` で拒否する (glTF の回転は単位 quaternion)
 - `window` feature を単独で有効にすると build できなかった (`ui_renderer` が `window` だけで gate され、`ui` feature の `crate::ui` を使っていた) `ui_renderer` を `window` と `ui` の両方で gate する
 - CI: Cargo.toml の各 feature を単独で `cargo check --lib --no-default-features --features <f>` する job と `scripts/each_feature.py` を追加 (feature の一覧は Cargo.toml から読む、check の失敗と 0 件は失敗、`default` / `full` は理由付きで除外 (`python` / `godot` は `ffi` だけを有効にする feature なので check に含める)、Linux では `audio_output` のために ALSA の header を入れる)、preflight にも同じ step を追加

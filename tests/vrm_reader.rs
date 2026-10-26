@@ -391,3 +391,19 @@ fn a_skin_without_inverse_bind_matrices_takes_identities() {
     ];
     assert_eq!(model.skins[0].inverse_bind_matrices, vec![id, id]);
 }
+
+#[test]
+fn morph_target_normal_deltas_are_read_and_absent_ones_are_none() {
+    let model = read_vrm(TINY).expect("reads");
+    let prim = &model.meshes[0][0];
+    let t0 = prim.target_normals[0]
+        .as_ref()
+        .expect("target 0 has normals");
+    let rows = rows("target_normal ");
+    assert_eq!(rows.len(), 3);
+    for r in rows {
+        let i: usize = r[1].parse().unwrap();
+        assert_eq!(t0[i].to_vec(), floats(&r[2..]), "target 0 normal {i}");
+    }
+    assert!(prim.target_normals[1].is_none());
+}

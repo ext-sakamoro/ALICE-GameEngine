@@ -29,6 +29,8 @@ TARGETS = [
     [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, -0.25, 0.0)],
     [(-0.125, 0.0625, 0.0), (0.125, 0.0625, 0.0), (0.0, 0.0, 0.0)],
 ]
+# morph target 0 also turns vertex 2's normal by (0, 0.5, 0); target 1 has no normal deltas
+TARGET0_NORMALS = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.5, 0.0)]
 # column-major 4x4 inverse bind matrices: identity, and a translation by -1 on y
 IBM = [
     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
@@ -80,6 +82,7 @@ def build():
         ("target0", f32s(TARGETS[0]), 5126, "VEC3", 3),
         ("target1", f32s(TARGETS[1]), 5126, "VEC3", 3),
         ("ibm", f32s(IBM), 5126, "MAT4", 2),
+        ("target0n", f32s(TARGET0_NORMALS), 5126, "VEC3", 3),
         ("p2pos", b"".join(struct.pack("<3f", *p) + b"\xAA" * 4 for p in P2_POSITIONS), 5126, "VEC3", 3),
         ("p2w", b"".join(struct.pack("<4B", *w) for w in P2_WEIGHTS_U8), 5121, "VEC4", 3),
         ("p2idx", struct.pack("<3B", *P2_INDICES), 5121, "SCALAR", 3),
@@ -110,10 +113,10 @@ def build():
             "primitives": [{
                 "attributes": {"POSITION": 0, "NORMAL": 1, "JOINTS_0": 2, "WEIGHTS_0": 3},
                 "indices": 4,
-                "targets": [{"POSITION": 5}, {"POSITION": 6}],
+                "targets": [{"POSITION": 5, "NORMAL": 8}, {"POSITION": 6}],
             }, {
-                "attributes": {"POSITION": 8, "JOINTS_0": 2, "WEIGHTS_0": 9},
-                "indices": 10,
+                "attributes": {"POSITION": 9, "JOINTS_0": 2, "WEIGHTS_0": 10},
+                "indices": 11,
             }],
             "weights": [0.0, 0.0],
         }],
@@ -154,6 +157,7 @@ def expected():
     rows += [f"weights {i} {' '.join(repr(x) for x in w)}" for i, w in enumerate(WEIGHTS)]
     rows += [f"indices {' '.join(map(str, INDICES))}"]
     rows += [f"target {t} {i} {' '.join(repr(x) for x in d)}" for t, ds in enumerate(TARGETS) for i, d in enumerate(ds)]
+    rows += [f"target_normal 0 {i} {' '.join(repr(x) for x in d)}" for i, d in enumerate(TARGET0_NORMALS)]
     rows += [f"skin joints 1 2", f"ibm 1 {' '.join(repr(float(x)) for x in IBM[1])}"]
     rows += [f"p2position {i} {' '.join(repr(x) for x in p)}" for i, p in enumerate(P2_POSITIONS)]
     rows += [f"p2weights {i} {' '.join(repr(x / 255.0) for x in w)}" for i, w in enumerate(P2_WEIGHTS_U8)]

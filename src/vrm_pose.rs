@@ -29,6 +29,8 @@ pub enum PoseError {
     NodeCycle,
     /// A joint index of a vertex is past the skin's joints
     JointOutOfRange(usize),
+    /// The primitive of that mesh has no normals
+    NoNormals(usize),
 }
 
 impl std::fmt::Display for PoseError {
@@ -44,6 +46,7 @@ impl std::fmt::Display for PoseError {
                 f.write_str("the node hierarchy has a cycle or a node with two parents")
             }
             Self::JointOutOfRange(v) => write!(f, "vertex {v} names a joint past the skin"),
+            Self::NoNormals(m) => write!(f, "the primitive of mesh {m} has no normals"),
         }
     }
 }
@@ -308,6 +311,81 @@ impl<'a> VrmPose<'a> {
                     [s.x(), s.y(), s.z()]
                 })
                 .collect())
+        }
+    }
+
+    /// The posed normals of primitive `prim` of mesh `mesh`: its morph target normal deltas at
+    /// [`Self::morph_weights`], then turned by the inverse transpose of the blended skinning
+    /// matrix (or of the drawing node's world matrix without a skin), each scaled back to unit
+    /// length (a normal that collapses to zero stays zero)
+    ///
+    /// # Errors
+    ///
+    /// [`PoseError::NoSuchMesh`], [`PoseError::NoNormals`] or [`PoseError::JointOutOfRange`]
+    pub fn posed_normals(&self, mesh: usize, prim: usize) -> Result<Vec<[f32; 3]>, PoseError> {
+        let p = self
+            .model
+            .meshes
+            .get(mesh)
+            .and_then(|m| m.get(prim))
+            .ok_or(PoseError::NoSuchMesh(mesh))?;
+        let mut nor = p.normals.clone().ok_or(PoseError::NoNormals(mesh))?;
+        let weights = self.morph_weights(mesh);
+        for (t, delta) in p.target_normals.iter().enumerate() {
+            let w = weights.get(t).copied().unwrap_or(0.0);
+            if let (Some(delta), true) = (delta, w != 0.0) {
+                for (v, d) in nor.iter_mut().zip(delta) {
+                    for c in 0..3 {
+                        v[c] += w * d[c];
+                    }
+                }
+            }
+        }
+        let world = self.world_matrices();
+        let owner = self
+            .model
+            .nodes
+            .iter()
+            .position(|n| n.mesh.is_some_and(|m| m as usize == mesh));
+        let skin = owner
+            .and_then(|o| self.model.nodes[o].skin)
+            .map(|s| &self.model.skins[s as usize]);
+        let turn = |m: glam::Mat4, n: [f32; 3]| -> [f32; 3] {
+            let r = glam::Mat3::from_mat4(m).inverse().transpose() * glam::Vec3::from(n);
+            let len = r.length();
+            if len > 0.0 && len.is_finite() {
+                (r / len).into()
+            } else {
+                [0.0; 3]
+            }
+        };
+        if let (Some(skin), Some(joints), Some(jw)) = (skin, &p.joints, &p.weights) {
+            let palette: Vec<glam::Mat4> = skin
+                .joints
+                .iter()
+                .zip(&skin.inverse_bind_matrices)
+                .map(|(&j, ibm)| world[j as usize].0 * glam::Mat4::from_cols_array(ibm))
+                .collect();
+            nor.iter()
+                .zip(joints.iter().zip(jw))
+                .enumerate()
+                .map(|(v, (n, (j, w)))| {
+                    let mut m = glam::Mat4::ZERO;
+                    for (&ji, &wi) in j.iter().zip(w) {
+                        if wi == 0.0 {
+                            continue;
+                        }
+                        let pm = palette
+                            .get(ji as usize)
+                            .ok_or(PoseError::JointOutOfRange(v))?;
+                        m += *pm * wi;
+                    }
+                    Ok(turn(m, *n))
+                })
+                .collect()
+        } else {
+            let m = owner.map_or(glam::Mat4::IDENTITY, |o| world[o].0);
+            Ok(nor.iter().map(|n| turn(m, *n)).collect())
         }
     }
 }

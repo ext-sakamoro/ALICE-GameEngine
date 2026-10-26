@@ -180,3 +180,73 @@ fn a_rotation_must_be_a_unit_quaternion() {
     assert!(pose.set_rotation(2, [0.0, 0.0, s, s]).is_ok());
     assert!(pose.set_rotation(2, [0.0, 0.0, 0.0, 1.00004]).is_ok());
 }
+
+#[test]
+fn normals_follow_the_joints_and_stay_unit_length() {
+    // the fixture's normals are all (0, 0, 1). A quarter turn of the head about x
+    // (quaternion (sin 45, 0, 0, cos 45)) turns (0, 0, 1) to (0, -1, 0):
+    // vertex 2 (head only) -> (0, -1, 0); vertex 1 (half hips, half head) ->
+    // normalize((0, 0, 1) + (0, -1, 0)) = (0, -1/sqrt 2, 1/sqrt 2); vertex 0 (a quarter head) ->
+    // normalize(0.75 (0, 0, 1) + 0.25 (0, -1, 0)) = (0, -0.25, 0.75) / sqrt(0.625)
+    let model = read_vrm(TINY).unwrap();
+    let mut pose = VrmPose::new(&model).unwrap();
+    assert_eq!(
+        pose.posed_normals(0, 0).unwrap(),
+        vec![[0.0, 0.0, 1.0]; 3],
+        "at rest the file normals"
+    );
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    pose.set_rotation(2, [s, 0.0, 0.0, s]).unwrap();
+    let n = pose.posed_normals(0, 0).unwrap();
+    let l = 0.625f32.sqrt();
+    let want = [[0.0, -0.25 / l, 0.75 / l], [0.0, -s, s], [0.0, -1.0, 0.0]];
+    for (got, want) in n.iter().zip(want) {
+        assert!(
+            got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6),
+            "{got:?} vs {want:?}"
+        );
+    }
+    // a translation moves no normal
+    let mut t = VrmPose::new(&model).unwrap();
+    t.set_translation(2, [5.0, 1.0, 0.0]).unwrap();
+    assert_eq!(t.posed_normals(0, 0).unwrap(), vec![[0.0, 0.0, 1.0]; 3]);
+    // a primitive without normals is an error, not an empty list
+    assert!(matches!(
+        t.posed_normals(0, 1),
+        Err(PoseError::NoNormals(0))
+    ));
+}
+
+#[test]
+fn an_expression_moves_the_normals_by_its_targets_normal_deltas() {
+    // aa: target 0 at 1.0 adds (0, 0.5, 0) to vertex 2's normal: (0, 0.5, 1) / sqrt(1.25)
+    let model = read_vrm(TINY).unwrap();
+    let mut pose = VrmPose::new(&model).unwrap();
+    pose.set_expression("aa", 1.0).unwrap();
+    let n = pose.posed_normals(0, 0).unwrap();
+    let l = 1.25f32.sqrt();
+    assert_eq!(n[0], [0.0, 0.0, 1.0]);
+    assert!(
+        (n[2][1] - 0.5 / l).abs() < 1e-6 && (n[2][2] - 1.0 / l).abs() < 1e-6,
+        "{:?}",
+        n[2]
+    );
+}
+
+#[test]
+fn normals_use_the_inverse_transpose_under_non_uniform_scale() {
+    // head scaled (2, 1, 1): its skinning matrix's 3x3 part is diag(2, 1, 1); a normal
+    // (1, 0, 1) on vertex 2 (head only) turns by the inverse transpose diag(0.5, 1, 1) to
+    // (0.5, 0, 1) / sqrt(1.25), not by the matrix itself to (2, 0, 1) / sqrt(5)
+    let mut model = read_vrm(TINY).unwrap();
+    model.nodes[2].scale = [2.0, 1.0, 1.0];
+    model.meshes[0][0].normals = Some(vec![[1.0, 0.0, 1.0]; 3]);
+    let pose = VrmPose::new(&model).unwrap();
+    let n = pose.posed_normals(0, 0).unwrap()[2];
+    let l = 1.25f32.sqrt();
+    let want = [0.5 / l, 0.0, 1.0 / l];
+    assert!(
+        n.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6),
+        "{n:?}"
+    );
+}
