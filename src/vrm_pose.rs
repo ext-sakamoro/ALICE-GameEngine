@@ -126,6 +126,26 @@ impl<'a> VrmPose<'a> {
         Ok(())
     }
 
+    /// Sets every channel of `set` on the expression of the same VRM name (the weights are
+    /// already in 0..=1) and returns the names the model has no expression for, in the set's order
+    pub fn apply_expression_set(&mut self, set: &crate::humanoid::ExpressionSet) -> Vec<String> {
+        let mut missing = Vec::new();
+        for (channel, &w) in set.iter() {
+            let name = channel.vrm_name();
+            match self
+                .model
+                .document
+                .expressions
+                .iter()
+                .position(|e| e.name == name)
+            {
+                Some(i) => self.expression[i] = w,
+                None => missing.extend([name.to_owned()]),
+            }
+        }
+        missing
+    }
+
     const fn node(&self, node: usize) -> Result<(), PoseError> {
         if node < self.model.nodes.len() {
             Ok(())

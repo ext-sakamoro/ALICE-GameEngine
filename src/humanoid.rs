@@ -12,12 +12,12 @@
 //! blendshape application live in the renderer / animation pipeline.
 //!
 //! VRM compatibility note: the [`HumanoidBone`] enum follows the VRM
-//! 1.0 humanoid bone list (52 entries). [`ExpressionChannel`] follows
-//! the standard VRM expression presets (`aa` / `ih` / `ou` / `ee` /
-//! `oh` / `blink_left` / `blink_right` / `happy` / `angry` / `sad` /
-//! `surprised` / `neutral`) and accepts arbitrary user keys.
+//! 1.0 humanoid bone list (55 entries, fingers included), and
+//! [`ExpressionChannel`] the 18 VRM 1.0 expression presets; both map to and
+//! from the specification's names (`vrm_name` / `from_vrm_name`), and a
+//! channel accepts arbitrary user keys.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,44 +27,148 @@ use serde::{Deserialize, Serialize};
 
 /// Canonical humanoid bones. Names match the VRM 1.0 humanoid
 /// specification (`snake_case`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum HumanoidBone {
-    // Trunk
     hips,
     spine,
     chest,
     upper_chest,
     neck,
     head,
-    // Arms — left
-    left_shoulder,
-    left_upper_arm,
-    left_lower_arm,
-    left_hand,
-    // Arms — right
-    right_shoulder,
-    right_upper_arm,
-    right_lower_arm,
-    right_hand,
-    // Legs — left
+    left_eye,
+    right_eye,
+    jaw,
     left_upper_leg,
     left_lower_leg,
     left_foot,
     left_toes,
-    // Legs — right
     right_upper_leg,
     right_lower_leg,
     right_foot,
     right_toes,
-    // Eyes / jaw
-    left_eye,
-    right_eye,
-    jaw,
+    left_shoulder,
+    left_upper_arm,
+    left_lower_arm,
+    left_hand,
+    right_shoulder,
+    right_upper_arm,
+    right_lower_arm,
+    right_hand,
+    left_thumb_metacarpal,
+    left_thumb_proximal,
+    left_thumb_distal,
+    left_index_proximal,
+    left_index_intermediate,
+    left_index_distal,
+    left_middle_proximal,
+    left_middle_intermediate,
+    left_middle_distal,
+    left_ring_proximal,
+    left_ring_intermediate,
+    left_ring_distal,
+    left_little_proximal,
+    left_little_intermediate,
+    left_little_distal,
+    right_thumb_metacarpal,
+    right_thumb_proximal,
+    right_thumb_distal,
+    right_index_proximal,
+    right_index_intermediate,
+    right_index_distal,
+    right_middle_proximal,
+    right_middle_intermediate,
+    right_middle_distal,
+    right_ring_proximal,
+    right_ring_intermediate,
+    right_ring_distal,
+    right_little_proximal,
+    right_little_intermediate,
+    right_little_distal,
 }
 
+/// Every [`HumanoidBone`] with its VRM 1.0 `humanBones` name, in the specification's order
+const VRM_BONE_NAMES: [(HumanoidBone, &str); 55] = [
+    (HumanoidBone::hips, "hips"),
+    (HumanoidBone::spine, "spine"),
+    (HumanoidBone::chest, "chest"),
+    (HumanoidBone::upper_chest, "upperChest"),
+    (HumanoidBone::neck, "neck"),
+    (HumanoidBone::head, "head"),
+    (HumanoidBone::left_eye, "leftEye"),
+    (HumanoidBone::right_eye, "rightEye"),
+    (HumanoidBone::jaw, "jaw"),
+    (HumanoidBone::left_upper_leg, "leftUpperLeg"),
+    (HumanoidBone::left_lower_leg, "leftLowerLeg"),
+    (HumanoidBone::left_foot, "leftFoot"),
+    (HumanoidBone::left_toes, "leftToes"),
+    (HumanoidBone::right_upper_leg, "rightUpperLeg"),
+    (HumanoidBone::right_lower_leg, "rightLowerLeg"),
+    (HumanoidBone::right_foot, "rightFoot"),
+    (HumanoidBone::right_toes, "rightToes"),
+    (HumanoidBone::left_shoulder, "leftShoulder"),
+    (HumanoidBone::left_upper_arm, "leftUpperArm"),
+    (HumanoidBone::left_lower_arm, "leftLowerArm"),
+    (HumanoidBone::left_hand, "leftHand"),
+    (HumanoidBone::right_shoulder, "rightShoulder"),
+    (HumanoidBone::right_upper_arm, "rightUpperArm"),
+    (HumanoidBone::right_lower_arm, "rightLowerArm"),
+    (HumanoidBone::right_hand, "rightHand"),
+    (HumanoidBone::left_thumb_metacarpal, "leftThumbMetacarpal"),
+    (HumanoidBone::left_thumb_proximal, "leftThumbProximal"),
+    (HumanoidBone::left_thumb_distal, "leftThumbDistal"),
+    (HumanoidBone::left_index_proximal, "leftIndexProximal"),
+    (
+        HumanoidBone::left_index_intermediate,
+        "leftIndexIntermediate",
+    ),
+    (HumanoidBone::left_index_distal, "leftIndexDistal"),
+    (HumanoidBone::left_middle_proximal, "leftMiddleProximal"),
+    (
+        HumanoidBone::left_middle_intermediate,
+        "leftMiddleIntermediate",
+    ),
+    (HumanoidBone::left_middle_distal, "leftMiddleDistal"),
+    (HumanoidBone::left_ring_proximal, "leftRingProximal"),
+    (HumanoidBone::left_ring_intermediate, "leftRingIntermediate"),
+    (HumanoidBone::left_ring_distal, "leftRingDistal"),
+    (HumanoidBone::left_little_proximal, "leftLittleProximal"),
+    (
+        HumanoidBone::left_little_intermediate,
+        "leftLittleIntermediate",
+    ),
+    (HumanoidBone::left_little_distal, "leftLittleDistal"),
+    (HumanoidBone::right_thumb_metacarpal, "rightThumbMetacarpal"),
+    (HumanoidBone::right_thumb_proximal, "rightThumbProximal"),
+    (HumanoidBone::right_thumb_distal, "rightThumbDistal"),
+    (HumanoidBone::right_index_proximal, "rightIndexProximal"),
+    (
+        HumanoidBone::right_index_intermediate,
+        "rightIndexIntermediate",
+    ),
+    (HumanoidBone::right_index_distal, "rightIndexDistal"),
+    (HumanoidBone::right_middle_proximal, "rightMiddleProximal"),
+    (
+        HumanoidBone::right_middle_intermediate,
+        "rightMiddleIntermediate",
+    ),
+    (HumanoidBone::right_middle_distal, "rightMiddleDistal"),
+    (HumanoidBone::right_ring_proximal, "rightRingProximal"),
+    (
+        HumanoidBone::right_ring_intermediate,
+        "rightRingIntermediate",
+    ),
+    (HumanoidBone::right_ring_distal, "rightRingDistal"),
+    (HumanoidBone::right_little_proximal, "rightLittleProximal"),
+    (
+        HumanoidBone::right_little_intermediate,
+        "rightLittleIntermediate",
+    ),
+    (HumanoidBone::right_little_distal, "rightLittleDistal"),
+];
+
 impl HumanoidBone {
-    /// Every variant — useful for iteration and validation.
+    /// Every variant, in the order of the VRM 1.0 specification
     #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
@@ -74,14 +178,9 @@ impl HumanoidBone {
             Self::upper_chest,
             Self::neck,
             Self::head,
-            Self::left_shoulder,
-            Self::left_upper_arm,
-            Self::left_lower_arm,
-            Self::left_hand,
-            Self::right_shoulder,
-            Self::right_upper_arm,
-            Self::right_lower_arm,
-            Self::right_hand,
+            Self::left_eye,
+            Self::right_eye,
+            Self::jaw,
             Self::left_upper_leg,
             Self::left_lower_leg,
             Self::left_foot,
@@ -90,10 +189,63 @@ impl HumanoidBone {
             Self::right_lower_leg,
             Self::right_foot,
             Self::right_toes,
-            Self::left_eye,
-            Self::right_eye,
-            Self::jaw,
+            Self::left_shoulder,
+            Self::left_upper_arm,
+            Self::left_lower_arm,
+            Self::left_hand,
+            Self::right_shoulder,
+            Self::right_upper_arm,
+            Self::right_lower_arm,
+            Self::right_hand,
+            Self::left_thumb_metacarpal,
+            Self::left_thumb_proximal,
+            Self::left_thumb_distal,
+            Self::left_index_proximal,
+            Self::left_index_intermediate,
+            Self::left_index_distal,
+            Self::left_middle_proximal,
+            Self::left_middle_intermediate,
+            Self::left_middle_distal,
+            Self::left_ring_proximal,
+            Self::left_ring_intermediate,
+            Self::left_ring_distal,
+            Self::left_little_proximal,
+            Self::left_little_intermediate,
+            Self::left_little_distal,
+            Self::right_thumb_metacarpal,
+            Self::right_thumb_proximal,
+            Self::right_thumb_distal,
+            Self::right_index_proximal,
+            Self::right_index_intermediate,
+            Self::right_index_distal,
+            Self::right_middle_proximal,
+            Self::right_middle_intermediate,
+            Self::right_middle_distal,
+            Self::right_ring_proximal,
+            Self::right_ring_intermediate,
+            Self::right_ring_distal,
+            Self::right_little_proximal,
+            Self::right_little_intermediate,
+            Self::right_little_distal,
         ]
+    }
+
+    /// The bone's VRM 1.0 `humanBones` name (camelCase, e.g. `leftUpperArm`)
+    #[must_use]
+    pub fn vrm_name(self) -> &'static str {
+        VRM_BONE_NAMES
+            .iter()
+            .find(|(b, _)| *b == self)
+            .map_or("", |(_, n)| n)
+    }
+
+    /// The bone of a VRM 1.0 `humanBones` name; `None` for a name the specification does not list
+    #[must_use]
+    pub fn from_vrm_name(name: &str) -> Option<Self> {
+        VRM_BONE_NAMES
+            .iter()
+            .find(|(_, n)| *n == name)
+            .map(|(b, _)| *b)
     }
 
     /// Required bones for a minimum-viable VRM humanoid.
@@ -184,44 +336,25 @@ impl Humanoid {
     pub fn bind_from_vrm(&mut self, extract: &crate::asset::VrmExtract) -> usize {
         let mut count = 0;
         for entry in &extract.bones {
-            if let Some(bone) = vrm_camel_to_humanoid(&entry.bone_name) {
+            if let Some(bone) = HumanoidBone::from_vrm_name(&entry.bone_name) {
                 self.bind(bone, entry.node_index);
                 count += 1;
             }
         }
         count
     }
-}
 
-fn vrm_camel_to_humanoid(name: &str) -> Option<HumanoidBone> {
-    use HumanoidBone::*;
-    match name {
-        "hips" => Some(hips),
-        "spine" => Some(spine),
-        "chest" => Some(chest),
-        "upperChest" => Some(upper_chest),
-        "neck" => Some(neck),
-        "head" => Some(head),
-        "leftShoulder" => Some(left_shoulder),
-        "leftUpperArm" => Some(left_upper_arm),
-        "leftLowerArm" => Some(left_lower_arm),
-        "leftHand" => Some(left_hand),
-        "rightShoulder" => Some(right_shoulder),
-        "rightUpperArm" => Some(right_upper_arm),
-        "rightLowerArm" => Some(right_lower_arm),
-        "rightHand" => Some(right_hand),
-        "leftUpperLeg" => Some(left_upper_leg),
-        "leftLowerLeg" => Some(left_lower_leg),
-        "leftFoot" => Some(left_foot),
-        "leftToes" => Some(left_toes),
-        "rightUpperLeg" => Some(right_upper_leg),
-        "rightLowerLeg" => Some(right_lower_leg),
-        "rightFoot" => Some(right_foot),
-        "rightToes" => Some(right_toes),
-        "leftEye" => Some(left_eye),
-        "rightEye" => Some(right_eye),
-        "jaw" => Some(jaw),
-        _ => None,
+    /// Binds every bone of a VRM document ([`crate::vrm::read_vrm_json`]) to its node index and
+    /// returns the bone names the VRM 1.0 specification does not list (empty when all bound)
+    pub fn bind_from_vrm_document(&mut self, doc: &crate::vrm::VrmDocument) -> Vec<String> {
+        let mut unknown = Vec::new();
+        for (name, node) in &doc.bones {
+            match HumanoidBone::from_vrm_name(name) {
+                Some(bone) => self.bind(bone, *node),
+                None => unknown.push(name.clone()),
+            }
+        }
+        unknown
     }
 }
 
@@ -229,23 +362,79 @@ fn vrm_camel_to_humanoid(name: &str) -> Option<HumanoidBone> {
 // Expression channels (VRM-style)
 // ---------------------------------------------------------------------------
 
-/// VRM expression presets. Use [`ExpressionChannel::Custom`] for
+/// VRM 1.0 expression presets. Use [`ExpressionChannel::Custom`] for
 /// project-specific channels (e.g. "smirk", "exhausted").
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ExpressionChannel {
+    Happy,
+    Angry,
+    Sad,
+    Relaxed,
+    Surprised,
     Aa,
     Ih,
     Ou,
     Ee,
     Oh,
+    Blink,
     BlinkLeft,
     BlinkRight,
-    Happy,
-    Angry,
-    Sad,
-    Surprised,
+    LookUp,
+    LookDown,
+    LookLeft,
+    LookRight,
     Neutral,
     Custom(String),
+}
+
+const VRM_PRESET_NAMES: [(ExpressionChannel, &str); 18] = [
+    (ExpressionChannel::Happy, "happy"),
+    (ExpressionChannel::Angry, "angry"),
+    (ExpressionChannel::Sad, "sad"),
+    (ExpressionChannel::Relaxed, "relaxed"),
+    (ExpressionChannel::Surprised, "surprised"),
+    (ExpressionChannel::Aa, "aa"),
+    (ExpressionChannel::Ih, "ih"),
+    (ExpressionChannel::Ou, "ou"),
+    (ExpressionChannel::Ee, "ee"),
+    (ExpressionChannel::Oh, "oh"),
+    (ExpressionChannel::Blink, "blink"),
+    (ExpressionChannel::BlinkLeft, "blinkLeft"),
+    (ExpressionChannel::BlinkRight, "blinkRight"),
+    (ExpressionChannel::LookUp, "lookUp"),
+    (ExpressionChannel::LookDown, "lookDown"),
+    (ExpressionChannel::LookLeft, "lookLeft"),
+    (ExpressionChannel::LookRight, "lookRight"),
+    (ExpressionChannel::Neutral, "neutral"),
+];
+
+impl ExpressionChannel {
+    /// The 18 presets of VRM 1.0, in the specification's order
+    #[must_use]
+    pub fn presets() -> Vec<Self> {
+        VRM_PRESET_NAMES.iter().map(|(c, _)| c.clone()).collect()
+    }
+
+    /// The VRM 1.0 expression name (a preset name, or the custom key)
+    #[must_use]
+    pub fn vrm_name(&self) -> &str {
+        match self {
+            Self::Custom(name) => name,
+            preset => VRM_PRESET_NAMES
+                .iter()
+                .find(|(c, _)| c == preset)
+                .map_or("", |(_, n)| n),
+        }
+    }
+
+    /// The channel of a VRM 1.0 expression name: a preset, or [`Self::Custom`] for any other
+    #[must_use]
+    pub fn from_vrm_name(name: &str) -> Self {
+        VRM_PRESET_NAMES
+            .iter()
+            .find(|(_, n)| *n == name)
+            .map_or_else(|| Self::Custom(name.to_owned()), |(c, _)| c.clone())
+    }
 }
 
 /// Container for current expression weights. Each channel is a value
@@ -257,7 +446,7 @@ pub enum ExpressionChannel {
 /// [`reset`]: ExpressionSet::reset
 #[derive(Debug, Default, Clone)]
 pub struct ExpressionSet {
-    weights: HashMap<ExpressionChannel, f32>,
+    weights: BTreeMap<ExpressionChannel, f32>,
 }
 
 impl ExpressionSet {
@@ -294,8 +483,8 @@ impl ExpressionSet {
         }
     }
 
-    /// Iterate over `(channel, weight)` pairs in insertion order. Order
-    /// is not specified but stable across reads with no mutation.
+    /// Iterate over `(channel, weight)` pairs in the order of the channels (the presets in the
+    /// order of [`ExpressionChannel`], then the custom ones by name), whatever the order of `set`
     pub fn iter(&self) -> impl Iterator<Item = (&ExpressionChannel, &f32)> {
         self.weights.iter()
     }
@@ -333,7 +522,7 @@ mod tests {
         let v = HumanoidBone::all();
         let set: std::collections::HashSet<_> = v.iter().collect();
         assert_eq!(v.len(), set.len());
-        assert_eq!(v.len(), 25, "VRM canonical 25 bones (without fingers)");
+        assert_eq!(v.len(), 55, "VRM 1.0 humanoid bones, fingers included");
     }
 
     #[test]

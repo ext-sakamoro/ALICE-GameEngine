@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+### 破壊的変更
+
+- `humanoid::HumanoidBone` を VRM 1.0 の 55 骨 (指 30 本を含む) に、`ExpressionChannel` を VRM 1.0 の 18 preset (`Relaxed` / `Blink` / `LookUp` / `LookDown` / `LookLeft` / `LookRight` を追加) にした 網羅的な `match` は新しい variant の arm が要る 骨と表情は仕様の名前と相互に変換できる (`vrm_name` / `from_vrm_name`、`ExpressionChannel::presets`)、仕様に無い表情の名前は `Custom`
+- `ExpressionSet::iter` は channel の順 (preset は enum の順、custom は名前の順) に並ぶ (以前は HashMap の順で決まっていなかった)
+
 ### Added
 
 - `vrm_render` module: pose した VRM の primitive を 2 階調の toon shader で画面外の画像に描く `ToonRenderer` (`gpu` feature、RGBA8 を上の行から返す) と、shader の WGSL `toon_wgsl` (naga で検査)、upload の前に mesh を検査する `check_mesh` skinning と morph は CPU の `VrmPose` の結果を使う 試験 `tests/vrm_render.rs` (shader の検査と mesh の拒否は常に、GPU の 2 件は手で計算した被覆と明暗を画素で確かめる) CI に software の adapter (Mesa の lavapipe) で `#[ignore]` の GPU 試験を走らせる job `gpu-oracle` を追加 (hd2d_postfx の GPU 試験も含む、走った件数を `scripts/min_passed.py` で確かめ、adapter が無ければ失敗)、preflight にも同じ step を追加 例 `examples/vrm_toon_offscreen.rs` (PPM を書き出す)
+- `Humanoid::bind_from_vrm_document`: VRM の文書の骨を全部結び、仕様に無い骨の名前を返す (`bind_from_vrm` は黙って落としていた) `VrmPose::apply_expression_set`: `ExpressionSet` の channel を同じ VRM 名の表情に掛け、model に無い表情の名前を返す 試験 `tests/vrm_humanoid.rs` (5 件、仕様から写した骨 55 と preset 18 の名前の表で照合)
 - `vrm_pose` module: VRM の model を CPU で pose する `VrmPose` (表情の重み → morph target の重み (bind の重みとの積の和を 0..=1 に clamp)、morph target、node の TRS と親子、skinning の順は glTF 2.0 のとおり morph → skin) skinning は既存の `skeleton::apply_skin_cpu` を使う node の循環・2 つの親は `PoseError::NodeCycle`、範囲外・非有限の入力は error 試験 `tests/vrm_pose.rs` (6 件、値は fixture の数から手で計算) 例 `examples/vrm_pose_demo.rs` (license の欄・表情ごと・骨を動かした時の pose を表示)
 - `vrm` module: VRM 1.0 の読み手 `read_vrm` (GLB の JSON / BIN chunk、`VRMC_vrm` の meta を license の全項目で (`VrmMeta`、仕様の既定値と値の集合で検査、範囲外は `VrmError::BadValue`、`licenseUrl` 無しは `Missing`)、humanoid の骨、全ての表情の morph target の bind (preset と custom)、mesh の POSITION / NORMAL / TEXCOORD_0 / JOINTS_0 / WEIGHTS_0 (正規化整数を含む) / indices / morph target の差分、skin と逆 bind 行列、node) `split_glb` / `read_vrm_json` も公開 長さと offset は使う前に bytes と照らし、file が言う数で確保しない 壊れた file は `VrmError`、VRM 0.x は `VrmError::Vrm0` 試験 `tests/vrm_reader.rs` (9 件) は `scripts/vrm_fixture.py` (標準 library の Python、仕様から bytes を手で並べる) が書いた `tests/data/vrm/tiny.vrm` と期待値 `expected.txt` で照合し、全ての前置部分と全 byte の反転で panic しないこと、範囲外の参照の拒否を確かめる CI の test job と preflight で `scripts/vrm_fixture.py --check` を走らせる
 

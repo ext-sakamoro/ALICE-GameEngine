@@ -79,8 +79,8 @@ Feature flags pick what you compile:
 - **Volumetric clouds** — `VolumetricCloudConfig` + `march_cloud_ray`
   with FBM noise, height window, Beer-HG scattering. `cargo run
   --example volumetric_clouds_demo`
-- **Humanoid (VRM 1.0)** — 25-bone canonical mapping + expression
-  channels (visemes + emotion presets + custom). `cargo run
+- **Humanoid (VRM 1.0)** — 55-bone mapping (fingers included) + expression
+  channels (the 18 presets: visemes, emotions, blink, look; + custom). `cargo run
   --example humanoid_demo`
 - **3D Gaussian Splatting** — `GaussianCloud` + per-frame projection
   + cull + back-to-front depth sort + SH band-1 evaluator. `cargo
