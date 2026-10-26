@@ -22,8 +22,6 @@ ROOT = Path(__file__).resolve().parent.parent
 SKIP = {
     "default": "the empty set, checked by every plain cargo command",
     "full": "the union, checked by the full-features clippy and test steps",
-    "python": "builds a Python extension (pyo3) that needs a Python install to link",
-    "godot": "the same FFI surface as ffi, which is checked",
 }
 
 
