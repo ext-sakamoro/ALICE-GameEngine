@@ -106,6 +106,19 @@ impl ToonParams {
     }
 }
 
+/// One primitive of a multi-part draw: its mesh and the parameters it is lit and seen with
+#[derive(Debug, Clone, Copy)]
+pub struct ToonPart<'a> {
+    /// Vertex positions
+    pub positions: &'a [[f32; 3]],
+    /// Vertex normals, one per position
+    pub normals: &'a [[f32; 3]],
+    /// Triangle indices
+    pub indices: &'a [u32],
+    /// The material, light and view of this part (its `clear` is not used)
+    pub params: ToonParams,
+}
+
 /// Why a draw failed
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -176,7 +189,7 @@ pub use gpu::ToonRenderer;
 
 #[cfg(feature = "gpu")]
 mod gpu {
-    use super::{check_mesh, toon_wgsl, RenderError, ToonParams};
+    use super::{check_mesh, toon_wgsl, RenderError, ToonParams, ToonPart};
     use wgpu::util::DeviceExt;
 
     const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -291,7 +304,6 @@ mod gpu {
         /// # Errors
         ///
         /// [`RenderError::BadMesh`] or [`RenderError::Readback`]
-        #[allow(clippy::too_many_lines)]
         pub fn draw(
             &self,
             positions: &[[f32; 3]],
@@ -299,51 +311,92 @@ mod gpu {
             indices: &[u32],
             p: &ToonParams,
         ) -> Result<Vec<u8>, RenderError> {
-            check_mesh(positions, normals, indices)?;
-            let verts: Vec<f32> = positions
-                .iter()
-                .zip(normals)
-                .flat_map(|(a, n)| a.iter().chain(n).copied())
-                .collect();
-            let vbuf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vrm toon vertices"),
-                    contents: bytemuck::cast_slice(&verts),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-            let ibuf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vrm toon indices"),
-                    contents: bytemuck::cast_slice(indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-            let mut uni: Vec<f32> = p.view_proj.to_vec();
-            uni.extend_from_slice(&p.base_color);
-            uni.extend_from_slice(&p.shade_color);
-            uni.extend_from_slice(&[
-                p.light_dir[0],
-                p.light_dir[1],
-                p.light_dir[2],
-                p.shading_shift,
-            ]);
-            uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
-            let ubuf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vrm toon params"),
-                    contents: bytemuck::cast_slice(&uni),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("vrm toon params"),
-                layout: &self.layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: ubuf.as_entire_binding(),
+            self.draw_parts(
+                &[ToonPart {
+                    positions,
+                    normals,
+                    indices,
+                    params: *p,
                 }],
-            });
+                p.clear,
+            )
+        }
+
+        /// Draws the parts (both faces of each) into one image with one depth buffer, so a nearer
+        /// fragment hides a farther one whatever the order of the parts, and returns the image as
+        /// RGBA8 rows, top row first. Each part has its own material, light and view
+        ///
+        /// # Errors
+        ///
+        /// [`RenderError::BadMesh`] (no part, or a part whose mesh `check_mesh` refuses, named by
+        /// its index) or [`RenderError::Readback`]
+        #[allow(clippy::too_many_lines)]
+        pub fn draw_parts(
+            &self,
+            parts: &[ToonPart<'_>],
+            clear: [f32; 4],
+        ) -> Result<Vec<u8>, RenderError> {
+            if parts.is_empty() {
+                return Err(RenderError::BadMesh("no part to draw".into()));
+            }
+            for (i, part) in parts.iter().enumerate() {
+                check_mesh(part.positions, part.normals, part.indices)
+                    .map_err(|e| RenderError::BadMesh(format!("part {i}: {e}")))?;
+            }
+            let uploads: Vec<_> = parts
+                .iter()
+                .map(|part| {
+                    let p = &part.params;
+                    let verts: Vec<f32> = part
+                        .positions
+                        .iter()
+                        .zip(part.normals)
+                        .flat_map(|(a, n)| a.iter().chain(n).copied())
+                        .collect();
+                    let vbuf = self
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("vrm toon vertices"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let ibuf = self
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("vrm toon indices"),
+                            contents: bytemuck::cast_slice(part.indices),
+                            usage: wgpu::BufferUsages::INDEX,
+                        });
+                    let mut uni: Vec<f32> = p.view_proj.to_vec();
+                    uni.extend_from_slice(&p.base_color);
+                    uni.extend_from_slice(&p.shade_color);
+                    uni.extend_from_slice(&[
+                        p.light_dir[0],
+                        p.light_dir[1],
+                        p.light_dir[2],
+                        p.shading_shift,
+                    ]);
+                    uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
+                    let ubuf = self
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("vrm toon params"),
+                            contents: bytemuck::cast_slice(&uni),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+                    let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("vrm toon params"),
+                        layout: &self.layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: ubuf.as_entire_binding(),
+                        }],
+                    });
+                    #[allow(clippy::cast_possible_truncation)]
+                    let count = part.indices.len() as u32;
+                    (vbuf, ibuf, bind, count)
+                })
+                .collect();
             let size = wgpu::Extent3d {
                 width: self.width,
                 height: self.height,
@@ -377,7 +430,7 @@ mod gpu {
                     label: Some("vrm toon"),
                 });
             {
-                let [r, g, b, a] = p.clear.map(f64::from);
+                let [r, g, b, a] = clear.map(f64::from);
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("vrm toon"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -400,11 +453,12 @@ mod gpu {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.set_vertex_buffer(0, vbuf.slice(..));
-                pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                #[allow(clippy::cast_possible_truncation)]
-                pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+                for (vbuf, ibuf, bind, count) in &uploads {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.set_vertex_buffer(0, vbuf.slice(..));
+                    pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..*count, 0, 0..1);
+                }
             }
             let row = self.width * 4;
             let padded = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)

@@ -9,6 +9,7 @@
 - `ExpressionSet::iter` は channel の順 (preset は enum の順、custom は名前の順) に並ぶ (以前は HashMap の順で決まっていなかった)
 
 ### Added
+- `vrm_render::ToonPart` と `ToonRenderer::draw_parts`: 複数の primitive を、それぞれの材質・光・視点で 1 枚の画像に 1 つの depth buffer で描く (近い fragment が遠い fragment を部品の順に依らず隠す) 部品が無い時と、`check_mesh` が拒否する部品 (番号を添える) は `RenderError::BadMesh` `draw` は 1 部品の `draw_parts` 試験 `tests/vrm_render_parts.rs` (GPU 3 件、画素は view-projection から手で計算: 近い部品の青が両方の順で残る / 遠い部品だけの所は赤 / 外は clear、1 部品は `draw` と同じ bytes、空と不正な部品の拒否) を `gpu-oracle` と preflight の GPU step に追加 (vrm_render_parts 3 件) 例 `vrm_toon_offscreen` は最初の mesh の primitive を全て (材質ごとに) 描く
 
 - VRM の材質: 読み手は `VrmModel::materials` (`Material`: 名前、`pbrMetallicRoughness.baseColorFactor` (既定 1)、`VRMC_materials_mtoon` の `MToon` (`shadeColorFactor` 既定 0、`shadingShiftFactor` 既定 0、`shadingToonyFactor` 既定 0.9、0..=1 の外は拒否))、`MeshPrimitive::material` (存在しない材質の index は拒否) を読む toon 描画は MToon 1.0 の陰影 (`s = dot(n, l) + shift`、`t = clamp((s + 1 - toony) / (2 - 2 toony), 0, 1)`、toony 1 で 0 の段差、色 = `mix(shade, base, t)`) にし、`ToonParams::from_material` で材質から parameter を作る 試験 `tests/vrm_mtoon.rs` (CPU 4 件 + GPU 1 件、値は fixture の材質から手で計算、GPU の試験は CI の `gpu-oracle` で lavapipe に走らせ件数を確かめる) fixture に MToon の材質を足した
 - `scripts/min_passed.py --no-ignored`: 名前を挙げた binary に ignored の試験が 1 件でもあれば失敗する `gpu-oracle` と preflight の GPU step で使い、`#[ignore]` の GPU 試験が `--include-ignored` で実際に走ったことを件数と合わせて確かめる (vrm_mtoon は 5 件) 試験 `scripts/test_min_passed.py` (9 件) を同じ step で先に走らせる

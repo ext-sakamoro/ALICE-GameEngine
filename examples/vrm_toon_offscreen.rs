@@ -1,5 +1,5 @@
-//! Poses a VRM model (an expression at full weight), draws its first primitive with the toon
-//! shader into an offscreen 256 x 256 image, degrades it like a failing video call
+//! Poses a VRM model (an expression at full weight), draws every primitive of its first mesh
+//! (each with its material, one depth buffer) with the toon shader into an offscreen 256 x 256 image, degrades it like a failing video call
 //! (`call_fx`, level 0 to 3) and writes it as a binary PPM.
 //!
 //! ```sh
@@ -9,7 +9,7 @@
 use alice_game_engine::call_fx::{apply, CallFx};
 use alice_game_engine::vrm::read_vrm;
 use alice_game_engine::vrm_pose::VrmPose;
-use alice_game_engine::vrm_render::{ToonParams, ToonRenderer};
+use alice_game_engine::vrm_render::{ToonParams, ToonPart, ToonRenderer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -24,27 +24,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(e) = &expression {
         pose.set_expression(e, 1.0)?;
     }
-    let prim = &model.meshes[0][0];
-    let positions = pose.posed_positions(0, 0)?;
-    let normals = pose.posed_normals(0, 0)?;
-    let indices = prim.indices.clone().ok_or("the primitive has no indices")?;
+    const VIEW_PROJ: [f32; 16] = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, -0.5, -0.5, 0.5, 1.0,
+    ];
+    const LIGHT: [f32; 3] = [0.3, 0.5, 1.0];
+    const CLEAR: [f32; 4] = [0.05, 0.05, 0.08, 1.0];
+    // a primitive without a material is drawn in a skin tone
+    let plain = ToonParams {
+        view_proj: VIEW_PROJ,
+        base_color: [0.95, 0.8, 0.75, 1.0],
+        shade_color: [0.6, 0.45, 0.5, 1.0],
+        light_dir: LIGHT,
+        shading_shift: -0.2,
+        shading_toony: 0.9,
+        clear: CLEAR,
+    };
+    let meshes = model.meshes[0]
+        .iter()
+        .enumerate()
+        // a primitive without indices or normals cannot be toon-shaded and is left out
+        .filter(|(_, prim)| prim.normals.is_some())
+        .filter_map(|(k, prim)| prim.indices.clone().map(|indices| (k, prim, indices)))
+        .map(|(k, prim, indices)| {
+            let params = prim.material.map_or(plain, |m| {
+                ToonParams::from_material(&model.materials[m as usize], VIEW_PROJ, LIGHT, CLEAR)
+            });
+            Ok((
+                pose.posed_positions(0, k)?,
+                pose.posed_normals(0, k)?,
+                indices,
+                params,
+            ))
+        })
+        .collect::<Result<Vec<_>, alice_game_engine::vrm_pose::PoseError>>()?;
+    let parts: Vec<ToonPart<'_>> = meshes
+        .iter()
+        .map(|(positions, normals, indices, params)| ToonPart {
+            positions,
+            normals,
+            indices,
+            params: *params,
+        })
+        .collect();
     let (w, h) = (256u32, 256u32);
-    let image = ToonRenderer::new_headless(w, h)?.draw(
-        &positions,
-        &normals,
-        &indices,
-        &ToonParams {
-            view_proj: [
-                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, -0.5, -0.5, 0.5, 1.0,
-            ],
-            base_color: [0.95, 0.8, 0.75, 1.0],
-            shade_color: [0.6, 0.45, 0.5, 1.0],
-            light_dir: [0.3, 0.5, 1.0],
-            shading_shift: -0.2,
-            shading_toony: 0.9,
-            clear: [0.05, 0.05, 0.08, 1.0],
-        },
-    )?;
+    let image = ToonRenderer::new_headless(w, h)?.draw_parts(&parts, CLEAR)?;
     let fx = match level {
         0 => CallFx::NONE,
         1 => CallFx {
