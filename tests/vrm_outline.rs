@@ -19,7 +19,9 @@
 //!   fraction of the height), so column 256 + 69 is outline and 256 + 79 is clear;
 //! - the outline colour (1, 0, 0) with lighting mix 0 is exactly red; with mix 1 it is red times
 //!   the lit colour of the hull's normal there, which points away from the light (0, 0, 1)
-//!   (the visible hull is its far half), so the shade colour 0.25: (64, 0, 0).
+//!   (the visible hull is its far half), so the shade colour 0.25: (64, 0, 0);
+//! - with a texture of alpha 0 under a 0.5 mask, neither the sphere nor its hull is drawn: the
+//!   centre, the ring column 162 and the ring above are the clear colour (alpha 1 draws both)
 
 use alice_game_engine::vrm::{read_vrm, split_glb, OutlineWidthMode, VrmError};
 use alice_game_engine::vrm_render::{Outline, OutlineMode};
@@ -132,7 +134,8 @@ fn a_material_outline_becomes_a_part_outline() {
 #[cfg(feature = "gpu")]
 mod gpu {
     use alice_game_engine::vrm_render::{
-        Outline, OutlineMode, RenderError, ToonParams, ToonPart, ToonRenderer,
+        AlphaMode, Outline, OutlineMode, RenderError, Surface, ToonParams, ToonPart, ToonRenderer,
+        ToonTexture, UvTransform,
     };
     use std::f32::consts::PI;
 
@@ -220,6 +223,45 @@ mod gpu {
             .unwrap()
     }
 
+    /// The world-outlined sphere with a 1 x 1 texture of alpha `alpha` at every UV, mask 0.5
+    fn draw_masked(alpha: u8) -> Vec<u8> {
+        let (pos, nor, idx) = sphere();
+        let uvs = vec![[0.5f32, 0.5]; pos.len()];
+        let texel = [255, 255, 255, alpha];
+        let part = ToonPart {
+            positions: &pos,
+            normals: &nor,
+            indices: &idx,
+            params: ToonParams {
+                view_proj: VIEW_PROJ,
+                base_color: [GREY, GREY, GREY, 1.0],
+                shade_color: [0.25, 0.25, 0.25, 1.0],
+                light_dir: [0.0, 0.0, 1.0],
+                shading_shift: 0.0,
+                shading_toony: 1.0,
+                clear: [0.0; 4],
+            },
+            paint: None,
+            outline: red(OutlineMode::World, 0.04, 0.0),
+            surface: Some(Surface {
+                uvs: &uvs,
+                base: Some(ToonTexture {
+                    width: 1,
+                    height: 1,
+                    rgba: &texel,
+                    key: None,
+                }),
+                shade: None,
+                transform: UvTransform::IDENTITY,
+                alpha: AlphaMode::Mask(0.5),
+            }),
+        };
+        ToonRenderer::new_headless(256, 256)
+            .expect("a GPU")
+            .draw_parts(&[part], [0.0, 0.0, 1.0, 1.0])
+            .unwrap()
+    }
+
     fn px(img: &[u8], w: u32, col: u32, row: u32) -> [u8; 4] {
         let i = ((row * w + col) * 4) as usize;
         [img[i], img[i + 1], img[i + 2], img[i + 3]]
@@ -272,6 +314,20 @@ mod gpu {
         );
         assert_eq!(px(&deep, 256, 166, 128), RED);
         assert_eq!(px(&deep, 256, 172, 128), CLEAR);
+    }
+
+    #[test]
+    #[ignore = "needs a working GPU adapter"]
+    fn a_masked_texel_drops_its_outline_too() {
+        // alpha 1: the sphere and its ring as without a texture
+        let solid = draw_masked(255);
+        assert_eq!(px(&solid, 256, 128, 128), SURFACE);
+        assert_eq!(px(&solid, 256, 162, 128), RED);
+        // alpha 0 below the cutoff: neither the surface nor its outline is drawn
+        let gone = draw_masked(0);
+        assert_eq!(px(&gone, 256, 128, 128), CLEAR);
+        assert_eq!(px(&gone, 256, 162, 128), CLEAR);
+        assert_eq!(px(&gone, 256, 128, 128 - 35), CLEAR);
     }
 
     #[test]
