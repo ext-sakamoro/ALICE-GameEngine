@@ -152,3 +152,31 @@ fn a_node_cycle_is_refused() {
     model.nodes[2].children = vec![1];
     assert!(matches!(VrmPose::new(&model), Err(PoseError::NodeCycle)));
 }
+
+#[test]
+fn a_hand_built_model_with_a_child_past_the_nodes_is_refused() {
+    let mut model = read_vrm(TINY).unwrap();
+    model.nodes[1].children = vec![9];
+    assert!(matches!(
+        VrmPose::new(&model),
+        Err(PoseError::NoSuchNode(9))
+    ));
+}
+
+#[test]
+fn a_rotation_must_be_a_unit_quaternion() {
+    let model = read_vrm(TINY).unwrap();
+    let mut pose = VrmPose::new(&model).unwrap();
+    assert!(matches!(
+        pose.set_rotation(2, [0.0, 0.0, 0.0, 0.0]),
+        Err(PoseError::NotUnitRotation)
+    ));
+    assert!(matches!(
+        pose.set_rotation(2, [0.0, 0.0, 0.0, 2.0]),
+        Err(PoseError::NotUnitRotation)
+    ));
+    // within the tolerance of a unit length (|q|^2 within 1e-4 of 1) it is accepted
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    assert!(pose.set_rotation(2, [0.0, 0.0, s, s]).is_ok());
+    assert!(pose.set_rotation(2, [0.0, 0.0, 0.0, 1.00004]).is_ok());
+}

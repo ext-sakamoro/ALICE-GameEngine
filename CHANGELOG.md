@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- `vrm_pose::VrmPose::new` は範囲外の子の index を panic でなく `PoseError::NoSuchNode` で拒否する (公開の `VrmModel` を手で組んだ場合) `set_rotation` は長さの 2 乗が 1 から 1e-4 を超えて離れた quaternion を `PoseError::NotUnitRotation` で拒否する (glTF の回転は単位 quaternion)
 - `window` feature を単独で有効にすると build できなかった (`ui_renderer` が `window` だけで gate され、`ui` feature の `crate::ui` を使っていた) `ui_renderer` を `window` と `ui` の両方で gate する
 - CI: Cargo.toml の各 feature を単独で `cargo check --lib --no-default-features --features <f>` する job と `scripts/each_feature.py` を追加 (feature の一覧は Cargo.toml から読む、check の失敗と 0 件は失敗、`default` / `full` は理由付きで除外 (`python` / `godot` は `ffi` だけを有効にする feature なので check に含める)、Linux では `audio_output` のために ALSA の header を入れる)、preflight にも同じ step を追加
 - `parse_vrm_json` / `parse_vrm_full` を `vrm::read_vrm_json` の上で読む (JSON を 2 か所で読まない) 表情の重みは従来どおり最初の bind の値 meta の必須項目が欠けた・値が仕様の外の chunk は `None` になる

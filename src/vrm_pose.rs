@@ -19,6 +19,8 @@ pub enum PoseError {
     BadWeight,
     /// A transform with a component that is not finite
     NotFinite,
+    /// A rotation whose squared length is not within 1e-4 of 1 (glTF rotations are unit quaternions)
+    NotUnitRotation,
     /// No node of that index
     NoSuchNode(usize),
     /// No mesh (or primitive of that mesh) of that index
@@ -35,6 +37,7 @@ impl std::fmt::Display for PoseError {
             Self::UnknownExpression(n) => write!(f, "no expression named {n}"),
             Self::BadWeight => f.write_str("an expression weight is outside 0..=1 or not finite"),
             Self::NotFinite => f.write_str("a transform component is not finite"),
+            Self::NotUnitRotation => f.write_str("a rotation is not a unit quaternion"),
             Self::NoSuchNode(i) => write!(f, "no node {i}"),
             Self::NoSuchMesh(i) => write!(f, "no mesh or primitive for mesh {i}"),
             Self::NodeCycle => {
@@ -65,13 +68,16 @@ impl<'a> VrmPose<'a> {
     ///
     /// # Errors
     ///
-    /// [`PoseError::NodeCycle`]
+    /// [`PoseError::NodeCycle`], or [`PoseError::NoSuchNode`] for a child index past the nodes
     pub fn new(model: &'a VrmModel) -> Result<Self, PoseError> {
         let n = model.nodes.len();
         let mut parent = vec![None; n];
         for (i, node) in model.nodes.iter().enumerate() {
             for &c in &node.children {
                 let c = c as usize;
+                if c >= n {
+                    return Err(PoseError::NoSuchNode(c));
+                }
                 if c == i || parent[c].is_some() {
                     return Err(PoseError::NodeCycle);
                 }
@@ -142,15 +148,19 @@ impl<'a> VrmPose<'a> {
         Ok(())
     }
 
-    /// Sets a node's local rotation (quaternion x, y, z, w)
+    /// Sets a node's local rotation (unit quaternion x, y, z, w)
     ///
     /// # Errors
     ///
-    /// [`PoseError::NoSuchNode`] or [`PoseError::NotFinite`]
+    /// [`PoseError::NoSuchNode`], [`PoseError::NotFinite`] or [`PoseError::NotUnitRotation`]
     pub fn set_rotation(&mut self, node: usize, q: [f32; 4]) -> Result<(), PoseError> {
         self.node(node)?;
         if !q.iter().all(|x| x.is_finite()) {
             return Err(PoseError::NotFinite);
+        }
+        let norm2: f32 = q.iter().map(|x| x * x).sum();
+        if (norm2 - 1.0).abs() > 1e-4 {
+            return Err(PoseError::NotUnitRotation);
         }
         self.rotation[node] = q;
         Ok(())
