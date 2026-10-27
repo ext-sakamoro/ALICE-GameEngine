@@ -141,6 +141,9 @@ pub mod vrm0;
 pub mod vrm_measure;
 pub mod vrm_pose;
 pub mod vrm_render;
+// Light occlusion of a posed mesh by its own shape, ray casts in fixed point
+#[cfg(feature = "physics")]
+pub mod vrm_occlusion;
 
 // ---------------------------------------------------------------------------
 // Feature-gated modules
