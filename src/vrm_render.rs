@@ -22,8 +22,11 @@
 //! [`AlphaMask`] sets or changes the alpha from a separate image's red channel:
 //! `k = clamp(r * scale + value, 0, 1)` (r decoded from sRGB when the image is sRGB-encoded), the
 //! alpha becoming `k`, `a * k`, `clamp(a + k)` or `clamp(a - k)`; a cutout and a blend both use
-//! the alpha after the mask. Without terms a part is drawn as before: both faces, no rim, the
-//! outline's lighting mix, the base colour's alpha.
+//! the alpha after the mask. With `linear_light` the surface is shaded in linear light: the
+//! colours and the textures decoded from sRGB (each on its own, `decode(colour) * decode(texel)`),
+//! the toon mix and the rim in linear light, the result encoded once; the outline is drawn as
+//! without it. Without terms a part is drawn as before: both faces, no rim, the outline's lighting
+//! mix, the base colour's alpha, the toon mix of the encoded values.
 //!
 //! The renderer draws one sample per pixel unless told 4 ([`ToonRenderer::set_samples`]):
 //! multisampled edges, the fragment shaded once per pixel and the samples averaged.
@@ -68,6 +71,8 @@ struct Params {
     // the alpha mask: x mode (0 none, 1 replace, 2 multiply, 3 add, 4 subtract), y scale,
     // z value, w 1 = the mask's red is sRGB-encoded
     alpha_mask: vec4<f32>,
+    // x: 1 = shade in linear light (colours and textures decoded, the result encoded once)
+    light_b: vec4<f32>,
     // world -> face plane: xy are the paint coordinates, z the depth along the face's forward
     to_face: mat4x4<f32>,
     // x: the number of shapes, y: the least face depth that is painted
@@ -115,14 +120,23 @@ fn uv_of(uv: vec2<f32>) -> vec2<f32> {
 }
 
 // the lit and the shaded colour of a fragment: the colours times their textures (always sampled,
-// in uniform control flow; a part without a texture samples a white texel)
-fn colours(uv: vec2<f32>) -> array<vec4<f32>, 2> {
+// in uniform control flow; a part without a texture samples a white texel), as encoded values or,
+// with `linear`, each decoded from sRGB before the product (the alpha as it is)
+fn colours_in(uv: vec2<f32>, linear: bool) -> array<vec4<f32>, 2> {
     let t = uv_of(uv);
-    let b = textureSample(base_tex, samp, t);
-    let h = textureSample(shade_tex, samp, t);
-    let base = params.base_color * select(vec4<f32>(1.0), b, params.surface.x > 0.5);
-    let shade = params.shade_color * select(vec4<f32>(1.0), h, params.surface.y > 0.5);
-    return array<vec4<f32>, 2>(base, shade);
+    let b = select(vec4<f32>(1.0), textureSample(base_tex, samp, t), params.surface.x > 0.5);
+    let h = select(vec4<f32>(1.0), textureSample(shade_tex, samp, t), params.surface.y > 0.5);
+    if (linear) {
+        return array<vec4<f32>, 2>(
+            vec4<f32>(to_linear(params.base_color.rgb) * to_linear(b.rgb), params.base_color.a * b.a),
+            vec4<f32>(to_linear(params.shade_color.rgb) * to_linear(h.rgb), params.shade_color.a * h.a),
+        );
+    }
+    return array<vec4<f32>, 2>(params.base_color * b, params.shade_color * h);
+}
+
+fn colours(uv: vec2<f32>) -> array<vec4<f32>, 2> {
+    return colours_in(uv, false);
 }
 
 // The outline hull: the surface pushed out along its normal, drawn with front faces culled
@@ -223,19 +237,28 @@ fn rim_fresnel(f: VsOut) -> f32 {
     return pow(clamp(1.0 - abs(dot(normalize(f.normal), v)), 0.0, 1.0), params.rim.x);
 }
 
-// the colour with the rim added in linear light (unchanged without a rim, or on a back face when
-// the rim skips them)
-fn add_rim(rgb: vec3<f32>, albedo: vec3<f32>, fres: f32, fw: f32, m: vec4<f32>, lit: f32, front: bool) -> vec3<f32> {
+// the rim's light in linear light, to add to a colour in linear light (none without a rim, or on
+// a back face when the rim skips them); albedo is the base colour in linear light
+fn rim_light(albedo: vec3<f32>, fres: f32, fw: f32, m: vec4<f32>, lit: f32, front: bool) -> vec3<f32> {
     if (params.rim_b.w < 0.5 || (params.rim_b.z > 0.5 && !front)) {
-        return rgb;
+        return vec3<f32>(0.0);
     }
     let lo = clamp(params.rim.y - params.rim.z * 0.5, 0.0, 1.0);
     let hi = clamp(params.rim.y + params.rim.z * 0.5, 0.0, 1.0);
     var r = clamp((fres - lo) / max(clamp(hi - lo + fw * params.rim_b.y, 0.0, 1.0), 0.0001), 0.0, 1.0);
     r = mix(r, r * lit, params.rim.w);
     var col = to_linear(params.rim_color.rgb) * to_linear(m.rgb);
-    col = mix(col, col * to_linear(albedo), params.rim_b.x);
-    return to_srgb(to_linear(rgb) + col * (params.rim_color.a * m.a * r));
+    col = mix(col, col * albedo, params.rim_b.x);
+    return col * (params.rim_color.a * m.a * r);
+}
+
+// the colour (encoded) with the rim added in linear light (unchanged without a rim, or on a back
+// face when the rim skips them)
+fn add_rim(rgb: vec3<f32>, albedo: vec3<f32>, fres: f32, fw: f32, m: vec4<f32>, lit: f32, front: bool) -> vec3<f32> {
+    if (params.rim_b.w < 0.5 || (params.rim_b.z > 0.5 && !front)) {
+        return rgb;
+    }
+    return to_srgb(to_linear(rgb) + rim_light(to_linear(albedo), fres, fw, m, lit, front));
 }
 
 // the base colour's alpha after the alpha mask (unchanged without one); m is the mask's red
@@ -276,7 +299,8 @@ fn fs_outline(f: VsOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_main(f: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let c0 = colours(f.uv);
+    let linear = params.light_b.x > 0.5;
+    let c0 = colours_in(f.uv, linear);
     // sampled and differentiated in uniform control flow, before any discard
     let rim_mask = textureSample(rim_tex, samp, uv_of(f.uv));
     let alpha = masked_alpha(c0[0].a, textureSample(alpha_mask_tex, samp, uv_of(f.uv)).r);
@@ -287,7 +311,13 @@ fn fs_main(f: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         discard;
     }
     var color = vec4<f32>(toon(f.normal, c0).rgb, alpha);
-    color = vec4<f32>(add_rim(color.rgb, c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front), color.a);
+    if (linear) {
+        // c0 and the toon mix are in linear light: add the rim there and encode once
+        let rim = rim_light(c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front);
+        color = vec4<f32>(to_srgb(color.rgb + rim), color.a);
+    } else {
+        color = vec4<f32>(add_rim(color.rgb, c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front), color.a);
+    }
     // opaque and mask draw solid; blend keeps the alpha
     if (params.surface.z < 1.5) {
         color.a = 1.0;
@@ -864,6 +894,8 @@ pub struct ToonTerms<'a> {
     pub base_level_only: bool,
     /// An alpha mask, if any (needs a surface)
     pub alpha_mask: Option<AlphaMask<'a>>,
+    /// The surface is shaded in linear light (see the module doc); the outline is not
+    pub linear_light: bool,
 }
 
 /// Checks a part's terms: a rim's numbers finite, its power positive, its blur and antialias not
@@ -951,7 +983,7 @@ fn check_term_texture(name: &str, m: ToonTexture<'_>) -> Result<(), RenderError>
 }
 
 /// The uniform words of the terms (after the surface): the inverse view-projection, the image
-/// size, the rim, the outline's base flag, then the alpha mask
+/// size, the rim, the outline's base flag, the alpha mask, then the linear-light flag
 fn terms_words(t: &ToonTerms<'_>, view_proj: [f32; 16], width: f32, height: f32) -> Vec<f32> {
     let mut w = glam::Mat4::from_cols_array(&view_proj)
         .inverse()
@@ -981,6 +1013,7 @@ fn terms_words(t: &ToonTerms<'_>, view_proj: [f32; 16], width: f32, height: f32)
         };
         [mode, m.scale, m.value, if m.srgb { 1.0 } else { 0.0 }]
     }));
+    w.extend_from_slice(&[if t.linear_light { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0]);
     w
 }
 
