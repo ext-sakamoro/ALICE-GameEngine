@@ -94,6 +94,7 @@ fn bad_terms_are_refused() {
         base_level_only: false,
         alpha_mask: None,
         linear_light: false,
+        receive: None,
     };
     assert_eq!(check_terms(&ok, false), Ok(()));
     assert_eq!(check_terms(&ToonTerms::default(), false), Ok(()));

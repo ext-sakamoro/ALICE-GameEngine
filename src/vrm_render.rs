@@ -26,7 +26,10 @@
 //! colours and the textures decoded from sRGB (each on its own, `decode(colour) * decode(texel)`),
 //! the toon mix and the rim in linear light, the result encoded once; the outline is drawn as
 //! without it. Without terms a part is drawn as before: both faces, no rim, the outline's lighting
-//! mix, the base colour's alpha, the toon mix of the encoded values.
+//! mix, the base colour's alpha, the toon mix of the encoded values. A per-vertex `receive`
+//! attenuation (0..=1, the light the scene's shape lets through, see `vrm_occlusion`) scales the
+//! half-Lambert term `h = (dot(n, l) + 1) / 2` before the ramp, as `h * a`; at 1 the shading is
+//! unchanged.
 //!
 //! The renderer draws one sample per pixel unless told 4 ([`ToonRenderer::set_samples`]):
 //! multisampled edges, the fragment shaded once per pixel and the samples averaged.
@@ -92,6 +95,8 @@ struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    // the light received (1 without a receive term)
+    @location(3) receive: f32,
 };
 
 struct VsOut {
@@ -99,6 +104,7 @@ struct VsOut {
     @location(0) normal: vec3<f32>,
     @location(1) world: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) receive: f32,
 };
 
 @vertex
@@ -108,6 +114,7 @@ fn vs_main(v: VsIn) -> VsOut {
     out.normal = v.normal;
     out.world = v.position;
     out.uv = v.uv;
+    out.receive = v.receive;
     return out;
 }
 
@@ -167,6 +174,7 @@ fn vs_outline(v: VsIn) -> VsOut {
     out.normal = v.normal;
     out.world = v.position;
     out.uv = v.uv;
+    out.receive = v.receive;
     return out;
 }
 
@@ -206,7 +214,21 @@ fn shape_distance(i: u32, p: vec2<f32>) -> f32 {
 
 // the lit factor at a normal (MToon 1.0 shading): 0 in shade, 1 lit
 fn lit_factor(normal: vec3<f32>) -> f32 {
-    let s = dot(normalize(normal), normalize(params.light.xyz)) + params.light.w;
+    return ramp(dot(normalize(normal), normalize(params.light.xyz)) + params.light.w);
+}
+
+// the lit factor with the received light a: the half-Lambert h = (dot + 1) / 2 scaled to h a
+// before the ramp (the same as lit_factor at a = 1)
+fn lit_factor_received(normal: vec3<f32>, a: f32) -> f32 {
+    if (a >= 1.0) {
+        return lit_factor(normal);
+    }
+    let h = clamp(dot(normalize(normal), normalize(params.light.xyz)) * 0.5 + 0.5, 0.0, 1.0) * a;
+    return ramp(2.0 * h - 1.0 + params.light.w);
+}
+
+// MToon's ramp of s = dot(n, l) + shift by the toony factor
+fn ramp(s: f32) -> f32 {
     let toony = params.shading.x;
     let width = 2.0 - 2.0 * toony;
     if (width <= 0.0) {
@@ -215,10 +237,14 @@ fn lit_factor(normal: vec3<f32>) -> f32 {
     return clamp((s + 1.0 - toony) / width, 0.0, 1.0);
 }
 
+// the surface's toon colour between its shaded and lit colours at a lit factor
+fn toon_at(t: f32, c: array<vec4<f32>, 2>) -> vec4<f32> {
+    return vec4<f32>(mix(c[1].rgb, c[0].rgb, t), c[0].a);
+}
+
 // the surface's toon colour at a normal between its shaded and lit colours
 fn toon(normal: vec3<f32>, c: array<vec4<f32>, 2>) -> vec4<f32> {
-    let rgb = mix(c[1].rgb, c[0].rgb, lit_factor(normal));
-    return vec4<f32>(rgb, c[0].a);
+    return toon_at(lit_factor(normal), c);
 }
 
 fn to_linear(c: vec3<f32>) -> vec3<f32> {
@@ -310,13 +336,14 @@ fn fs_main(f: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     if (params.surface.z > 0.5 && params.surface.z < 1.5 && alpha < params.surface.w) {
         discard;
     }
-    var color = vec4<f32>(toon(f.normal, c0).rgb, alpha);
+    let lit = lit_factor_received(f.normal, f.receive);
+    var color = vec4<f32>(toon_at(lit, c0).rgb, alpha);
     if (linear) {
         // c0 and the toon mix are in linear light: add the rim there and encode once
-        let rim = rim_light(c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front);
+        let rim = rim_light(c0[0].rgb, fres, fw, rim_mask, lit, front);
         color = vec4<f32>(to_srgb(color.rgb + rim), color.a);
     } else {
-        color = vec4<f32>(add_rim(color.rgb, c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front), color.a);
+        color = vec4<f32>(add_rim(color.rgb, c0[0].rgb, fres, fw, rim_mask, lit, front), color.a);
     }
     // opaque and mask draw solid; blend keeps the alpha
     if (params.surface.z < 1.5) {
@@ -896,6 +923,8 @@ pub struct ToonTerms<'a> {
     pub alpha_mask: Option<AlphaMask<'a>>,
     /// The surface is shaded in linear light (see the module doc); the outline is not
     pub linear_light: bool,
+    /// The light each vertex receives, 0..=1 (one per vertex of the part; see the module doc)
+    pub receive: Option<&'a [f32]>,
 }
 
 /// Checks a part's terms: a rim's numbers finite, its power positive, its blur and antialias not
@@ -906,6 +935,11 @@ pub struct ToonTerms<'a> {
 ///
 /// [`RenderError::BadTerms`]
 pub fn check_terms(t: &ToonTerms<'_>, has_surface: bool) -> Result<(), RenderError> {
+    if let Some(r) = t.receive {
+        if let Some(a) = r.iter().find(|a| !(0.0..=1.0).contains(*a)) {
+            return Err(RenderError::BadTerms(format!("received light {a}")));
+        }
+    }
     if let Some(m) = t.alpha_mask {
         if !has_surface {
             return Err(RenderError::BadTerms(
@@ -1148,7 +1182,8 @@ mod gpu {
         format: wgpu::TextureFormat,
         samples: u32,
     ) -> wgpu::RenderPipeline {
-        let vertex_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
+        let vertex_attrs =
+            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32];
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(vs),
             layout: Some(layout),
@@ -1156,7 +1191,7 @@ mod gpu {
                 module: shader,
                 entry_point: Some(vs),
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 32,
+                    array_stride: 36,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &vertex_attrs,
                 }],
@@ -1688,6 +1723,15 @@ mod gpu {
                     RenderError::BadTerms(m) => RenderError::BadTerms(format!("part {i}: {m}")),
                     other => other,
                 })?;
+                if let Some(r) = term_of(i).receive {
+                    if r.len() != part.positions.len() {
+                        return Err(RenderError::BadTerms(format!(
+                            "part {i}: {} received values for {} vertices",
+                            r.len(),
+                            part.positions.len()
+                        )));
+                    }
+                }
                 let masks = [
                     ("rim mask", term_of(i).rim.and_then(|r| r.mask)),
                     ("alpha mask", term_of(i).alpha_mask.map(|m| m.texture)),
@@ -1716,7 +1760,13 @@ mod gpu {
                         .enumerate()
                         .flat_map(|(k, (a, n))| {
                             let uv = uvs.map_or([0.0, 0.0], |u| u[k]);
-                            a.iter().chain(n).chain(&uv).copied().collect::<Vec<f32>>()
+                            let rec = [term.receive.map_or(1.0, |r| r[k])];
+                            a.iter()
+                                .chain(n)
+                                .chain(&uv)
+                                .chain(&rec)
+                                .copied()
+                                .collect::<Vec<f32>>()
                         })
                         .collect();
                     let vbuf = self
