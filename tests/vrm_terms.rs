@@ -92,6 +92,7 @@ fn bad_terms_are_refused() {
         rim: Some(rim(None)),
         outline_times_base: false,
         base_level_only: false,
+        alpha_mask: None,
     };
     assert_eq!(check_terms(&ok, false), Ok(()));
     assert_eq!(check_terms(&ToonTerms::default(), false), Ok(()));

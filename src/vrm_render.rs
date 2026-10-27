@@ -18,8 +18,12 @@
 //! `f = pow(1 - |n . v|, power)`, a ramp from `border - blur / 2` to `border + blur / 2` (widened
 //! by `fwidth(f) * antialias`), times the lit factor by the shadow mask, coloured by the rim colour
 //! (times a mask texture, and mixed toward colour * base by the albedo mix) and added in linear
-//! light. The outline may take the base colour, unshaded, in place of its lighting mix. Without
-//! terms a part is drawn as before: both faces, no rim, the outline's lighting mix.
+//! light. The outline may take the base colour, unshaded, in place of its lighting mix. An
+//! [`AlphaMask`] sets or changes the alpha from a separate image's red channel:
+//! `k = clamp(r * scale + value, 0, 1)` (r decoded from sRGB when the image is sRGB-encoded), the
+//! alpha becoming `k`, `a * k`, `clamp(a + k)` or `clamp(a - k)`; a cutout and a blend both use
+//! the alpha after the mask. Without terms a part is drawn as before: both faces, no rim, the
+//! outline's lighting mix, the base colour's alpha.
 //!
 //! The renderer draws one sample per pixel unless told 4 ([`ToonRenderer::set_samples`]):
 //! multisampled edges, the fragment shaded once per pixel and the samples averaged.
@@ -61,6 +65,9 @@ struct Params {
     rim_b: vec4<f32>,
     // x: 1 = the outline colour times the base colour (unshaded) in place of the lighting mix
     outline_b: vec4<f32>,
+    // the alpha mask: x mode (0 none, 1 replace, 2 multiply, 3 add, 4 subtract), y scale,
+    // z value, w 1 = the mask's red is sRGB-encoded
+    alpha_mask: vec4<f32>,
     // world -> face plane: xy are the paint coordinates, z the depth along the face's forward
     to_face: mat4x4<f32>,
     // x: the number of shapes, y: the least face depth that is painted
@@ -74,6 +81,7 @@ struct Params {
 @group(0) @binding(2) var shade_tex: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
 @group(0) @binding(4) var rim_tex: texture_2d<f32>;
+@group(0) @binding(5) var alpha_mask_tex: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -230,11 +238,32 @@ fn add_rim(rgb: vec3<f32>, albedo: vec3<f32>, fres: f32, fw: f32, m: vec4<f32>, 
     return to_srgb(to_linear(rgb) + col * (params.rim_color.a * m.a * r));
 }
 
+// the base colour's alpha after the alpha mask (unchanged without one); m is the mask's red
+fn masked_alpha(a: f32, m: f32) -> f32 {
+    let mode = params.alpha_mask.x;
+    if (mode < 0.5) {
+        return a;
+    }
+    let r = select(m, to_linear(vec3<f32>(m)).x, params.alpha_mask.w > 0.5);
+    let k = clamp(r * params.alpha_mask.y + params.alpha_mask.z, 0.0, 1.0);
+    if (mode < 1.5) {
+        return k;
+    }
+    if (mode < 2.5) {
+        return a * k;
+    }
+    if (mode < 3.5) {
+        return clamp(a + k, 0.0, 1.0);
+    }
+    return clamp(a - k, 0.0, 1.0);
+}
+
 // the outline colour, tinted by the surface's lit colour by the lighting mix
 @fragment
 fn fs_outline(f: VsOut) -> @location(0) vec4<f32> {
     let c0 = colours(f.uv);
-    if (params.surface.z > 0.5 && params.surface.z < 1.5 && c0[0].a < params.surface.w) {
+    let alpha = masked_alpha(c0[0].a, textureSample(alpha_mask_tex, samp, uv_of(f.uv)).r);
+    if (params.surface.z > 0.5 && params.surface.z < 1.5 && alpha < params.surface.w) {
         discard;
     }
     let lit = toon(f.normal, c0).rgb;
@@ -250,13 +279,14 @@ fn fs_main(f: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     let c0 = colours(f.uv);
     // sampled and differentiated in uniform control flow, before any discard
     let rim_mask = textureSample(rim_tex, samp, uv_of(f.uv));
+    let alpha = masked_alpha(c0[0].a, textureSample(alpha_mask_tex, samp, uv_of(f.uv)).r);
     let fres = rim_fresnel(f);
     let fw = fwidth(fres);
     // mask: below the cutoff the fragment is not drawn at all
-    if (params.surface.z > 0.5 && params.surface.z < 1.5 && c0[0].a < params.surface.w) {
+    if (params.surface.z > 0.5 && params.surface.z < 1.5 && alpha < params.surface.w) {
         discard;
     }
-    var color = toon(f.normal, c0);
+    var color = vec4<f32>(toon(f.normal, c0).rgb, alpha);
     color = vec4<f32>(add_rim(color.rgb, c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front), color.a);
     // opaque and mask draw solid; blend keeps the alpha
     if (params.surface.z < 1.5) {
@@ -790,6 +820,35 @@ pub struct Rim<'a> {
     pub mask: Option<ToonTexture<'a>>,
 }
 
+/// How an [`AlphaMask`]'s value `k` changes the base colour's alpha `a`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlphaMaskMode {
+    /// The alpha becomes `k`
+    Replace,
+    /// `a * k`
+    Multiply,
+    /// `clamp(a + k, 0, 1)`
+    Add,
+    /// `clamp(a - k, 0, 1)`
+    Subtract,
+}
+
+/// An alpha mask: a separate image whose red channel, read at the surface's UVs, gives
+/// `k = clamp(r * scale + value, 0, 1)`, applied to the alpha by `mode` (see the module doc)
+#[derive(Debug, Clone, Copy)]
+pub struct AlphaMask<'a> {
+    /// The mask image (its red channel is read)
+    pub texture: ToonTexture<'a>,
+    /// How `k` changes the alpha
+    pub mode: AlphaMaskMode,
+    /// Multiplies the red channel
+    pub scale: f32,
+    /// Added after the scale
+    pub value: f32,
+    /// The red channel is sRGB-encoded (decoded to linear before the scale)
+    pub srgb: bool,
+}
+
 /// What a part carries beyond [`ToonPart`] (the default: both faces drawn, no rim)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ToonTerms<'a> {
@@ -803,6 +862,8 @@ pub struct ToonTerms<'a> {
     /// The textures are read at their full size only (no smaller mip level): for a texture that
     /// is data (a colour strip indexed by UV), where a mip level would blend unrelated texels
     pub base_level_only: bool,
+    /// An alpha mask, if any (needs a surface)
+    pub alpha_mask: Option<AlphaMask<'a>>,
 }
 
 /// Checks a part's terms: a rim's numbers finite, its power positive, its blur and antialias not
@@ -813,6 +874,20 @@ pub struct ToonTerms<'a> {
 ///
 /// [`RenderError::BadTerms`]
 pub fn check_terms(t: &ToonTerms<'_>, has_surface: bool) -> Result<(), RenderError> {
+    if let Some(m) = t.alpha_mask {
+        if !has_surface {
+            return Err(RenderError::BadTerms(
+                "an alpha mask on a part without a surface".into(),
+            ));
+        }
+        if !m.scale.is_finite() || !m.value.is_finite() {
+            return Err(RenderError::BadTerms(format!(
+                "alpha mask scale {} value {}",
+                m.scale, m.value
+            )));
+        }
+        check_term_texture("alpha mask", m.texture)?;
+    }
     let Some(r) = t.rim else { return Ok(()) };
     let nums = [
         r.fresnel_power,
@@ -851,26 +926,32 @@ pub fn check_terms(t: &ToonTerms<'_>, has_surface: bool) -> Result<(), RenderErr
                 "a rim mask on a part without a surface".into(),
             ));
         }
-        if !(1..=8192).contains(&m.width) || !(1..=8192).contains(&m.height) {
-            return Err(RenderError::BadTerms(format!(
-                "rim mask {} x {}",
-                m.width, m.height
-            )));
-        }
-        if m.rgba.len() as u64 != u64::from(m.width) * u64::from(m.height) * 4 {
-            return Err(RenderError::BadTerms(format!(
-                "rim mask {} x {} with {} bytes",
-                m.width,
-                m.height,
-                m.rgba.len()
-            )));
-        }
+        check_term_texture("rim mask", m)?;
+    }
+    Ok(())
+}
+
+/// A term's texture: a size in 1..=8192 with exactly its bytes
+fn check_term_texture(name: &str, m: ToonTexture<'_>) -> Result<(), RenderError> {
+    if !(1..=8192).contains(&m.width) || !(1..=8192).contains(&m.height) {
+        return Err(RenderError::BadTerms(format!(
+            "{name} {} x {}",
+            m.width, m.height
+        )));
+    }
+    if m.rgba.len() as u64 != u64::from(m.width) * u64::from(m.height) * 4 {
+        return Err(RenderError::BadTerms(format!(
+            "{name} {} x {} with {} bytes",
+            m.width,
+            m.height,
+            m.rgba.len()
+        )));
     }
     Ok(())
 }
 
 /// The uniform words of the terms (after the surface): the inverse view-projection, the image
-/// size, the rim, then the outline's base flag
+/// size, the rim, the outline's base flag, then the alpha mask
 fn terms_words(t: &ToonTerms<'_>, view_proj: [f32; 16], width: f32, height: f32) -> Vec<f32> {
     let mut w = glam::Mat4::from_cols_array(&view_proj)
         .inverse()
@@ -891,6 +972,15 @@ fn terms_words(t: &ToonTerms<'_>, view_proj: [f32; 16], width: f32, height: f32)
         }
     }
     w.extend_from_slice(&[if t.outline_times_base { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0]);
+    w.extend_from_slice(&t.alpha_mask.map_or([0.0; 4], |m| {
+        let mode = match m.mode {
+            AlphaMaskMode::Replace => 1.0,
+            AlphaMaskMode::Multiply => 2.0,
+            AlphaMaskMode::Add => 3.0,
+            AlphaMaskMode::Subtract => 4.0,
+        };
+        [mode, m.scale, m.value, if m.srgb { 1.0 } else { 0.0 }]
+    }));
     w
 }
 
@@ -1236,6 +1326,7 @@ mod gpu {
                     texture_entry(1),
                     texture_entry(2),
                     texture_entry(4),
+                    texture_entry(5),
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1564,10 +1655,15 @@ mod gpu {
                     RenderError::BadTerms(m) => RenderError::BadTerms(format!("part {i}: {m}")),
                     other => other,
                 })?;
-                if let Some(m) = term_of(i).rim.and_then(|r| r.mask) {
+                let masks = [
+                    ("rim mask", term_of(i).rim.and_then(|r| r.mask)),
+                    ("alpha mask", term_of(i).alpha_mask.map(|m| m.texture)),
+                ];
+                for (name, m) in masks {
+                    let Some(m) = m else { continue };
                     if m.width > max_tex || m.height > max_tex {
                         return Err(RenderError::BadTerms(format!(
-                            "part {i}: rim mask {} x {} past this device's {max_tex}",
+                            "part {i}: {name} {} x {} past this device's {max_tex}",
                             m.width, m.height
                         )));
                     }
@@ -1651,6 +1747,8 @@ mod gpu {
                     let bv = base.create_view(&wgpu::TextureViewDescriptor::default());
                     let sv = shade.create_view(&wgpu::TextureViewDescriptor::default());
                     let rv = rim.create_view(&wgpu::TextureViewDescriptor::default());
+                    let am = self.texture(term.alpha_mask.map_or(white, |m| m.texture));
+                    let av = am.create_view(&wgpu::TextureViewDescriptor::default());
                     let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("vrm toon params"),
                         layout: &self.layout,
@@ -1678,6 +1776,10 @@ mod gpu {
                             wgpu::BindGroupEntry {
                                 binding: 4,
                                 resource: wgpu::BindingResource::TextureView(&rv),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(&av),
                             },
                         ],
                     });
