@@ -800,6 +800,9 @@ pub struct ToonTerms<'a> {
     /// The outline's colour is its colour times the base colour (with its texture), unshaded,
     /// in place of the outline's lighting mix
     pub outline_times_base: bool,
+    /// The textures are read at their full size only (no smaller mip level): for a texture that
+    /// is data (a colour strip indexed by UV), where a mip level would blend unrelated texels
+    pub base_level_only: bool,
 }
 
 /// Checks a part's terms: a rim's numbers finite, its power positive, its blur and antialias not
@@ -1000,6 +1003,7 @@ mod gpu {
         pipeline_layout: wgpu::PipelineLayout,
         samples: u32,
         sampler: wgpu::Sampler,
+        base_sampler: wgpu::Sampler,
         layout: wgpu::BindGroupLayout,
         format: wgpu::TextureFormat,
         width: u32,
@@ -1258,6 +1262,17 @@ mod gpu {
                 mipmap_filter: wgpu::FilterMode::Nearest,
                 ..wgpu::SamplerDescriptor::default()
             });
+            // the same at the full-size level only
+            let base_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("vrm toon base level"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                lod_max_clamp: 0.0,
+                ..wgpu::SamplerDescriptor::default()
+            });
             Ok(Self {
                 device,
                 queue,
@@ -1270,6 +1285,7 @@ mod gpu {
                 pipeline_layout: pl,
                 samples: 1,
                 sampler,
+                base_sampler,
                 layout,
                 format,
                 width,
@@ -1653,7 +1669,11 @@ mod gpu {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 3,
-                                resource: wgpu::BindingResource::Sampler(&self.sampler),
+                                resource: wgpu::BindingResource::Sampler(if term.base_level_only {
+                                    &self.base_sampler
+                                } else {
+                                    &self.sampler
+                                }),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 4,

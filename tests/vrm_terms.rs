@@ -91,6 +91,7 @@ fn bad_terms_are_refused() {
         cull_back: true,
         rim: Some(rim(None)),
         outline_times_base: false,
+        base_level_only: false,
     };
     assert_eq!(check_terms(&ok, false), Ok(()));
     assert_eq!(check_terms(&ToonTerms::default(), false), Ok(()));
@@ -153,7 +154,8 @@ fn bad_terms_are_refused() {
 mod gpu {
     use super::{rim, to_linear, to_srgb};
     use alice_game_engine::vrm_render::{
-        RenderError, ToonParams, ToonPart, ToonRenderer, ToonTerms,
+        AlphaMode, RenderError, Surface, ToonParams, ToonPart, ToonRenderer, ToonTerms,
+        ToonTexture, UvTransform,
     };
 
     const VIEW_PROJ: [f32; 16] = [
@@ -304,5 +306,83 @@ mod gpu {
         assert_eq!(pixel(&four, 25, 38), pixel(&one, 25, 38));
         r.set_samples(1).unwrap();
         assert_eq!(r.draw_parts(&[part(&n, &FRONT)], CLEAR).unwrap(), one);
+    }
+
+    // oracle: a texture of two rows, red over green, read at v = 1/4 (the red row's centre) on a
+    // triangle drawn so small that its UVs span the whole texture within a pixel: a mip level
+    // averages the rows (the 1 x 1 level is their mean, red and green both 128 in linear-light
+    // terms or near); read at its full size only, the texel is red
+    #[test]
+    #[ignore = "needs a working GPU adapter"]
+    fn base_level_only_reads_the_full_size_texture() {
+        let r = renderer();
+        let mut rgba = Vec::new();
+        for row in 0..2u32 {
+            for _ in 0..256 {
+                rgba.extend_from_slice(if row == 0 {
+                    &[255, 0, 0, 255]
+                } else {
+                    &[0, 255, 0, 255]
+                });
+            }
+        }
+        let tex = ToonTexture {
+            width: 256,
+            height: 2,
+            rgba: &rgba,
+            key: None,
+        };
+        // a strip one pixel tall across the image: 64 columns, UVs that run 0..64 along it (the
+        // texture repeats 64 times in 64 pixels, so a pixel spans the whole texture across u)
+        let pos = [
+            [0.0, 0.475, 0.0],
+            [2.0, 0.475, 0.0],
+            [0.0, 0.495, 0.0],
+            [2.0, 0.495, 0.0],
+        ];
+        let nrm = [[0.0, 0.0, 1.0]; 4];
+        let uvs = [[0.0, 0.25], [64.0, 0.25], [0.0, 0.25], [64.0, 0.25]];
+        let idx = [0u32, 1, 2, 2, 1, 3];
+        let part = ToonPart {
+            positions: &pos,
+            normals: &nrm,
+            indices: &idx,
+            params: ToonParams {
+                view_proj: VIEW_PROJ,
+                base_color: [1.0; 4],
+                shade_color: [1.0; 4],
+                light_dir: [0.0, 0.0, 1.0],
+                shading_shift: 0.0,
+                shading_toony: 1.0,
+                clear: CLEAR,
+            },
+            paint: None,
+            outline: None,
+            surface: Some(Surface {
+                uvs: &uvs,
+                base: Some(tex),
+                shade: Some(tex),
+                transform: UvTransform::IDENTITY,
+                alpha: AlphaMode::Opaque,
+            }),
+        };
+        // pixel (40, 32) has its centre at world (0.77, 0.484), inside the strip (x 0..2, y 0.475..0.495)
+        let px = |img: &[u8]| pixel(img, 40, 32);
+        let mipped = r
+            .draw_parts_terms(&[part], &[ToonTerms::default()], CLEAR)
+            .unwrap();
+        let base = r
+            .draw_parts_terms(
+                &[part],
+                &[ToonTerms {
+                    base_level_only: true,
+                    ..ToonTerms::default()
+                }],
+                CLEAR,
+            )
+            .unwrap();
+        assert_eq!(px(&base), [255, 0, 0, 255], "full size: the red row");
+        let m = px(&mipped);
+        assert!(m[1] > 60, "a smaller level mixes in the green row: {m:?}");
     }
 }
