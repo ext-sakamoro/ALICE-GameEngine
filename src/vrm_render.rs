@@ -12,6 +12,17 @@
 //! `baseColorTexture` and `shadeMultiplyTexture`), a UV transform (`KHR_texture_transform`) and
 //! an alpha mode (opaque, mask with a cutoff, or blend). [`toon_wgsl`] is plain text (validated
 //! by naga in the tests); the renderer is behind the `gpu` feature.
+//!
+//! [`ToonTerms`] add, per part, what a toon material may carry beyond that: culling of the back
+//! faces, and a [`Rim`] light, where the surface turns away from the viewer:
+//! `f = pow(1 - |n . v|, power)`, a ramp from `border - blur / 2` to `border + blur / 2` (widened
+//! by `fwidth(f) * antialias`), times the lit factor by the shadow mask, coloured by the rim colour
+//! (times a mask texture, and mixed toward colour * base by the albedo mix) and added in linear
+//! light. The outline may take the base colour, unshaded, in place of its lighting mix. Without
+//! terms a part is drawn as before: both faces, no rim, the outline's lighting mix.
+//!
+//! The renderer draws one sample per pixel unless told 4 ([`ToonRenderer::set_samples`]):
+//! multisampled edges, the fragment shaded once per pixel and the samples averaged.
 
 /// The WGSL of the toon pipeline: `vs_main` / `fs_main` for the surface and `vs_outline` /
 /// `fs_outline` for its inverted-hull outline, one uniform block at group 0
@@ -38,6 +49,18 @@ struct Params {
     uv_a: vec4<f32>,
     // x: UV rotation (radians)
     uv_b: vec4<f32>,
+    // the inverse of view_proj (a fragment's view ray)
+    inv_view_proj: mat4x4<f32>,
+    // xy: the image size in pixels
+    viewport: vec4<f32>,
+    // rim: rgb colour, a strength
+    rim_color: vec4<f32>,
+    // x: Fresnel power, y: border, z: blur, w: shadow mask (0..=1)
+    rim: vec4<f32>,
+    // x: albedo mix, y: antialias, z: 1 = no rim on back faces, w: 1 = rim on
+    rim_b: vec4<f32>,
+    // x: 1 = the outline colour times the base colour (unshaded) in place of the lighting mix
+    outline_b: vec4<f32>,
     // world -> face plane: xy are the paint coordinates, z the depth along the face's forward
     to_face: mat4x4<f32>,
     // x: the number of shapes, y: the least face depth that is painted
@@ -50,6 +73,7 @@ struct Params {
 @group(0) @binding(1) var base_tex: texture_2d<f32>;
 @group(0) @binding(2) var shade_tex: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
+@group(0) @binding(4) var rim_tex: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -158,19 +182,52 @@ fn shape_distance(i: u32, p: vec2<f32>) -> f32 {
     return d - s1.w;
 }
 
-// the surface's toon colour at a normal (MToon 1.0 shading) between its shaded and lit colours
-fn toon(normal: vec3<f32>, c: array<vec4<f32>, 2>) -> vec4<f32> {
+// the lit factor at a normal (MToon 1.0 shading): 0 in shade, 1 lit
+fn lit_factor(normal: vec3<f32>) -> f32 {
     let s = dot(normalize(normal), normalize(params.light.xyz)) + params.light.w;
     let toony = params.shading.x;
     let width = 2.0 - 2.0 * toony;
-    var t: f32;
     if (width <= 0.0) {
-        t = select(0.0, 1.0, s >= 0.0);
-    } else {
-        t = clamp((s + 1.0 - toony) / width, 0.0, 1.0);
+        return select(0.0, 1.0, s >= 0.0);
     }
-    let rgb = mix(c[1].rgb, c[0].rgb, t);
+    return clamp((s + 1.0 - toony) / width, 0.0, 1.0);
+}
+
+// the surface's toon colour at a normal between its shaded and lit colours
+fn toon(normal: vec3<f32>, c: array<vec4<f32>, 2>) -> vec4<f32> {
+    let rgb = mix(c[1].rgb, c[0].rgb, lit_factor(normal));
     return vec4<f32>(rgb, c[0].a);
+}
+
+fn to_linear(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+
+fn to_srgb(c: vec3<f32>) -> vec3<f32> {
+    return select(1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3<f32>(0.0031308));
+}
+
+// 1 - |n . v| to the Fresnel power, v the direction from the fragment toward the viewer
+fn rim_fresnel(f: VsOut) -> f32 {
+    let ndc = vec2<f32>(2.0 * f.clip.x / params.viewport.x - 1.0, 1.0 - 2.0 * f.clip.y / params.viewport.y);
+    let near = params.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    let v = normalize(near.xyz / near.w - f.world);
+    return pow(clamp(1.0 - abs(dot(normalize(f.normal), v)), 0.0, 1.0), params.rim.x);
+}
+
+// the colour with the rim added in linear light (unchanged without a rim, or on a back face when
+// the rim skips them)
+fn add_rim(rgb: vec3<f32>, albedo: vec3<f32>, fres: f32, fw: f32, m: vec4<f32>, lit: f32, front: bool) -> vec3<f32> {
+    if (params.rim_b.w < 0.5 || (params.rim_b.z > 0.5 && !front)) {
+        return rgb;
+    }
+    let lo = clamp(params.rim.y - params.rim.z * 0.5, 0.0, 1.0);
+    let hi = clamp(params.rim.y + params.rim.z * 0.5, 0.0, 1.0);
+    var r = clamp((fres - lo) / max(clamp(hi - lo + fw * params.rim_b.y, 0.0, 1.0), 0.0001), 0.0, 1.0);
+    r = mix(r, r * lit, params.rim.w);
+    var col = to_linear(params.rim_color.rgb) * to_linear(m.rgb);
+    col = mix(col, col * to_linear(albedo), params.rim_b.x);
+    return to_srgb(to_linear(rgb) + col * (params.rim_color.a * m.a * r));
 }
 
 // the outline colour, tinted by the surface's lit colour by the lighting mix
@@ -181,18 +238,26 @@ fn fs_outline(f: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     let lit = toon(f.normal, c0).rgb;
-    let c = params.outline_color.rgb * mix(vec3<f32>(1.0, 1.0, 1.0), lit, params.outline.z);
+    var c = params.outline_color.rgb * mix(vec3<f32>(1.0, 1.0, 1.0), lit, params.outline.z);
+    if (params.outline_b.x > 0.5) {
+        c = params.outline_color.rgb * c0[0].rgb;
+    }
     return vec4<f32>(c, 1.0);
 }
 
 @fragment
-fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
+fn fs_main(f: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let c0 = colours(f.uv);
+    // sampled and differentiated in uniform control flow, before any discard
+    let rim_mask = textureSample(rim_tex, samp, uv_of(f.uv));
+    let fres = rim_fresnel(f);
+    let fw = fwidth(fres);
     // mask: below the cutoff the fragment is not drawn at all
     if (params.surface.z > 0.5 && params.surface.z < 1.5 && c0[0].a < params.surface.w) {
         discard;
     }
     var color = toon(f.normal, c0);
+    color = vec4<f32>(add_rim(color.rgb, c0[0].rgb, fres, fw, rim_mask, lit_factor(f.normal), front), color.a);
     // opaque and mask draw solid; blend keeps the alpha
     if (params.surface.z < 1.5) {
         color.a = 1.0;
@@ -576,6 +641,84 @@ pub fn check_surface(s: &Surface<'_>, vertices: usize) -> Result<(), RenderError
     Ok(())
 }
 
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = f32::from(c) / 255.0;
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(c: f32) -> u8 {
+    let s = if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055f32.mul_add(c.powf(1.0 / 2.4), -0.055)
+    };
+    // in 0..=255 after the clamp
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let v = (s.clamp(0.0, 1.0) * 255.0).round() as u8;
+    v
+}
+
+/// The mip chain of an RGBA8 image (sRGB colour, linear alpha), level 0 first and every level
+/// after it, down to 1 x 1: each level's texel is the mean of the 2 x 2 texels above it (the
+/// last row or column repeated where a size is odd), the colour averaged in linear light.
+/// Returns the bytes of all levels in order and the number of levels
+#[must_use]
+pub fn mip_chain(rgba: &[u8], width: u32, height: u32) -> (Vec<u8>, u32) {
+    let mut out = rgba.to_vec();
+    let (mut w, mut h) = (width as usize, height as usize);
+    let mut level: Vec<[f32; 4]> = rgba
+        .chunks_exact(4)
+        .map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+                f32::from(p[3]) / 255.0,
+            ]
+        })
+        .collect();
+    let mut levels = 1;
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = vec![[0.0f32; 4]; nw * nh];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut acc = [0.0f32; 4];
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let sx = (2 * x + dx).min(w - 1);
+                    let sy = (2 * y + dy).min(h - 1);
+                    let t = level[sy * w + sx];
+                    for c in 0..4 {
+                        acc[c] += t[c] * 0.25;
+                    }
+                }
+                next[y * nw + x] = acc;
+            }
+        }
+        for t in &next {
+            out.extend_from_slice(&[
+                linear_to_srgb(t[0]),
+                linear_to_srgb(t[1]),
+                linear_to_srgb(t[2]),
+                // in 0..=255 after the clamp
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    (t[3].clamp(0.0, 1.0) * 255.0).round() as u8
+                },
+            ]);
+        }
+        level = next;
+        w = nw;
+        h = nh;
+        levels += 1;
+    }
+    (out, levels)
+}
+
 /// The uniform words of a surface (after the outline): presence, alpha mode and cutoff, then
 /// the UV transform
 fn surface_words(s: Option<&Surface<'_>>) -> [f32; 12] {
@@ -624,6 +767,130 @@ pub struct ToonPart<'a> {
     pub surface: Option<Surface<'a>>,
 }
 
+/// A rim light: where the surface turns away from the viewer (see the module doc)
+#[derive(Debug, Clone, Copy)]
+pub struct Rim<'a> {
+    /// rgb: the colour (sRGB, as a material stores it), a: the strength
+    pub color: [f32; 4],
+    /// The power of `1 - |n . v|` (> 0)
+    pub fresnel_power: f32,
+    /// The centre of the ramp
+    pub border: f32,
+    /// The width of the ramp (>= 0)
+    pub blur: f32,
+    /// How much `fwidth` widens the ramp (>= 0; 0 is none)
+    pub antialias: f32,
+    /// 0..=1: 0 the rim ignores shade, 1 the rim is times the lit factor
+    pub shadow_mask: f32,
+    /// 0..=1: 0 the rim colour as it is, 1 the rim colour times the base colour
+    pub albedo_mix: f32,
+    /// No rim on back faces
+    pub skip_back_faces: bool,
+    /// Multiplies the colour and the strength, sampled at the surface's UVs (needs a surface)
+    pub mask: Option<ToonTexture<'a>>,
+}
+
+/// What a part carries beyond [`ToonPart`] (the default: both faces drawn, no rim)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ToonTerms<'a> {
+    /// Back faces are not drawn (glTF's `doubleSided: false`)
+    pub cull_back: bool,
+    /// A rim light, if any
+    pub rim: Option<Rim<'a>>,
+    /// The outline's colour is its colour times the base colour (with its texture), unshaded,
+    /// in place of the outline's lighting mix
+    pub outline_times_base: bool,
+}
+
+/// Checks a part's terms: a rim's numbers finite, its power positive, its blur and antialias not
+/// negative, its shadow mask and albedo mix in 0..=1, and its mask texture of a size in 1..=8192
+/// with exactly its bytes, on a part with a surface
+///
+/// # Errors
+///
+/// [`RenderError::BadTerms`]
+pub fn check_terms(t: &ToonTerms<'_>, has_surface: bool) -> Result<(), RenderError> {
+    let Some(r) = t.rim else { return Ok(()) };
+    let nums = [
+        r.fresnel_power,
+        r.border,
+        r.blur,
+        r.antialias,
+        r.shadow_mask,
+        r.albedo_mix,
+    ];
+    if !r.color.iter().chain(&nums).all(|x| x.is_finite()) {
+        return Err(RenderError::BadTerms(
+            "a rim number that is not finite".into(),
+        ));
+    }
+    if r.fresnel_power <= 0.0 {
+        return Err(RenderError::BadTerms(format!(
+            "rim power {}",
+            r.fresnel_power
+        )));
+    }
+    if r.blur < 0.0 || r.antialias < 0.0 {
+        return Err(RenderError::BadTerms(format!(
+            "rim blur {} antialias {}",
+            r.blur, r.antialias
+        )));
+    }
+    if !(0.0..=1.0).contains(&r.shadow_mask) || !(0.0..=1.0).contains(&r.albedo_mix) {
+        return Err(RenderError::BadTerms(format!(
+            "rim shadow mask {} albedo mix {}",
+            r.shadow_mask, r.albedo_mix
+        )));
+    }
+    if let Some(m) = r.mask {
+        if !has_surface {
+            return Err(RenderError::BadTerms(
+                "a rim mask on a part without a surface".into(),
+            ));
+        }
+        if !(1..=8192).contains(&m.width) || !(1..=8192).contains(&m.height) {
+            return Err(RenderError::BadTerms(format!(
+                "rim mask {} x {}",
+                m.width, m.height
+            )));
+        }
+        if m.rgba.len() as u64 != u64::from(m.width) * u64::from(m.height) * 4 {
+            return Err(RenderError::BadTerms(format!(
+                "rim mask {} x {} with {} bytes",
+                m.width,
+                m.height,
+                m.rgba.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The uniform words of the terms (after the surface): the inverse view-projection, the image
+/// size, the rim, then the outline's base flag
+fn terms_words(t: &ToonTerms<'_>, view_proj: [f32; 16], width: f32, height: f32) -> Vec<f32> {
+    let mut w = glam::Mat4::from_cols_array(&view_proj)
+        .inverse()
+        .to_cols_array()
+        .to_vec();
+    w.extend_from_slice(&[width, height, 0.0, 0.0]);
+    match t.rim {
+        None => w.extend_from_slice(&[0.0; 12]),
+        Some(r) => {
+            w.extend_from_slice(&r.color);
+            w.extend_from_slice(&[r.fresnel_power, r.border, r.blur, r.shadow_mask]);
+            w.extend_from_slice(&[
+                r.albedo_mix,
+                r.antialias,
+                if r.skip_back_faces { 1.0 } else { 0.0 },
+                1.0,
+            ]);
+        }
+    }
+    w.extend_from_slice(&[if t.outline_times_base { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0]);
+    w
+}
+
 /// Why a draw failed
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -641,6 +908,10 @@ pub enum RenderError {
     BadOutline(String),
     /// A surface that [`check_surface`] refuses
     BadSurface(String),
+    /// Terms that [`check_terms`] refuses, or not one per part
+    BadTerms(String),
+    /// A sample count other than 1 or 4
+    BadSamples(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -652,6 +923,8 @@ impl std::fmt::Display for RenderError {
             Self::BadPaint(e) => write!(f, "bad paint: {e}"),
             Self::BadOutline(e) => write!(f, "bad outline: {e}"),
             Self::BadSurface(e) => write!(f, "bad surface: {e}"),
+            Self::BadTerms(e) => write!(f, "bad terms: {e}"),
+            Self::BadSamples(e) => write!(f, "bad samples: {e}"),
         }
     }
 }
@@ -705,8 +978,9 @@ pub use gpu::ToonRenderer;
 #[cfg(feature = "gpu")]
 mod gpu {
     use super::{
-        check_mesh, check_outline, check_paint, check_surface, paint_words, surface_words,
-        toon_wgsl, AlphaMode, OutlineMode, RenderError, ToonParams, ToonPart, ToonTexture,
+        check_mesh, check_outline, check_paint, check_surface, check_terms, paint_words,
+        surface_words, terms_words, toon_wgsl, AlphaMode, OutlineMode, RenderError, ToonParams,
+        ToonPart, ToonTerms, ToonTexture,
     };
     use wgpu::util::DeviceExt;
 
@@ -719,7 +993,12 @@ mod gpu {
         queue: wgpu::Queue,
         pipeline: wgpu::RenderPipeline,
         blend_pipeline: wgpu::RenderPipeline,
+        cull_pipeline: wgpu::RenderPipeline,
+        cull_blend_pipeline: wgpu::RenderPipeline,
         outline_pipeline: wgpu::RenderPipeline,
+        shader: wgpu::ShaderModule,
+        pipeline_layout: wgpu::PipelineLayout,
+        samples: u32,
         sampler: wgpu::Sampler,
         layout: wgpu::BindGroupLayout,
         format: wgpu::TextureFormat,
@@ -740,6 +1019,7 @@ mod gpu {
         cull: Option<wgpu::Face>,
         blend: bool,
         format: wgpu::TextureFormat,
+        samples: u32,
     ) -> wgpu::RenderPipeline {
         let vertex_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -777,10 +1057,48 @@ mod gpu {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..wgpu::MultisampleState::default()
+            },
             multiview: None,
             cache: None,
         })
+    }
+
+    /// The five pipelines (solid, blended, both culled, outline) at `samples` per pixel
+    fn toon_pipelines(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        pl: &wgpu::PipelineLayout,
+        format: wgpu::TextureFormat,
+        samples: u32,
+    ) -> [wgpu::RenderPipeline; 5] {
+        let back = Some(wgpu::Face::Back);
+        let main = |cull, blend| {
+            toon_pipeline(
+                device, shader, pl, "vs_main", "fs_main", cull, blend, format, samples,
+            )
+        };
+        // the hull's front faces would cover the surface; its back faces show around it
+        let outline = toon_pipeline(
+            device,
+            shader,
+            pl,
+            "vs_outline",
+            "fs_outline",
+            Some(wgpu::Face::Front),
+            false,
+            format,
+            samples,
+        );
+        [
+            main(None, false),
+            main(None, true),
+            main(back, false),
+            main(back, true),
+            outline,
+        ]
     }
 
     const fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -817,7 +1135,9 @@ mod gpu {
                 .clear();
         }
 
+        /// Uploads the image with its mip chain ([`super::mip_chain`])
         fn upload(&self, t: ToonTexture<'_>) -> wgpu::Texture {
+            let (data, levels) = super::mip_chain(t.rgba, t.width, t.height);
             self.device.create_texture_with_data(
                 &self.queue,
                 &wgpu::TextureDescriptor {
@@ -827,7 +1147,7 @@ mod gpu {
                         height: t.height,
                         depth_or_array_layers: 1,
                     },
-                    mip_level_count: 1,
+                    mip_level_count: levels,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: FORMAT,
@@ -835,7 +1155,7 @@ mod gpu {
                     view_formats: &[],
                 },
                 wgpu::util::TextureDataOrder::LayerMajor,
-                t.rgba,
+                &data,
             )
         }
 
@@ -911,6 +1231,7 @@ mod gpu {
                     },
                     texture_entry(1),
                     texture_entry(2),
+                    texture_entry(4),
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -924,38 +1245,30 @@ mod gpu {
                 bind_group_layouts: &[&layout],
                 push_constant_ranges: &[],
             });
-            let pipeline = toon_pipeline(
-                &device, &shader, &pl, "vs_main", "fs_main", None, false, format,
-            );
-            let blend_pipeline = toon_pipeline(
-                &device, &shader, &pl, "vs_main", "fs_main", None, true, format,
-            );
-            // linear filtering, repeating (UVs outside 0..1 wrap, as glTF's default sampler)
+            let [pipeline, blend_pipeline, cull_pipeline, cull_blend_pipeline, outline_pipeline] =
+                toon_pipelines(&device, &shader, &pl, format, 1);
+            // linear filtering within the nearest mip level, repeating (UVs outside 0..1 wrap, as
+            // glTF's default sampler)
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("vrm toon"),
                 address_mode_u: wgpu::AddressMode::Repeat,
                 address_mode_v: wgpu::AddressMode::Repeat,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
                 ..wgpu::SamplerDescriptor::default()
             });
-            // the hull's front faces would cover the surface; its back faces show around it
-            let outline_pipeline = toon_pipeline(
-                &device,
-                &shader,
-                &pl,
-                "vs_outline",
-                "fs_outline",
-                Some(wgpu::Face::Front),
-                false,
-                format,
-            );
             Ok(Self {
                 device,
                 queue,
                 pipeline,
                 blend_pipeline,
+                cull_pipeline,
+                cull_blend_pipeline,
                 outline_pipeline,
+                shader,
+                pipeline_layout: pl,
+                samples: 1,
                 sampler,
                 layout,
                 format,
@@ -963,6 +1276,42 @@ mod gpu {
                 height,
                 textures: std::sync::Mutex::new(std::collections::HashMap::new()),
             })
+        }
+
+        /// Draws later images with `samples` per pixel: 1, or 4 (multisampled, resolved into the
+        /// image)
+        ///
+        /// # Errors
+        ///
+        /// [`RenderError::BadSamples`] for any other count
+        pub fn set_samples(&mut self, samples: u32) -> Result<(), RenderError> {
+            if samples != 1 && samples != 4 {
+                return Err(RenderError::BadSamples(format!(
+                    "{samples} samples, 1 or 4"
+                )));
+            }
+            if samples != self.samples {
+                let [a, b, c, d, e] = toon_pipelines(
+                    &self.device,
+                    &self.shader,
+                    &self.pipeline_layout,
+                    self.format,
+                    samples,
+                );
+                self.pipeline = a;
+                self.blend_pipeline = b;
+                self.cull_pipeline = c;
+                self.cull_blend_pipeline = d;
+                self.outline_pipeline = e;
+                self.samples = samples;
+            }
+            Ok(())
+        }
+
+        /// The samples per pixel images are drawn with
+        #[must_use]
+        pub const fn samples(&self) -> u32 {
+            self.samples
         }
 
         /// Draws later images `width` x `height` (1..=8192 each)
@@ -1020,6 +1369,20 @@ mod gpu {
             parts: &[ToonPart<'_>],
             clear: [f32; 4],
         ) -> Result<Vec<u8>, RenderError> {
+            self.draw_parts_terms(parts, &[], clear)
+        }
+
+        /// As `draw_parts`, each part with its [`ToonTerms`] (one per part; none: the defaults)
+        ///
+        /// # Errors
+        ///
+        /// As `draw_parts`, and [`RenderError::BadTerms`]
+        pub fn draw_parts_terms(
+            &self,
+            parts: &[ToonPart<'_>],
+            terms: &[ToonTerms<'_>],
+            clear: [f32; 4],
+        ) -> Result<Vec<u8>, RenderError> {
             if self.format != FORMAT {
                 return Err(RenderError::Readback(format!(
                     "reading back {:?}, only {FORMAT:?} is read",
@@ -1042,7 +1405,7 @@ mod gpu {
                 view_formats: &[],
             });
             let tview = target.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut enc = self.encode(parts, clear, &tview)?;
+            let mut enc = self.encode(parts, terms, clear, &tview)?;
             let row = self.width * 4;
             let padded = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
                 * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -1104,7 +1467,23 @@ mod gpu {
             clear: [f32; 4],
             view: &wgpu::TextureView,
         ) -> Result<(), RenderError> {
-            let enc = self.encode(parts, clear, view)?;
+            self.draw_parts_terms_into(parts, &[], clear, view)
+        }
+
+        /// As `draw_parts_into`, each part with its [`ToonTerms`] (one per part; none: the
+        /// defaults)
+        ///
+        /// # Errors
+        ///
+        /// As `draw_parts_into`, and [`RenderError::BadTerms`]
+        pub fn draw_parts_terms_into(
+            &self,
+            parts: &[ToonPart<'_>],
+            terms: &[ToonTerms<'_>],
+            clear: [f32; 4],
+            view: &wgpu::TextureView,
+        ) -> Result<(), RenderError> {
+            let enc = self.encode(parts, terms, clear, view)?;
             self.queue.submit(Some(enc.finish()));
             Ok(())
         }
@@ -1113,12 +1492,22 @@ mod gpu {
         fn encode(
             &self,
             parts: &[ToonPart<'_>],
+            terms: &[ToonTerms<'_>],
             clear: [f32; 4],
             tview: &wgpu::TextureView,
         ) -> Result<wgpu::CommandEncoder, RenderError> {
             if parts.is_empty() {
                 return Err(RenderError::BadMesh("no part to draw".into()));
             }
+            if !terms.is_empty() && terms.len() != parts.len() {
+                return Err(RenderError::BadTerms(format!(
+                    "{} terms for {} parts",
+                    terms.len(),
+                    parts.len()
+                )));
+            }
+            let default_terms = ToonTerms::default();
+            let term_of = |i: usize| terms.get(i).unwrap_or(&default_terms);
             let max_tex = self.device.limits().max_texture_dimension_2d;
             for (i, part) in parts.iter().enumerate() {
                 if let Some(s) = &part.surface {
@@ -1155,11 +1544,25 @@ mod gpu {
                         other => other,
                     })?;
                 }
+                check_terms(term_of(i), part.surface.is_some()).map_err(|e| match e {
+                    RenderError::BadTerms(m) => RenderError::BadTerms(format!("part {i}: {m}")),
+                    other => other,
+                })?;
+                if let Some(m) = term_of(i).rim.and_then(|r| r.mask) {
+                    if m.width > max_tex || m.height > max_tex {
+                        return Err(RenderError::BadTerms(format!(
+                            "part {i}: rim mask {} x {} past this device's {max_tex}",
+                            m.width, m.height
+                        )));
+                    }
+                }
             }
             let uploads: Vec<_> = parts
                 .iter()
-                .map(|part| {
+                .enumerate()
+                .map(|(i, part)| {
                     let p = &part.params;
+                    let term = term_of(i);
                     let uvs = part.surface.as_ref().map(|s| s.uvs);
                     let verts: Vec<f32> = part
                         .positions
@@ -1208,6 +1611,9 @@ mod gpu {
                     uni.extend_from_slice(&[width, mode, mix, aspect]);
                     uni.extend_from_slice(&[color[0], color[1], color[2], 1.0]);
                     uni.extend_from_slice(&surface_words(part.surface.as_ref()));
+                    #[allow(clippy::cast_precision_loss)]
+                    let (w, h) = (self.width as f32, self.height as f32);
+                    uni.extend(terms_words(term, p.view_proj, w, h));
                     uni.extend(paint_words(part.paint));
                     let ubuf = self
                         .device
@@ -1225,8 +1631,10 @@ mod gpu {
                     let surf = part.surface.as_ref();
                     let base = self.texture(surf.and_then(|s| s.base).unwrap_or(white));
                     let shade = self.texture(surf.and_then(|s| s.shade).unwrap_or(white));
+                    let rim = self.texture(term.rim.and_then(|r| r.mask).unwrap_or(white));
                     let bv = base.create_view(&wgpu::TextureViewDescriptor::default());
                     let sv = shade.create_view(&wgpu::TextureViewDescriptor::default());
+                    let rv = rim.create_view(&wgpu::TextureViewDescriptor::default());
                     let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("vrm toon params"),
                         layout: &self.layout,
@@ -1247,13 +1655,17 @@ mod gpu {
                                 binding: 3,
                                 resource: wgpu::BindingResource::Sampler(&self.sampler),
                             },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&rv),
+                            },
                         ],
                     });
                     #[allow(clippy::cast_possible_truncation)]
                     let count = part.indices.len() as u32;
                     let outlined = part.outline.is_some_and(|o| o.width > 0.0);
                     let blended = surf.is_some_and(|s| s.alpha == AlphaMode::Blend);
-                    (vbuf, ibuf, bind, count, outlined, blended)
+                    (vbuf, ibuf, bind, count, outlined, blended, term.cull_back)
                 })
                 .collect();
             let size = wgpu::Extent3d {
@@ -1261,11 +1673,26 @@ mod gpu {
                 height: self.height,
                 depth_or_array_layers: 1,
             };
+            // with several samples: a multisampled colour target, resolved into the view
+            let msaa = (self.samples > 1).then(|| {
+                self.device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some("vrm toon multisampled"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: self.samples,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: self.format,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            });
             let depth = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("vrm toon depth"),
                 size,
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count: self.samples,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -1282,11 +1709,15 @@ mod gpu {
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("vrm toon"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: tview,
-                        resolve_target: None,
+                        view: msaa.as_ref().unwrap_or(tview),
+                        resolve_target: msaa.as_ref().map(|_| tview),
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-                            store: wgpu::StoreOp::Store,
+                            store: if msaa.is_some() {
+                                wgpu::StoreOp::Discard
+                            } else {
+                                wgpu::StoreOp::Store
+                            },
                         },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -1302,7 +1733,7 @@ mod gpu {
                 });
                 // the outline hulls, then the surfaces (the depth buffer orders them)
                 pass.set_pipeline(&self.outline_pipeline);
-                for (vbuf, ibuf, bind, count, outlined, _) in &uploads {
+                for (vbuf, ibuf, bind, count, outlined, _, _) in &uploads {
                     if *outlined {
                         pass.set_bind_group(0, bind, &[]);
                         pass.set_vertex_buffer(0, vbuf.slice(..));
@@ -1311,14 +1742,17 @@ mod gpu {
                     }
                 }
                 // the solid parts, then the blended ones in their order over them
-                for (pipeline, want_blend) in
-                    [(&self.pipeline, false), (&self.blend_pipeline, true)]
-                {
-                    pass.set_pipeline(pipeline);
-                    for (vbuf, ibuf, bind, count, _, blended) in &uploads {
+                for want_blend in [false, true] {
+                    for (vbuf, ibuf, bind, count, _, blended, cull) in &uploads {
                         if *blended != want_blend {
                             continue;
                         }
+                        pass.set_pipeline(match (want_blend, *cull) {
+                            (false, false) => &self.pipeline,
+                            (true, false) => &self.blend_pipeline,
+                            (false, true) => &self.cull_pipeline,
+                            (true, true) => &self.cull_blend_pipeline,
+                        });
                         pass.set_bind_group(0, bind, &[]);
                         pass.set_vertex_buffer(0, vbuf.slice(..));
                         pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
