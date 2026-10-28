@@ -239,7 +239,7 @@ def check(root: Path):
     for name in unread:
         if name not in gates:
             problems.append(f"[unread] {name}: no such file tests/{name}.rs (stale)")
-        elif gates[name] != "unread":
+        elif gates.get(name) != "unread":
             problems.append(f"[unread] {name}: its gate is readable now (stale), remove the entry")
     for name, (sets, _, _) in files.items():
         unknown = set().union(*sets) - set(graph)

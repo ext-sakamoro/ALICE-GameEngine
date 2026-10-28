@@ -58,78 +58,79 @@ def run(files, workflows, pre=None, conf=CONF_COUNTED, cargo=CARGO):
         if conf is not None:
             (root / "scripts" / "gated_tests.toml").write_text(conf)
         r = subprocess.run([sys.executable, str(SCRIPT), "--root", d], capture_output=True, text=True)
-        return r.returncode
+        return r.returncode, r.stdout + r.stderr
 
 
 FILES = {"g": GPU, "p": PHYS, "plain": PLAIN}
 CI = {"ci": COUNTED}
 
 CASES = [
-    # (description, files, workflows, preflight, config, expected exit code)
+    # (description, files, workflows, preflight, config, expected: 0 (passes) or the problem text
+    # it must report (fails with exit 1), [Cargo.toml])
     # counted mode (v1's cases)
     ("every gated file run and counted in both", FILES, CI, COUNTED, CONF_COUNTED, 0),
-    ("a gated file missing from the workflows", FILES, {"ci": PHYS_COUNTED}, COUNTED, CONF_COUNTED, 1),
-    ("a gated file missing from preflight", FILES, CI, GPU_COUNTED, CONF_COUNTED, 1),
-    ("a floor below the test count", FILES, {"ci": COUNTED.replace("g=2", "g=1")}, COUNTED, CONF_COUNTED, 1),
-    ("a floor above the test count", FILES, {"ci": COUNTED.replace("g=2", "g=3")}, COUNTED, CONF_COUNTED, 1),
-    ("the feature not enabled", FILES, {"ci": COUNTED.replace("--features gpu", "--features physics")}, COUNTED, CONF_COUNTED, 1),
-    ("named but filtered out by --test", FILES, {"ci": COUNTED.replace("--test g", "--test other")}, COUNTED, CONF_COUNTED, 1),
-    ("ignored tests without --include-ignored", FILES, {"ci": COUNTED.replace(" -- --include-ignored", "")}, COUNTED, CONF_COUNTED, 1),
-    ("ignored tests without --no-ignored", FILES, {"ci": COUNTED.replace("--no-ignored ", "")}, COUNTED, CONF_COUNTED, 1),
+    ("a gated file missing from the workflows", FILES, {"ci": PHYS_COUNTED}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): no min_passed command names it"),
+    ("a gated file missing from preflight", FILES, CI, GPU_COUNTED, CONF_COUNTED, "preflight: tests/p.rs (features ['physics'], 1 tests): no min_passed command names it"),
+    ("a floor below the test count", FILES, {"ci": COUNTED.replace("g=2", "g=1")}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): floor 1, the file has 2 tests"),
+    ("a floor above the test count", FILES, {"ci": COUNTED.replace("g=2", "g=3")}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): floor 3, the file has 2 tests"),
+    ("the feature not enabled", FILES, {"ci": COUNTED.replace("--features gpu", "--features physics")}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): features ['gpu'] not enabled"),
+    ("named but filtered out by --test", FILES, {"ci": COUNTED.replace("--test g", "--test other")}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): not among the --test filters"),
+    ("ignored tests without --include-ignored", FILES, {"ci": COUNTED.replace(" -- --include-ignored", "")}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): has ignored tests but the command does not pass --include-ignored"),
+    ("ignored tests without --no-ignored", FILES, {"ci": COUNTED.replace("--no-ignored ", "")}, COUNTED, CONF_COUNTED, "ci: tests/g.rs (features ['gpu'], 2 tests): has ignored tests but min_passed is not given --no-ignored"),
     ("a command over lines with backslashes", FILES, {"ci": COUNTED.replace("--test g", "\\\n    --test g")}, COUNTED, CONF_COUNTED, 0),
     ("the workflows spread over two files", FILES, {"a": GPU_COUNTED, "b": PHYS_COUNTED}, COUNTED, CONF_COUNTED, 0),
-    ("no gated file at all", {"plain": PLAIN}, CI, COUNTED, CONF_COUNTED, 1),
-    ("no cargo test command in a cover", FILES, {"ci": "cargo build\n"}, COUNTED, CONF_COUNTED, 1),
-    ("a cover whose globs match no file", FILES, CI, None, CONF_COUNTED, 1),
+    ("no gated file at all", {"plain": PLAIN}, CI, COUNTED, CONF_COUNTED, 'no readable feature-gated test file found under tests/'),
+    ("no cargo test command in a cover", FILES, {"ci": "cargo build\n"}, COUNTED, CONF_COUNTED, 'ci: no `cargo test` command found'),
+    ("a cover whose globs match no file", FILES, CI, None, CONF_COUNTED, "preflight: globs ['scripts/preflight.sh'] match no file"),
     # feature resolution
     ("--features full enables gpu and physics through the graph", FILES, {"ci": COUNTED.replace("--features gpu", "--features full")}, COUNTED, CONF_COUNTED, 0),
     ("--all-features enables everything", FILES, {"ci": COUNTED.replace("--features gpu", "--all-features")}, COUNTED, CONF_COUNTED, 0),
     ("-F is --features", FILES, {"ci": COUNTED.replace("--features gpu", "-F gpu")}, COUNTED, CONF_COUNTED, 0),
-    ("all(...) needs every feature", {"b": BOTH}, {"ci": "cargo test --features gpu --test b 2>&1 | python3 scripts/min_passed.py b=1\n"}, "cargo test --features full --test b 2>&1 | python3 scripts/min_passed.py b=1\n", CONF_COUNTED, 1),
+    ("all(...) needs every feature", {"b": BOTH}, {"ci": "cargo test --features gpu --test b 2>&1 | python3 scripts/min_passed.py b=1\n"}, "cargo test --features full --test b 2>&1 | python3 scripts/min_passed.py b=1\n", CONF_COUNTED, "ci: tests/b.rs (features ['gpu', 'physics'], 1 tests): features ['physics'] not enabled"),
     ("all(...) with every feature", {"b": BOTH}, {"ci": "cargo test --features gpu,physics --test b 2>&1 | python3 scripts/min_passed.py b=1\n"}, "cargo test --features full --test b 2>&1 | python3 scripts/min_passed.py b=1\n", CONF_COUNTED, 0),
     ("a default feature is on in a plain cargo test", {"s": STD}, {"ci": "cargo test\n"}, None, CONF_RUN, 0),
-    ("--no-default-features turns the default off", {"s": STD}, {"ci": "cargo test --no-default-features\n"}, None, CONF_RUN, 1),
+    ("--no-default-features turns the default off", {"s": STD}, {"ci": "cargo test --no-default-features\n"}, None, CONF_RUN, "ci: tests/s.rs (features ['std'], 1 tests): features ['std'] not enabled"),
     # what runs tests and what does not
-    ("--lib alone runs no test file", {"p": PHYS}, {"ci": "cargo test --lib --features physics\n"}, None, CONF_RUN, 1),
+    ("--lib alone runs no test file", {"p": PHYS}, {"ci": "cargo test --lib --features physics\n"}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): runs no test file (--lib / --doc / ... only)"),
     ("--lib --tests runs the test files", {"p": PHYS}, {"ci": "cargo test --lib --tests --features physics\n"}, None, CONF_RUN, 0),
     ("--tests with a --test filter runs every test file", {"p": PHYS}, {"ci": "cargo test --features physics --test other --tests\n"}, None, CONF_RUN, 0),
-    ("cargo hack check runs no test", {"p": PHYS}, {"ci": "cargo hack check --lib --feature-powerset\n"}, None, CONF_RUN, 1),
+    ("cargo hack check runs no test", {"p": PHYS}, {"ci": "cargo hack check --lib --feature-powerset\n"}, None, CONF_RUN, 'ci: no `cargo test` command found'),
     # run mode: no floors
     ("run mode: covered without min_passed", FILES, {"ci": RUN}, None, CONF_RUN, 0),
-    ("run mode: a gated file never run", FILES, {"ci": "cargo test --features physics\n"}, None, CONF_RUN, 1),
+    ("run mode: a gated file never run", FILES, {"ci": "cargo test --features physics\n"}, None, CONF_RUN, "ci: tests/g.rs (features ['gpu'], 2 tests): features ['gpu'] not enabled"),
     # gates it cannot read
-    ("an any() gate not listed as unread", {"x": ANY, "p": PHYS}, {"ci": RUN}, None, CONF_RUN, 1),
+    ("an any() gate not listed as unread", {"x": ANY, "p": PHYS}, {"ci": RUN}, None, CONF_RUN, 'tests/x.rs: gate with any()/not() this script cannot read; list it in [unread] with the reason'),
     ("an any() gate listed as unread", {"x": ANY, "p": PHYS}, {"ci": RUN}, None, CONF_RUN + '[unread]\nx = "any(): run by the full job"\n', 0),
-    ("a stale unread entry (now readable)", {"p": PHYS, "g": GPU}, {"ci": RUN}, None, CONF_RUN + '[unread]\np = "was any()"\n', 1),
-    ("an unread entry for a file that does not exist", {"p": PHYS, "g": GPU}, {"ci": RUN}, None, CONF_RUN + '[unread]\nnope = "gone"\n', 1),
+    ("a stale unread entry (now readable)", {"p": PHYS, "g": GPU}, {"ci": RUN}, None, CONF_RUN + '[unread]\np = "was any()"\n', '[unread] p: its gate is readable now (stale), remove the entry'),
+    ("an unread entry for a file that does not exist", {"p": PHYS, "g": GPU}, {"ci": RUN}, None, CONF_RUN + '[unread]\nnope = "gone"\n', '[unread] nope: no such file tests/nope.rs (stale)'),
     ("a YAML folded block is one command", {"p": PHYS}, {"ci": "      - run: >-\n          cargo test\n          --features physics\n      - run: cargo build\n"}, None, CONF_RUN, 0),
-    ("a YAML literal block keeps its lines", {"p": PHYS}, {"ci": "      - run: |\n          cargo test\n          echo --features physics\n"}, None, CONF_RUN, 1),
+    ("a YAML literal block keeps its lines", {"p": PHYS}, {"ci": "      - run: |\n          cargo test\n          echo --features physics\n"}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): features ['physics'] not enabled"),
     # shell variables set in the same file
     ("a feature list from an env variable", {"p": PHYS}, {"ci": 'env:\n  FEATS: "gpu,physics"\njobs:\n  t:\n    steps:\n      - run: cargo test --features "$FEATS"\n'}, None, CONF_RUN, 0),
     ("${VAR} braces", {"p": PHYS}, {"ci": 'env:\n  FEATS: physics\nrun: cargo test --features "${FEATS}"\n'}, None, CONF_RUN, 0),
     ("a shell assignment", {"p": PHYS}, {"ci": "FEATS=physics\ncargo test --features $FEATS\n"}, None, CONF_RUN, 0),
-    ("an unresolved variable enables nothing", {"p": PHYS}, {"ci": 'run: cargo test --features "$NOPE"\n'}, None, CONF_RUN, 1),
+    ("an unresolved variable enables nothing", {"p": PHYS}, {"ci": 'run: cargo test --features "$NOPE"\n'}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): features ['physics'] not enabled"),
     # gates on items: each item needs its own and the file's features
     ("run mode: item gates met by two commands", {"m": MIXED}, {"ci": "cargo test --features gpu\ncargo test --features physics\n"}, None, CONF_RUN, 0),
-    ("run mode: an item gate met by none", {"m": MIXED}, {"ci": "cargo test --features gpu\n"}, None, CONF_RUN, 1),
-    ("run mode: the file gate with every item", {"m": FILE_AND_ITEM}, {"ci": "cargo test --features gpu\n"}, None, CONF_RUN, 1),
-    ("run mode: the item met without the file gate", {"m": FILE_AND_ITEM}, {"ci": "cargo test --features physics\n"}, None, CONF_RUN, 1),
+    ("run mode: an item gate met by none", {"m": MIXED}, {"ci": "cargo test --features gpu\n"}, None, CONF_RUN, "ci: tests/m.rs (features ['physics'], 2 tests): features ['physics'] not enabled"),
+    ("run mode: the file gate with every item", {"m": FILE_AND_ITEM}, {"ci": "cargo test --features gpu\n"}, None, CONF_RUN, "ci: tests/m.rs (features ['gpu', 'physics'], 2 tests): features ['physics'] not enabled"),
+    ("run mode: the item met without the file gate", {"m": FILE_AND_ITEM}, {"ci": "cargo test --features physics\n"}, None, CONF_RUN, "ci: tests/m.rs (features ['gpu', 'physics'], 2 tests): features ['gpu'] not enabled"),
     ("run mode: the file gate and the item met", {"m": FILE_AND_ITEM}, {"ci": "cargo test --features gpu,physics\n"}, None, CONF_RUN, 0),
-    ("counted mode: item gates need one command with all", {"m": MIXED}, {"ci": "cargo test --features gpu 2>&1 | python3 scripts/min_passed.py m=2\ncargo test --features physics 2>&1 | python3 scripts/min_passed.py m=2\n"}, None, CONF_COUNTED_CI, 1),
+    ("counted mode: item gates need one command with all", {"m": MIXED}, {"ci": "cargo test --features gpu 2>&1 | python3 scripts/min_passed.py m=2\ncargo test --features physics 2>&1 | python3 scripts/min_passed.py m=2\n"}, None, CONF_COUNTED_CI, "ci: tests/m.rs (features ['gpu', 'physics'], 2 tests): features ['physics'] not enabled"),
     ("counted mode: item gates in one command", {"m": MIXED}, {"ci": "cargo test --features full 2>&1 | python3 scripts/min_passed.py m=2\n"}, None, CONF_COUNTED_CI, 0),
     # ignored tests that are not meant to run (a known defect, not a missing GPU)
     ("ignored = \"skip\": ignored tests need not run", FILES, {"ci": RUN.replace(" -- --include-ignored", "")}, None, 'ignored = "skip"\n' + CONF_RUN, 0),
-    ("an unknown ignored value", FILES, {"ci": RUN}, None, 'ignored = "maybe"\n' + CONF_RUN, 1),
+    ("an unknown ignored value", FILES, {"ci": RUN}, None, 'ignored = "maybe"\n' + CONF_RUN, 'ignored \'maybe\': must be "run" (ignored tests must run) or "skip"'),
     # Cargo.toml: a dev-dependency on the crate itself enables its features in every cargo test
     ("a self dev-dependency enables its features", {"p": PHYS}, {"ci": "cargo test\n"}, None, CONF_RUN, 0, CARGO + SELF_DEV),
-    ("a dev-dependency on another crate does not", {"p": PHYS}, {"ci": "cargo test\n"}, None, CONF_RUN, 1, CARGO + OTHER_DEV),
+    ("a dev-dependency on another crate does not", {"p": PHYS}, {"ci": "cargo test\n"}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): features ['physics'] not enabled", CARGO + OTHER_DEV),
     # [[test]] required-features is a gate of the whole file
-    ("required-features gates the file", {"r": PLAIN}, {"ci": "cargo test\n"}, None, CONF_RUN, 1, CARGO + REQUIRED),
+    ("required-features gates the file", {"r": PLAIN}, {"ci": "cargo test\n"}, None, CONF_RUN, "ci: tests/r.rs (features ['gpu'], 1 tests): features ['gpu'] not enabled", CARGO + REQUIRED),
     ("required-features met", {"r": PLAIN}, {"ci": "cargo test --features gpu\n"}, None, CONF_RUN, 0, CARGO + REQUIRED),
     # the configuration
-    ("no configuration file", FILES, CI, COUNTED, None, 1),
-    ("an unknown mode", FILES, CI, COUNTED, CONF_COUNTED.replace('"counted"', '"maybe"'), 1),
-    ("no cover", FILES, CI, COUNTED, 'mode = "run"\n', 1),
+    ("no configuration file", FILES, CI, COUNTED, None, 'no configuration scripts/gated_tests.toml'),
+    ("an unknown mode", FILES, CI, COUNTED, CONF_COUNTED.replace('"counted"', '"maybe"'), 'mode \'maybe\': must be "counted" or "run"'),
+    ("no cover", FILES, CI, COUNTED, 'mode = "run"\n', 'no [[cover]] in the configuration'),
 ]
 
 
@@ -137,9 +138,20 @@ def main() -> int:
     bad = 0
     for case in CASES:
         what, files, workflows, pre, conf, want = case[:6]
-        got = run(files, workflows, pre, conf, *case[6:])
-        if got != want:
-            print(f"test_gated_tests: {what}: exit {got}, expected {want}", file=sys.stderr)
+        code, out = run(files, workflows, pre, conf, *case[6:])
+        # a crash is never the expected failure: the check must have found the problem itself
+        if "Traceback" in out:
+            why = "crashed"
+        elif want == 0:
+            why = None if code == 0 else f"exit {code}, expected 0"
+        elif code != 1:
+            why = f"exit {code}, expected 1"
+        elif f"gated_tests: {want}" not in out:
+            why = f"did not report {want!r}"
+        else:
+            why = None
+        if why:
+            print(f"test_gated_tests: {what}: {why}\n{out}", file=sys.stderr)
             bad += 1
     print(f"test_gated_tests: {len(CASES) - bad}/{len(CASES)} cases", file=sys.stderr)
     return 1 if bad or not CASES else 0
