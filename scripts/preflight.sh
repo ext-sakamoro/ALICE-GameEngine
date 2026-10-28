@@ -52,7 +52,7 @@ step "ci.yml / gpu-oracle: GPU tests (--include-ignored, this machine's adapter)
   python3 scripts/test_gated_tests.py
   python3 scripts/gated_tests.py
   cargo test --features gpu --lib hd2d_postfx -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored lib=15
-  cargo test --features gpu --test vrm_render --test vrm_mtoon --test vrm_render_parts --test vrm_face_paint --test vrm_outline --test vrm_surface --test vrm_render_target --test vrm_render_persistent -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored vrm_render=4 vrm_mtoon=5 vrm_render_parts=3 vrm_face_paint=5 vrm_outline=8 vrm_surface=13 vrm_render_target=4 vrm_render_persistent=4
+  cargo test --features gpu --test vrm_render --test vrm_mtoon --test vrm_render_parts --test vrm_face_paint --test vrm_outline --test vrm_surface --test vrm_render_target --test vrm_render_persistent --test vrm_terms --test vrm_alpha_mask --test vrm_linear_light --test vrm_receive -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored vrm_render=4 vrm_mtoon=5 vrm_render_parts=3 vrm_face_paint=5 vrm_outline=8 vrm_surface=13 vrm_render_target=4 vrm_render_persistent=4 vrm_terms=6 vrm_alpha_mask=3 vrm_linear_light=3 vrm_receive=3
 )
 
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
@@ -84,7 +84,7 @@ step "ci.yml / physics: Test (physics)"
 (
   export CARGO_TERM_COLOR="always"
   set -o pipefail
-  cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10 vrm_reader=10 vrm0_reader=8 vrm_node_matrix=6
+  cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10 vrm_reader=10 vrm0_reader=8 vrm_node_matrix=6 vrm_occlusion=3
 )
 
 step "ci.yml / lol-measure: Clippy (lol-measure)"
