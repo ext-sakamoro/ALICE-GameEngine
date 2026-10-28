@@ -1,0 +1,12 @@
+# Configuration of scripts/gated_tests.py (the script is shared between repositories; this file is not)
+mode = "counted"
+# the ignored tests here need a GPU adapter; CI runs them on lavapipe
+ignored = "run"
+
+[[cover]]
+name = "ci"
+globs = [".github/workflows/ci.yml"]
+
+[[cover]]
+name = "preflight"
+globs = ["scripts/preflight.sh"]
