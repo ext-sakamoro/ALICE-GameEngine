@@ -1135,12 +1135,25 @@ pub fn check_mesh(
 #[cfg(feature = "gpu")]
 pub use gpu::ToonRenderer;
 
+/// The GPU objects a [`ToonRenderer`] has made since it was made, by kind (a drawing loop that
+/// makes some at every frame grows without bound where the GPU memory is freed only by a garbage
+/// collector, as wgpu's web backend)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GpuCreated {
+    /// Buffers (vertices, indices, parameters, readback)
+    pub buffers: u64,
+    /// Textures (images, colour and depth targets)
+    pub textures: u64,
+    /// Bind groups
+    pub bind_groups: u64,
+}
+
 #[cfg(feature = "gpu")]
 mod gpu {
     use super::{
         check_mesh, check_outline, check_paint, check_surface, check_terms, paint_words,
-        surface_words, terms_words, toon_wgsl, AlphaMode, OutlineMode, RenderError, ToonParams,
-        ToonPart, ToonTerms, ToonTexture,
+        surface_words, terms_words, toon_wgsl, AlphaMode, GpuCreated, OutlineMode, RenderError,
+        ToonParams, ToonPart, ToonTerms, ToonTexture,
     };
     use wgpu::util::DeviceExt;
 
@@ -1166,6 +1179,7 @@ mod gpu {
         width: u32,
         height: u32,
         textures: std::sync::Mutex<std::collections::HashMap<u64, wgpu::Texture>>,
+        created: std::sync::Mutex<GpuCreated>,
     }
 
     /// A pipeline of the toon shader with these entry points, culling `cull`; `blend` mixes by
@@ -1277,6 +1291,25 @@ mod gpu {
     }
 
     impl ToonRenderer {
+        /// The GPU objects made by this renderer so far
+        #[must_use]
+        pub fn gpu_created(&self) -> GpuCreated {
+            *self
+                .created
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+
+        /// Counts one made object of a kind
+        fn count(&self, kind: fn(&mut GpuCreated) -> &mut u64) {
+            *kind(
+                &mut self
+                    .created
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            ) += 1;
+        }
+
         /// An RGBA8 texture of the image, uploaded as it is (rows top first)
         fn texture(&self, t: ToonTexture<'_>) -> wgpu::Texture {
             let Some(key) = t.key else {
@@ -1300,6 +1333,7 @@ mod gpu {
         /// Uploads the image with its mip chain ([`super::mip_chain`])
         fn upload(&self, t: ToonTexture<'_>) -> wgpu::Texture {
             let (data, levels) = super::mip_chain(t.rgba, t.width, t.height);
+            self.count(|c| &mut c.textures);
             self.device.create_texture_with_data(
                 &self.queue,
                 &wgpu::TextureDescriptor {
@@ -1450,6 +1484,7 @@ mod gpu {
                 width,
                 height,
                 textures: std::sync::Mutex::new(std::collections::HashMap::new()),
+                created: std::sync::Mutex::new(GpuCreated::default()),
             })
         }
 
@@ -1569,6 +1604,7 @@ mod gpu {
                 height: self.height,
                 depth_or_array_layers: 1,
             };
+            self.count(|c| &mut c.textures);
             let target = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("vrm toon target"),
                 size,
@@ -1584,6 +1620,7 @@ mod gpu {
             let row = self.width * 4;
             let padded = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
                 * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            self.count(|c| &mut c.buffers);
             let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vrm toon readback"),
                 size: u64::from(padded) * u64::from(self.height),
@@ -1769,6 +1806,10 @@ mod gpu {
                                 .collect::<Vec<f32>>()
                         })
                         .collect();
+                    self.count(|c| &mut c.buffers);
+                    self.count(|c| &mut c.buffers);
+                    self.count(|c| &mut c.buffers);
+                    self.count(|c| &mut c.bind_groups);
                     let vbuf = self
                         .device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1880,6 +1921,7 @@ mod gpu {
             };
             // with several samples: a multisampled colour target, resolved into the view
             let msaa = (self.samples > 1).then(|| {
+                self.count(|c| &mut c.textures);
                 self.device
                     .create_texture(&wgpu::TextureDescriptor {
                         label: Some("vrm toon multisampled"),
@@ -1893,6 +1935,7 @@ mod gpu {
                     })
                     .create_view(&wgpu::TextureViewDescriptor::default())
             });
+            self.count(|c| &mut c.textures);
             let depth = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("vrm toon depth"),
                 size,
