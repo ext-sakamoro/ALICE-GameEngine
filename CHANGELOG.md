@@ -36,6 +36,11 @@
 - CI: `physics` feature の clippy と test を ubuntu で実行する job を追加 (test は binary ごとの最小件数 lib 1044 / physics_hub_analytic 23 / physics_hub_degenerate 10 を `scripts/min_passed.py` で検査)、preflight にも同じ step を追加
 
 ### Fixed
+- `vrm_render::ToonRenderer` は GPU の object を画像ごとに作らない 以前は描くたびに部品ごとの vertex / index / parameter buffer と bind group、key の無い texture (1 x 1 の白を含む)、depth と multisample の target、readback の target と buffer を作っていた wgpu の web backend は drop で GPU の memory を解放せず JS の garbage collector に任せるので、browser で描き続けると 1 秒に約 1 GiB の object が溜まった 今は部品の位置ごとに保持して `write_buffer` で書き換え、入らない時だけ作り直し (古い方は `destroy`)、bind group は入力 (parameter buffer と 4 つの texture、sampler) が変わった時だけ、target は大きさか sample 数が変わった時だけ作る key の無い texture は bytes が前と同じなら upload しない 画像は作り直す renderer と byte 単位で同じ
+
+### Added (render)
+- `vrm_render::ToonRenderer::gpu_created` と `GpuCreated` (作った buffer / texture / bind group の数)
+
 - VRM / glTF の node の `matrix` (列優先 4x4) を読む 以前は translation / rotation / scale だけを読み、`matrix` で書かれた node は黙って単位行列になっていた `matrix` を T · R · S に分解し (列の長さが scale、正規化した列が回転、行列式が負なら x の scale を負に、四元数は w を負にしない側)、仕様が許さないものは `BadValue` (`nodes[i].matrix`) で断る: TRS と同時に書かれたもの、有限でない値、最後の行が 0 0 0 1 でないもの、長さ 0 の列、直交しない列 (shear) 0.x の file では他の node と同じく 180° 回す 試験 `tests/vrm_node_matrix.rs` (6 件: 手で組んだ行列が元の TRS に戻り、pose した world 行列が与えた行列に一致する、四元数の 4 つの分岐を w が 0 でない回転と全成分が 0 でない回転で全て通る、鏡像、0.x、断る行列) 四元数は長さ 1 に直す 長さ 0 の列 (scale 0) は glTF では許されるが、その軸の回転が決まらないので推測せず断る 変異 26 件が red
 
 - `call_fx` の doc に noise の分布 (65536 値を 2a + 1 に畳む剰余の偏りを除いて一様、`a` は `u8` なので 2a + 1 は最大 511) を書いた

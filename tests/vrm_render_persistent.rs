@@ -305,6 +305,25 @@ mod gpu {
             }
         );
         assert_eq!(img, fresh(64, 64, 4, &parts));
+        // part 1's indices change, as many as before (the lower triangle twice instead of the
+        // quad): written in place, nothing made, and the upper triangle is gone from the image
+        const LOWER_TWICE: [u32; 6] = [0, 1, 2, 0, 1, 2];
+        let parts = [
+            part(&a, &QUAD, p, Some(tex(&CHECK, 2, Some(7)))),
+            part(&b, &LOWER_TWICE, p, None),
+        ];
+        let before = r.gpu_created();
+        let img = r.draw_parts(&parts, CLEAR).unwrap();
+        assert_eq!(diff(before, r.gpu_created()), NOTHING);
+        assert_eq!(img, fresh(64, 64, 4, &parts));
+        let parts = [
+            part(&a, &QUAD, p, Some(tex(&CHECK, 2, Some(7)))),
+            part(&b, &QUAD, p, None),
+        ];
+        let before = r.gpu_created();
+        let img = r.draw_parts(&parts, CLEAR).unwrap();
+        assert_eq!(diff(before, r.gpu_created()), NOTHING);
+        assert_eq!(img, fresh(64, 64, 4, &parts));
         // part 0 takes another keyed texture: one upload, its bind group
         let parts = [
             part(&a, &QUAD, p, Some(tex(&CYAN, 1, Some(8)))),

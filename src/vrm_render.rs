@@ -1178,8 +1178,84 @@ mod gpu {
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
-        textures: std::sync::Mutex<std::collections::HashMap<u64, wgpu::Texture>>,
+        textures: std::sync::Mutex<std::collections::HashMap<u64, Tex>>,
         created: std::sync::Mutex<GpuCreated>,
+        kept: std::sync::Mutex<Kept>,
+        next_id: std::sync::atomic::AtomicU64,
+    }
+
+    /// A texture, its full view, and the id the renderer gave it (a bind group is made again when
+    /// one of its ids changes)
+    #[derive(Clone)]
+    struct Tex {
+        id: u64,
+        texture: wgpu::Texture,
+        view: wgpu::TextureView,
+    }
+
+    /// A buffer, its id, and the bytes of it the last image used
+    struct Buf {
+        id: u64,
+        buffer: wgpu::Buffer,
+        used: u64,
+    }
+
+    /// An unkeyed texture a slot drew last, with the bytes it was made from
+    struct Unkeyed {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        tex: Tex,
+    }
+
+    /// What the part at one place in the list keeps from one image to the next
+    struct Slot {
+        vertices: Buf,
+        indices: Buf,
+        index_data: Vec<u32>,
+        params: Buf,
+        /// base, shade, rim mask, alpha mask
+        unkeyed: [Option<Unkeyed>; 4],
+        bind: wgpu::BindGroup,
+        /// the ids the bind group was made from (parameters, the 4 textures) and its sampler
+        bind_inputs: [u64; 6],
+    }
+
+    /// The depth target, and with several samples the multisampled colour target, of one size
+    struct Targets {
+        key: (u32, u32, u32),
+        msaa: Option<(wgpu::Texture, wgpu::TextureView)>,
+        depth: (wgpu::Texture, wgpu::TextureView),
+    }
+
+    /// The target and buffer `draw_parts` reads an image back through, of one size
+    struct Readback {
+        key: (u32, u32),
+        target: wgpu::Texture,
+        view: wgpu::TextureView,
+        buffer: wgpu::Buffer,
+    }
+
+    /// The GPU objects kept between images: made again only when what they hold no longer fits.
+    /// A replaced object is destroyed at once (where the GPU memory is otherwise freed only by a
+    /// garbage collector, as wgpu's web backend, whose drop does nothing)
+    #[derive(Default)]
+    struct Kept {
+        slots: Vec<Option<Slot>>,
+        white: Option<Tex>,
+        targets: Option<Targets>,
+        readback: Option<Readback>,
+    }
+
+    impl Slot {
+        fn destroy(self) {
+            self.vertices.buffer.destroy();
+            self.indices.buffer.destroy();
+            self.params.buffer.destroy();
+            for u in self.unkeyed.into_iter().flatten() {
+                u.tex.texture.destroy();
+            }
+        }
     }
 
     /// A pipeline of the toon shader with these entry points, culling `cull`; `blend` mixes by
@@ -1310,31 +1386,114 @@ mod gpu {
             ) += 1;
         }
 
-        /// An RGBA8 texture of the image, uploaded as it is (rows top first)
-        fn texture(&self, t: ToonTexture<'_>) -> wgpu::Texture {
-            let Some(key) = t.key else {
-                return self.upload(t);
+        /// A new id for a kept object
+        fn id(&self) -> u64 {
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        }
+
+        /// The texture a binding draws: the shared white for none, the keyed cache for a keyed
+        /// image, else the slot's own upload of these bytes (uploaded again only when the bytes
+        /// differ from the slot's last)
+        fn texture(
+            &self,
+            t: Option<ToonTexture<'_>>,
+            own: &mut Option<Unkeyed>,
+            white: &mut Option<Tex>,
+        ) -> Tex {
+            let drop_own = |own: &mut Option<Unkeyed>| {
+                if let Some(u) = own.take() {
+                    u.tex.texture.destroy();
+                }
             };
-            let mut cache = self
-                .textures
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache.entry(key).or_insert_with(|| self.upload(t)).clone()
+            let Some(t) = t else {
+                drop_own(own);
+                return white
+                    .get_or_insert_with(|| {
+                        self.upload(ToonTexture {
+                            width: 1,
+                            height: 1,
+                            rgba: &[255, 255, 255, 255],
+                            key: None,
+                        })
+                    })
+                    .clone();
+            };
+            if let Some(key) = t.key {
+                drop_own(own);
+                let mut cache = self
+                    .textures
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                return cache.entry(key).or_insert_with(|| self.upload(t)).clone();
+            }
+            if let Some(u) = own {
+                if u.width == t.width && u.height == t.height && u.rgba == t.rgba {
+                    return u.tex.clone();
+                }
+            }
+            drop_own(own);
+            let tex = self.upload(t);
+            *own = Some(Unkeyed {
+                width: t.width,
+                height: t.height,
+                rgba: t.rgba.to_vec(),
+                tex: tex.clone(),
+            });
+            tex
         }
 
         /// Drops the keyed textures, so a key can name new bytes
         pub fn forget_textures(&self) {
-            self.textures
+            for (_, t) in self
+                .textures
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clear();
+                .drain()
+            {
+                t.texture.destroy();
+            }
+        }
+
+        /// `data` in the kept buffer if it fits there, else in a new buffer (the old one destroyed)
+        fn put(
+            &self,
+            old: Option<Buf>,
+            data: &[u8],
+            usage: wgpu::BufferUsages,
+            label: &str,
+        ) -> Buf {
+            let used = data.len() as u64;
+            match old {
+                Some(b) if b.buffer.size() >= used => {
+                    self.queue.write_buffer(&b.buffer, 0, data);
+                    Buf { used, ..b }
+                }
+                old => {
+                    if let Some(b) = old {
+                        b.buffer.destroy();
+                    }
+                    self.count(|c| &mut c.buffers);
+                    Buf {
+                        id: self.id(),
+                        buffer: self
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some(label),
+                                contents: data,
+                                usage: usage | wgpu::BufferUsages::COPY_DST,
+                            }),
+                        used,
+                    }
+                }
+            }
         }
 
         /// Uploads the image with its mip chain ([`super::mip_chain`])
-        fn upload(&self, t: ToonTexture<'_>) -> wgpu::Texture {
+        fn upload(&self, t: ToonTexture<'_>) -> Tex {
             let (data, levels) = super::mip_chain(t.rgba, t.width, t.height);
             self.count(|c| &mut c.textures);
-            self.device.create_texture_with_data(
+            let texture = self.device.create_texture_with_data(
                 &self.queue,
                 &wgpu::TextureDescriptor {
                     label: Some("vrm toon texture"),
@@ -1352,7 +1511,12 @@ mod gpu {
                 },
                 wgpu::util::TextureDataOrder::LayerMajor,
                 &data,
-            )
+            );
+            Tex {
+                id: self.id(),
+                view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                texture,
+            }
         }
 
         /// A renderer on the default adapter, drawing `width` x `height` images
@@ -1485,6 +1649,8 @@ mod gpu {
                 height,
                 textures: std::sync::Mutex::new(std::collections::HashMap::new()),
                 created: std::sync::Mutex::new(GpuCreated::default()),
+                kept: std::sync::Mutex::new(Kept::default()),
+                next_id: std::sync::atomic::AtomicU64::new(0),
             })
         }
 
@@ -1604,29 +1770,53 @@ mod gpu {
                 height: self.height,
                 depth_or_array_layers: 1,
             };
-            self.count(|c| &mut c.textures);
-            let target = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("vrm toon target"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let tview = target.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut enc = self.encode(parts, terms, clear, &tview)?;
             let row = self.width * 4;
             let padded = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
                 * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            self.count(|c| &mut c.buffers);
-            let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("vrm toon readback"),
-                size: u64::from(padded) * u64::from(self.height),
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
+            // the target and readback buffer of this size, kept until the size changes
+            let (target, tview, readback) = {
+                let mut kept = self
+                    .kept
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let key = (self.width, self.height);
+                if kept.readback.as_ref().is_none_or(|r| r.key != key) {
+                    if let Some(old) = kept.readback.take() {
+                        old.target.destroy();
+                        old.buffer.destroy();
+                    }
+                    self.count(|c| &mut c.textures);
+                    let target = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("vrm toon target"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: FORMAT,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[],
+                    });
+                    self.count(|c| &mut c.buffers);
+                    let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("vrm toon readback"),
+                        size: u64::from(padded) * u64::from(self.height),
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    kept.readback = Some(Readback {
+                        key,
+                        view: target.create_view(&wgpu::TextureViewDescriptor::default()),
+                        target,
+                        buffer,
+                    });
+                }
+                let r = kept.readback.as_ref().expect("made above");
+                let out = (r.target.clone(), r.view.clone(), r.buffer.clone());
+                drop(kept);
+                out
+            };
+            let mut enc = self.encode(parts, terms, clear, &tview)?;
             enc.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &target,
@@ -1783,147 +1973,215 @@ mod gpu {
                     }
                 }
             }
-            let uploads: Vec<_> = parts
-                .iter()
-                .enumerate()
-                .map(|(i, part)| {
-                    let p = &part.params;
-                    let term = term_of(i);
-                    let uvs = part.surface.as_ref().map(|s| s.uvs);
-                    let verts: Vec<f32> = part
-                        .positions
-                        .iter()
-                        .zip(part.normals)
-                        .enumerate()
-                        .flat_map(|(k, (a, n))| {
-                            let uv = uvs.map_or([0.0, 0.0], |u| u[k]);
-                            let rec = [term.receive.map_or(1.0, |r| r[k])];
-                            a.iter()
-                                .chain(n)
-                                .chain(&uv)
-                                .chain(&rec)
-                                .copied()
-                                .collect::<Vec<f32>>()
-                        })
-                        .collect();
-                    self.count(|c| &mut c.buffers);
-                    self.count(|c| &mut c.buffers);
-                    self.count(|c| &mut c.buffers);
-                    self.count(|c| &mut c.bind_groups);
-                    let vbuf = self
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("vrm toon vertices"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
-                    let ibuf = self
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("vrm toon indices"),
-                            contents: bytemuck::cast_slice(part.indices),
-                            usage: wgpu::BufferUsages::INDEX,
-                        });
-                    let mut uni: Vec<f32> = p.view_proj.to_vec();
-                    uni.extend_from_slice(&p.base_color);
-                    uni.extend_from_slice(&p.shade_color);
-                    uni.extend_from_slice(&[
-                        p.light_dir[0],
-                        p.light_dir[1],
-                        p.light_dir[2],
-                        p.shading_shift,
-                    ]);
-                    uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
-                    #[allow(clippy::cast_precision_loss)]
-                    let aspect = self.width as f32 / self.height as f32;
-                    let (width, mode, mix, color) =
-                        part.outline.map_or((0.0, 0.0, 0.0, [0.0; 3]), |o| {
-                            let mode = match o.mode {
-                                OutlineMode::World => 1.0,
-                                OutlineMode::Screen => 2.0,
-                            };
-                            (o.width, mode, o.lighting_mix, o.color)
-                        });
-                    uni.extend_from_slice(&[width, mode, mix, aspect]);
-                    uni.extend_from_slice(&[color[0], color[1], color[2], 1.0]);
-                    uni.extend_from_slice(&surface_words(part.surface.as_ref()));
-                    #[allow(clippy::cast_precision_loss)]
-                    let (w, h) = (self.width as f32, self.height as f32);
-                    uni.extend(terms_words(term, p.view_proj, w, h));
-                    uni.extend(paint_words(part.paint));
-                    let ubuf = self
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("vrm toon params"),
-                            contents: bytemuck::cast_slice(&uni),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-                    let white = ToonTexture {
-                        width: 1,
-                        height: 1,
-                        rgba: &[255, 255, 255, 255],
-                        key: None,
-                    };
-                    let surf = part.surface.as_ref();
-                    let base = self.texture(surf.and_then(|s| s.base).unwrap_or(white));
-                    let shade = self.texture(surf.and_then(|s| s.shade).unwrap_or(white));
-                    let rim = self.texture(term.rim.and_then(|r| r.mask).unwrap_or(white));
-                    let bv = base.create_view(&wgpu::TextureViewDescriptor::default());
-                    let sv = shade.create_view(&wgpu::TextureViewDescriptor::default());
-                    let rv = rim.create_view(&wgpu::TextureViewDescriptor::default());
-                    let am = self.texture(term.alpha_mask.map_or(white, |m| m.texture));
-                    let av = am.create_view(&wgpu::TextureViewDescriptor::default());
-                    let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("vrm toon params"),
-                        layout: &self.layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: ubuf.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(&bv),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&sv),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Sampler(if term.base_level_only {
-                                    &self.base_sampler
-                                } else {
-                                    &self.sampler
-                                }),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::TextureView(&rv),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::TextureView(&av),
-                            },
-                        ],
+            // the objects kept from the last image: each part's buffers, textures and bind group
+            // are updated in place and made again only when what they hold no longer fits
+            let mut kept = self
+                .kept
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Kept {
+                slots,
+                white,
+                targets,
+                ..
+            } = &mut *kept;
+            if slots.len() < parts.len() {
+                slots.resize_with(parts.len(), || None);
+            }
+            let mut uploads = Vec::with_capacity(parts.len());
+            for (i, part) in parts.iter().enumerate() {
+                let p = &part.params;
+                let term = term_of(i);
+                let uvs = part.surface.as_ref().map(|s| s.uvs);
+                let verts: Vec<f32> = part
+                    .positions
+                    .iter()
+                    .zip(part.normals)
+                    .enumerate()
+                    .flat_map(|(k, (a, n))| {
+                        let uv = uvs.map_or([0.0, 0.0], |u| u[k]);
+                        let rec = [term.receive.map_or(1.0, |r| r[k])];
+                        a.iter()
+                            .chain(n)
+                            .chain(&uv)
+                            .chain(&rec)
+                            .copied()
+                            .collect::<Vec<f32>>()
+                    })
+                    .collect();
+                let mut uni: Vec<f32> = p.view_proj.to_vec();
+                uni.extend_from_slice(&p.base_color);
+                uni.extend_from_slice(&p.shade_color);
+                uni.extend_from_slice(&[
+                    p.light_dir[0],
+                    p.light_dir[1],
+                    p.light_dir[2],
+                    p.shading_shift,
+                ]);
+                uni.extend_from_slice(&[p.shading_toony, 0.0, 0.0, 0.0]);
+                #[allow(clippy::cast_precision_loss)]
+                let aspect = self.width as f32 / self.height as f32;
+                let (width, mode, mix, color) =
+                    part.outline.map_or((0.0, 0.0, 0.0, [0.0; 3]), |o| {
+                        let mode = match o.mode {
+                            OutlineMode::World => 1.0,
+                            OutlineMode::Screen => 2.0,
+                        };
+                        (o.width, mode, o.lighting_mix, o.color)
                     });
-                    #[allow(clippy::cast_possible_truncation)]
-                    let count = part.indices.len() as u32;
-                    let outlined = part.outline.is_some_and(|o| o.width > 0.0);
-                    let blended = surf.is_some_and(|s| s.alpha == AlphaMode::Blend);
-                    (vbuf, ibuf, bind, count, outlined, blended, term.cull_back)
-                })
-                .collect();
-            let size = wgpu::Extent3d {
-                width: self.width,
-                height: self.height,
-                depth_or_array_layers: 1,
-            };
-            // with several samples: a multisampled colour target, resolved into the view
-            let msaa = (self.samples > 1).then(|| {
-                self.count(|c| &mut c.textures);
-                self.device
-                    .create_texture(&wgpu::TextureDescriptor {
+                uni.extend_from_slice(&[width, mode, mix, aspect]);
+                uni.extend_from_slice(&[color[0], color[1], color[2], 1.0]);
+                uni.extend_from_slice(&surface_words(part.surface.as_ref()));
+                #[allow(clippy::cast_precision_loss)]
+                let (w, h) = (self.width as f32, self.height as f32);
+                uni.extend(terms_words(term, p.view_proj, w, h));
+                uni.extend(paint_words(part.paint));
+                let (mut own, vold, iold, index_data, pold, bind_old) = match slots[i].take() {
+                    Some(s) => (
+                        s.unkeyed,
+                        Some(s.vertices),
+                        Some(s.indices),
+                        s.index_data,
+                        Some(s.params),
+                        Some((s.bind, s.bind_inputs)),
+                    ),
+                    None => (Default::default(), None, None, Vec::new(), None, None),
+                };
+                let surf = part.surface.as_ref();
+                let wanted = [
+                    surf.and_then(|s| s.base),
+                    surf.and_then(|s| s.shade),
+                    term.rim.and_then(|r| r.mask),
+                    term.alpha_mask.map(|m| m.texture),
+                ];
+                let [base, shade, rim, am] = {
+                    let mut it = wanted.into_iter().zip(own.iter_mut());
+                    std::array::from_fn(|_| {
+                        let (t, o) = it.next().expect("4 bindings");
+                        self.texture(t, o, white)
+                    })
+                };
+                let vertices = self.put(
+                    vold,
+                    bytemuck::cast_slice(&verts),
+                    wgpu::BufferUsages::VERTEX,
+                    "vrm toon vertices",
+                );
+                let (indices, index_data) = match iold {
+                    Some(b) if index_data == part.indices => (b, index_data),
+                    iold => (
+                        self.put(
+                            iold,
+                            bytemuck::cast_slice(part.indices),
+                            wgpu::BufferUsages::INDEX,
+                            "vrm toon indices",
+                        ),
+                        part.indices.to_vec(),
+                    ),
+                };
+                let params = self.put(
+                    pold,
+                    bytemuck::cast_slice(&uni),
+                    wgpu::BufferUsages::UNIFORM,
+                    "vrm toon params",
+                );
+                let bind_inputs = [
+                    params.id,
+                    base.id,
+                    shade.id,
+                    rim.id,
+                    am.id,
+                    u64::from(term.base_level_only),
+                ];
+                let bind = match bind_old {
+                    Some((b, inputs)) if inputs == bind_inputs => b,
+                    _ => {
+                        self.count(|c| &mut c.bind_groups);
+                        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("vrm toon params"),
+                            layout: &self.layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: params.buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(&base.view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: wgpu::BindingResource::TextureView(&shade.view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: wgpu::BindingResource::Sampler(
+                                        if term.base_level_only {
+                                            &self.base_sampler
+                                        } else {
+                                            &self.sampler
+                                        },
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: wgpu::BindingResource::TextureView(&rim.view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource: wgpu::BindingResource::TextureView(&am.view),
+                                },
+                            ],
+                        })
+                    }
+                };
+                #[allow(clippy::cast_possible_truncation)]
+                let count = part.indices.len() as u32;
+                let outlined = part.outline.is_some_and(|o| o.width > 0.0);
+                let blended = surf.is_some_and(|s| s.alpha == AlphaMode::Blend);
+                uploads.push((
+                    vertices.buffer.clone(),
+                    vertices.used,
+                    indices.buffer.clone(),
+                    indices.used,
+                    bind.clone(),
+                    count,
+                    outlined,
+                    blended,
+                    term.cull_back,
+                ));
+                slots[i] = Some(Slot {
+                    vertices,
+                    indices,
+                    index_data,
+                    params,
+                    unkeyed: own,
+                    bind,
+                    bind_inputs,
+                });
+            }
+            // the places past this list's end: destroyed now, made again if a later list is longer
+            for s in slots.drain(parts.len()..).flatten() {
+                s.destroy();
+            }
+            // the depth target, and with several samples a multisampled colour target resolved
+            // into the view, of this size and sample count
+            let key = (self.width, self.height, self.samples);
+            if targets.as_ref().is_none_or(|t| t.key != key) {
+                if let Some(old) = targets.take() {
+                    old.depth.0.destroy();
+                    if let Some((m, _)) = old.msaa {
+                        m.destroy();
+                    }
+                }
+                let size = wgpu::Extent3d {
+                    width: self.width,
+                    height: self.height,
+                    depth_or_array_layers: 1,
+                };
+                let msaa = (self.samples > 1).then(|| {
+                    self.count(|c| &mut c.textures);
+                    let t = self.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("vrm toon multisampled"),
                         size,
                         mip_level_count: 1,
@@ -1932,21 +2190,32 @@ mod gpu {
                         format: self.format,
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         view_formats: &[],
-                    })
-                    .create_view(&wgpu::TextureViewDescriptor::default())
-            });
-            self.count(|c| &mut c.textures);
-            let depth = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("vrm toon depth"),
-                size,
-                mip_level_count: 1,
-                sample_count: self.samples,
-                dimension: wgpu::TextureDimension::D2,
-                format: DEPTH,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
-            let dview = depth.create_view(&wgpu::TextureViewDescriptor::default());
+                    });
+                    let v = t.create_view(&wgpu::TextureViewDescriptor::default());
+                    (t, v)
+                });
+                self.count(|c| &mut c.textures);
+                let depth = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("vrm toon depth"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: self.samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: DEPTH,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
+                let dview = depth.create_view(&wgpu::TextureViewDescriptor::default());
+                *targets = Some(Targets {
+                    key,
+                    msaa,
+                    depth: (depth, dview),
+                });
+            }
+            let t = targets.as_ref().expect("made above");
+            let msaa = t.msaa.as_ref().map(|m| m.1.clone());
+            let dview = t.depth.1.clone();
+            drop(kept);
             let mut enc = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1981,17 +2250,17 @@ mod gpu {
                 });
                 // the outline hulls, then the surfaces (the depth buffer orders them)
                 pass.set_pipeline(&self.outline_pipeline);
-                for (vbuf, ibuf, bind, count, outlined, _, _) in &uploads {
+                for (vbuf, vn, ibuf, inn, bind, count, outlined, _, _) in &uploads {
                     if *outlined {
                         pass.set_bind_group(0, bind, &[]);
-                        pass.set_vertex_buffer(0, vbuf.slice(..));
-                        pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.set_vertex_buffer(0, vbuf.slice(..*vn));
+                        pass.set_index_buffer(ibuf.slice(..*inn), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(0..*count, 0, 0..1);
                     }
                 }
                 // the solid parts, then the blended ones in their order over them
                 for want_blend in [false, true] {
-                    for (vbuf, ibuf, bind, count, _, blended, cull) in &uploads {
+                    for (vbuf, vn, ibuf, inn, bind, count, _, blended, cull) in &uploads {
                         if *blended != want_blend {
                             continue;
                         }
@@ -2002,8 +2271,8 @@ mod gpu {
                             (true, true) => &self.cull_blend_pipeline,
                         });
                         pass.set_bind_group(0, bind, &[]);
-                        pass.set_vertex_buffer(0, vbuf.slice(..));
-                        pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.set_vertex_buffer(0, vbuf.slice(..*vn));
+                        pass.set_index_buffer(ibuf.slice(..*inn), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(0..*count, 0, 0..1);
                     }
                 }
