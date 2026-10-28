@@ -36,7 +36,9 @@ its tests); in run mode each gate must be met by some command. The command must
 
 A dev-dependency on the crate itself (`path = "."`) enables its features in every command, and
 `[[test]] required-features` in Cargo.toml is a gate of the whole file. A YAML folded block (`run: >-`) is one command. A `$NAME` / `${NAME}` in a command is replaced by the value set in the same file (a YAML `env:`
-entry `NAME: value` or a shell `NAME=value`, the last one wins); one left unset enables nothing.
+entry `NAME: value`, or a shell line of assignments only: `NAME=value ...`, also after `export`,
+`local`, `readonly` or `declare [-flags]`, values bare or quoted; the last one wins); one left unset
+enables nothing. A `NAME=value` word inside a command (`echo A=b`, `A=b cargo test`) sets nothing.
 
 Fails when: there is no configuration, the mode or the ignored policy is unknown or there is no
 cover; a cover's globs match no file or the files hold no `cargo test` command; no gated file is
@@ -64,7 +66,12 @@ import tomllib  # noqa: E402
 CFG = re.compile(r"#!?\[cfg\((.*?)\)\]\s*$", re.M)
 FEATURE = re.compile(r'feature\s*=\s*"([A-Za-z0-9_-]+)"')
 CARGO_TEST = re.compile(r"\bcargo\s+(?:\+\S+\s+)?test\b(?P<rest>[^\n]*)")
-VARIABLE = re.compile(r'^\s*(?:-\s*)?([A-Z_][A-Z0-9_]*)\s*(?::\s+|=)"?([^"\s]*)"?\s*$', re.M)
+# a YAML `env:` entry `NAME: value`
+YAML_VARIABLE = re.compile(r'^\s*(?:-\s*)?([A-Z_][A-Z0-9_]*):\s+"?([^"\s]*)"?\s*$')
+# a shell line of assignments only, optionally after export / local / readonly / declare [-flags]
+SHELL_WORD = r"""[A-Z_][A-Z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s"';]*)"""
+SHELL_LINE = re.compile(rf"^\s*(?:-\s*)?(?:(?:export|local|readonly|declare(?:\s+-[A-Za-z]+)*)\s+)?((?:{SHELL_WORD}\s*)+)$")
+SHELL_ASSIGN = re.compile(r"""([A-Z_][A-Z0-9_]*)=(?:"([^"]*)"|'([^']*)'|([^\s"';]*))""")
 FLOOR = re.compile(r"\b([A-Za-z0-9_]+)=(\d+)\b")
 TARGET_FLAGS = {"--lib", "--doc", "--bins", "--bin", "--examples", "--example", "--benches", "--bench"}
 
@@ -112,6 +119,21 @@ def gate(text: str):
     return [whole | i for i in items] if items else [whole]
 
 
+def assignments(text: str):
+    """(name, value) of each variable set in text, in order: YAML `env:` entries and shell lines of
+    assignments (several on one line, after export / local / readonly / declare)"""
+    out = []
+    for line in text.split("\n"):
+        m = YAML_VARIABLE.match(line)
+        if m:
+            out.append((m.group(1), m.group(2)))
+            continue
+        m = SHELL_LINE.match(line)
+        if m:
+            out += [(a.group(1), next(g for g in a.groups()[1:] if g is not None)) for a in SHELL_ASSIGN.finditer(m.group(1))]
+    return out
+
+
 def fold(text: str):
     """a YAML folded block (`key: >` / `key: >-`) as one line: its lines joined with spaces"""
     lines, out, i = text.split("\n"), [], 0
@@ -134,7 +156,7 @@ def commands(text: str):
     text = re.sub(r"\\\n\s*", " ", text)  # a command continued with a trailing backslash
     text = fold(text)
     # variables set in the same file (a YAML `env:` entry or a shell assignment), last one wins
-    values = dict(VARIABLE.findall(text))
+    values = dict(assignments(text))
     text = re.sub(r"\$\{?([A-Z_][A-Z0-9_]*)\}?", lambda m: values.get(m.group(1), m.group(0)), text)
     out = []
     for m in CARGO_TEST.finditer(text):

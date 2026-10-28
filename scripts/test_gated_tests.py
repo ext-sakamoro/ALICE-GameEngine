@@ -110,6 +110,13 @@ CASES = [
     ("${VAR} braces", {"p": PHYS}, {"ci": 'env:\n  FEATS: physics\nrun: cargo test --features "${FEATS}"\n'}, None, CONF_RUN, 0),
     ("a shell assignment", {"p": PHYS}, {"ci": "FEATS=physics\ncargo test --features $FEATS\n"}, None, CONF_RUN, 0),
     ("an unresolved variable enables nothing", {"p": PHYS}, {"ci": 'run: cargo test --features "$NOPE"\n'}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): features ['physics'] not enabled"),
+    # several assignments on one shell line, with export / local / readonly / declare
+    ("export with several assignments (DB's preflight form)", {"p": PHYS}, {"ci": 'export CARGO_TERM_COLOR=always RUSTFLAGS="-Dwarnings" FEATS="gpu,physics"\ncargo test --features "$FEATS"\n'}, None, CONF_RUN, 0),
+    ("export with quoted values (Sign's preflight form)", {"p": PHYS}, {"ci": 'export CARGO_TERM_COLOR="always" FEATS="physics"\ncargo test --features "$FEATS"\n'}, None, CONF_RUN, 0),
+    # each variable gates its own file, so each prefix is needed
+    ("local, readonly and declare -x", {"p": PHYS, "g": GPU, "b": BOTH}, {"ci": "local A=physics\nreadonly B='gpu'\ndeclare -x C=\"gpu,physics\"\ncargo test --features \"$A\" --test p\ncargo test --features $B --test g -- --include-ignored\ncargo test --features \"$C\" --test b\n"}, None, CONF_RUN, 0),
+    ("a NAME=value word in a command is not an assignment", {"p": PHYS}, {"ci": 'echo FEATS=physics\ncargo test --features "$FEATS"\n'}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): features ['physics'] not enabled"),
+    ("a later assignment on one line wins over an earlier line", {"p": PHYS}, {"ci": 'FEATS=gpu\nexport X=1 FEATS=physics\ncargo test --features "$FEATS"\n'}, None, CONF_RUN, 0),
     # gates on items: each item needs its own and the file's features
     ("run mode: item gates met by two commands", {"m": MIXED}, {"ci": "cargo test --features gpu\ncargo test --features physics\n"}, None, CONF_RUN, 0),
     ("run mode: an item gate met by none", {"m": MIXED}, {"ci": "cargo test --features gpu\n"}, None, CONF_RUN, "ci: tests/m.rs (features ['physics'], 2 tests): features ['physics'] not enabled"),
