@@ -228,100 +228,34 @@ impl NavAgent {
 // A* pathfinding on navmesh triangles
 // ---------------------------------------------------------------------------
 
-/// A* pathfinding across navmesh triangles.
-/// Returns a list of triangle indices from `start` to `goal`.
+/// The navmesh as a graph for the shared search of alice-navigation: one node per triangle at its
+/// centre (in 3D, so heights count), edges to the triangles that share an edge (`u32::MAX` = none).
+/// This is the one place the mesh is converted for the search.
+impl alice_navigation::graph_search::SearchGraph for NavMesh {
+    fn node_count(&self) -> usize {
+        self.triangles.len()
+    }
+    fn position(&self, node: usize) -> [f64; 3] {
+        let c = self.triangle_center(node).unwrap_or(Vec3::ZERO);
+        [f64::from(c.x()), f64::from(c.y()), f64::from(c.z())]
+    }
+    fn neighbors(&self, node: usize, out: &mut Vec<usize>) {
+        out.extend(
+            self.triangles[node]
+                .neighbors
+                .iter()
+                .filter(|&&n| n != u32::MAX)
+                .map(|&n| n as usize),
+        );
+    }
+}
+
+/// A* pathfinding across navmesh triangles: the shortest chain of triangle centres, from
+/// [`alice_navigation::graph_search::astar`] (f64, ties broken by a stated rule, the same path
+/// on every platform). Returns the triangle indices from `start` to `goal`.
 #[must_use]
 pub fn a_star(mesh: &NavMesh, start: usize, goal: usize) -> Option<Vec<usize>> {
-    if start >= mesh.triangles.len() || goal >= mesh.triangles.len() {
-        return None;
-    }
-    if start == goal {
-        return Some(vec![start]);
-    }
-
-    let tri_count = mesh.triangles.len();
-    let mut open = std::collections::BinaryHeap::new();
-    let mut g_score = vec![f32::MAX; tri_count];
-    let mut came_from = vec![usize::MAX; tri_count];
-    let mut closed = vec![false; tri_count];
-
-    g_score[start] = 0.0;
-    let goal_center = mesh.triangle_center(goal).unwrap_or(Vec3::ZERO);
-
-    open.push(AStarNode { tri: start, f: 0.0 });
-
-    while let Some(current) = open.pop() {
-        if current.tri == goal {
-            let mut path = vec![goal];
-            let mut cur = goal;
-            while came_from[cur] != usize::MAX {
-                cur = came_from[cur];
-                path.push(cur);
-            }
-            path.reverse();
-            return Some(path);
-        }
-
-        if closed[current.tri] {
-            continue;
-        }
-        closed[current.tri] = true;
-
-        let tri = &mesh.triangles[current.tri];
-        for &neighbor_idx in &tri.neighbors {
-            if neighbor_idx == u32::MAX {
-                continue;
-            }
-            let neighbor = neighbor_idx as usize;
-            if neighbor >= tri_count || closed[neighbor] {
-                continue;
-            }
-
-            let current_center = mesh.triangle_center(current.tri).unwrap_or(Vec3::ZERO);
-            let neighbor_center = mesh.triangle_center(neighbor).unwrap_or(Vec3::ZERO);
-            let tentative_g = g_score[current.tri] + current_center.distance(neighbor_center);
-
-            if tentative_g < g_score[neighbor] {
-                g_score[neighbor] = tentative_g;
-                came_from[neighbor] = current.tri;
-                let h = neighbor_center.distance(goal_center);
-                open.push(AStarNode {
-                    tri: neighbor,
-                    f: tentative_g + h,
-                });
-            }
-        }
-    }
-    None
-}
-
-#[derive(Debug, Clone, Copy)]
-struct AStarNode {
-    tri: usize,
-    f: f32,
-}
-
-impl PartialEq for AStarNode {
-    fn eq(&self, other: &Self) -> bool {
-        self.tri == other.tri
-    }
-}
-impl Eq for AStarNode {}
-
-impl PartialOrd for AStarNode {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for AStarNode {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Reverse ordering for min-heap behavior
-        other
-            .f
-            .partial_cmp(&self.f)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    }
+    alice_navigation::graph_search::astar(mesh, start, goal)
 }
 
 // ---------------------------------------------------------------------------
@@ -424,48 +358,26 @@ pub fn navmesh_from_grid(grid: &[bool], width: usize, height: usize, cell_size: 
         }
     }
 
-    // Wire neighbors: two triangles are neighbors iff they share exactly
-    // two vertices (i.e. they share an edge).
+    // Neighbours from alice-navigation's occupancy navmesh: the same triangles in the same order,
+    // so its neighbour indices are this mesh's.
     let _ = tri_cell; // kept for potential future use, currently unused
-    for i in 0..triangles.len() {
-        for j in (i + 1)..triangles.len() {
-            if share_edge(&triangles[i], &triangles[j]) {
-                connect(&mut triangles, i, j);
-            }
+    let shared = alice_navigation::graph_search::build_occupancy_navmesh(
+        grid,
+        width,
+        height,
+        1.0,
+        alice_navigation::core_types::Vec2::new(0.0, 0.0),
+    );
+    assert_eq!(shared.triangles.len(), triangles.len(), "the two builders disagree on the layout");
+    for (t, s) in triangles.iter_mut().zip(&shared.triangles) {
+        for (slot, n) in t.neighbors.iter_mut().zip(s.neighbors) {
+            *slot = n.map_or(u32::MAX, |n| n as u32);
         }
     }
 
     NavMesh {
         vertices,
         triangles,
-    }
-}
-
-fn share_edge(a: &NavTriangle, b: &NavTriangle) -> bool {
-    let mut shared = 0;
-    for &va in &a.indices {
-        if b.indices.contains(&va) {
-            shared += 1;
-        }
-    }
-    shared == 2
-}
-
-fn connect(triangles: &mut [NavTriangle], i: usize, j: usize) {
-    // Push j into i's neighbor slots (first empty), and vice versa.
-    let j_u32 = j as u32;
-    let i_u32 = i as u32;
-    for slot in &mut triangles[i].neighbors {
-        if *slot == u32::MAX {
-            *slot = j_u32;
-            break;
-        }
-    }
-    for slot in &mut triangles[j].neighbors {
-        if *slot == u32::MAX {
-            *slot = i_u32;
-            break;
-        }
     }
 }
 
@@ -479,18 +391,7 @@ fn connect(triangles: &mut [NavTriangle], i: usize, j: usize) {
 /// Returns: `(cluster_count, triangle_to_cluster)`.
 #[must_use]
 pub fn cluster_grid(width: usize, height: usize, cluster_size: usize) -> (usize, Vec<usize>) {
-    let cw = (width + cluster_size - 1) / cluster_size;
-    let ch = (height + cluster_size - 1) / cluster_size;
-    let mut mapping = Vec::with_capacity(width * height * 2);
-    for y in 0..height {
-        for x in 0..width {
-            let cluster = (y / cluster_size) * cw + (x / cluster_size);
-            // 2 triangles per walkable cell — caller filters via mesh.
-            mapping.push(cluster);
-            mapping.push(cluster);
-        }
-    }
-    (cw * ch, mapping)
+    alice_navigation::graph_search::cluster_grid(width, height, cluster_size)
 }
 
 /// Hierarchical A* over a grid-generated navmesh: first plan at the
@@ -510,154 +411,16 @@ pub fn hierarchical_a_star(
     goal_tri: usize,
     tri_to_cluster: &[usize],
 ) -> Option<Vec<usize>> {
-    if start_tri >= mesh.triangles.len() || goal_tri >= mesh.triangles.len() {
-        return None;
-    }
-    if start_tri == goal_tri {
-        return Some(vec![start_tri]);
-    }
-    let start_cluster = *tri_to_cluster.get(start_tri)?;
-    let goal_cluster = *tri_to_cluster.get(goal_tri)?;
-
-    if start_cluster == goal_cluster {
-        return a_star(mesh, start_tri, goal_tri);
-    }
-
-    // Find cluster sequence via BFS over the cluster adjacency induced
-    // by mesh triangle neighbors crossing cluster boundaries.
-    let mut allowed_clusters = std::collections::HashSet::<usize>::new();
-    {
-        let mut visited = std::collections::HashSet::<usize>::new();
-        let mut parent = std::collections::HashMap::<usize, usize>::new();
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back(start_cluster);
-        visited.insert(start_cluster);
-        while let Some(c) = queue.pop_front() {
-            if c == goal_cluster {
-                // Reconstruct cluster chain.
-                let mut cur = c;
-                allowed_clusters.insert(cur);
-                while let Some(&p) = parent.get(&cur) {
-                    allowed_clusters.insert(p);
-                    cur = p;
-                }
-                break;
-            }
-            for (tri_i, tri) in mesh.triangles.iter().enumerate() {
-                if tri_to_cluster.get(tri_i).copied() != Some(c) {
-                    continue;
-                }
-                for &n in &tri.neighbors {
-                    if n == u32::MAX {
-                        continue;
-                    }
-                    let nc = tri_to_cluster[n as usize];
-                    if !visited.contains(&nc) {
-                        visited.insert(nc);
-                        parent.insert(nc, c);
-                        queue.push_back(nc);
-                    }
-                }
-            }
-        }
-    }
-    if allowed_clusters.is_empty() {
-        return None;
-    }
-
-    // Refine: A* through the mesh but restrict expansion to triangles in
-    // the cluster chain.
-    fine_a_star_restricted(mesh, start_tri, goal_tri, tri_to_cluster, &allowed_clusters)
-}
-
-fn fine_a_star_restricted(
-    mesh: &NavMesh,
-    start: usize,
-    goal: usize,
-    tri_to_cluster: &[usize],
-    allowed: &std::collections::HashSet<usize>,
-) -> Option<Vec<usize>> {
-    use std::cmp::Ordering;
-    use std::collections::{BinaryHeap, HashMap};
-
-    #[derive(Copy, Clone, PartialEq)]
-    struct Node {
-        f: f32,
-        idx: usize,
-    }
-    impl Eq for Node {}
-    impl PartialOrd for Node {
-        fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-            Some(self.cmp(o))
-        }
-    }
-    impl Ord for Node {
-        fn cmp(&self, o: &Self) -> Ordering {
-            o.f.partial_cmp(&self.f).unwrap_or(Ordering::Equal)
-        }
-    }
-
-    let centroid = |t: usize| -> crate::math::Vec3 {
-        let tri = &mesh.triangles[t];
-        let a = mesh.vertices[tri.indices[0] as usize].position;
-        let b = mesh.vertices[tri.indices[1] as usize].position;
-        let c = mesh.vertices[tri.indices[2] as usize].position;
-        crate::math::Vec3::new(
-            (a.x() + b.x() + c.x()) / 3.0,
-            (a.y() + b.y() + c.y()) / 3.0,
-            (a.z() + b.z() + c.z()) / 3.0,
-        )
-    };
-    let goal_pos = centroid(goal);
-    let h = |t: usize| centroid(t).distance(goal_pos);
-
-    let mut open = BinaryHeap::new();
-    let mut g_score = HashMap::<usize, f32>::new();
-    let mut came_from = HashMap::<usize, usize>::new();
-    g_score.insert(start, 0.0);
-    open.push(Node {
-        f: h(start),
-        idx: start,
-    });
-
-    while let Some(Node { idx, .. }) = open.pop() {
-        if idx == goal {
-            let mut path = vec![idx];
-            let mut cur = idx;
-            while let Some(&prev) = came_from.get(&cur) {
-                path.push(prev);
-                cur = prev;
-            }
-            path.reverse();
-            return Some(path);
-        }
-        let cur_g = *g_score.get(&idx).unwrap_or(&f32::INFINITY);
-        for &n_u32 in &mesh.triangles[idx].neighbors {
-            if n_u32 == u32::MAX {
-                continue;
-            }
-            let n = n_u32 as usize;
-            if !allowed.contains(&tri_to_cluster[n]) {
-                continue;
-            }
-            let step = centroid(idx).distance(centroid(n));
-            let tentative = cur_g + step;
-            if tentative < *g_score.get(&n).unwrap_or(&f32::INFINITY) {
-                g_score.insert(n, tentative);
-                came_from.insert(n, idx);
-                open.push(Node {
-                    f: tentative + h(n),
-                    idx: n,
-                });
-            }
-        }
-    }
-    None
+    alice_navigation::graph_search::hierarchical_astar(mesh, start_tri, goal_tri, tri_to_cluster)
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[path = "navmesh_legacy.rs"]
+mod legacy;
 
 #[cfg(test)]
 mod tests {
