@@ -78,7 +78,10 @@ impl PartialOrd for AStarNode {
 }
 impl Ord for AStarNode {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.f.partial_cmp(&self.f).unwrap_or(std::cmp::Ordering::Equal)
+        other
+            .f
+            .partial_cmp(&self.f)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -150,7 +153,10 @@ mod parity {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> f64 {
-            self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             ((self.0 >> 11) as f64) / ((1u64 << 53) as f64)
         }
     }
@@ -163,10 +169,17 @@ mod parity {
         ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
     }
     fn neighbours(m: &NavMesh, t: usize) -> Vec<usize> {
-        m.triangles[t].neighbors.iter().filter(|&&n| n != u32::MAX).map(|&n| n as usize).collect()
+        m.triangles[t]
+            .neighbors
+            .iter()
+            .filter(|&&n| n != u32::MAX)
+            .map(|&n| n as usize)
+            .collect()
     }
     fn cost(m: &NavMesh, p: &[usize]) -> f64 {
-        p.windows(2).map(|w| dist(centre(m, w[0]), centre(m, w[1]))).sum()
+        p.windows(2)
+            .map(|w| dist(centre(m, w[0]), centre(m, w[1])))
+            .sum()
     }
     /// Independent O(n²) Dijkstra in f64 from `s`.
     fn dijkstra(m: &NavMesh, s: usize) -> Vec<f64> {
@@ -201,7 +214,9 @@ mod parity {
         while v != s {
             let tight: Vec<usize> = (0..m.triangles.len())
                 .filter(|&u| neighbours(m, u).contains(&v))
-                .filter(|&u| (d[u] + dist(centre(m, u), centre(m, v)) - d[v]).abs() <= 1e-5 * d[v].max(1.0))
+                .filter(|&u| {
+                    (d[u] + dist(centre(m, u), centre(m, v)) - d[v]).abs() <= 1e-5 * d[v].max(1.0)
+                })
                 .collect();
             if tight.len() != 1 {
                 return false;
@@ -238,8 +253,16 @@ mod parity {
                 assert_eq!(old.vertices.len(), new.vertices.len());
                 for (a, b) in old.vertices.iter().zip(&new.vertices) {
                     assert_eq!(
-                        [a.position.x().to_bits(), a.position.y().to_bits(), a.position.z().to_bits()],
-                        [b.position.x().to_bits(), b.position.y().to_bits(), b.position.z().to_bits()]
+                        [
+                            a.position.x().to_bits(),
+                            a.position.y().to_bits(),
+                            a.position.z().to_bits()
+                        ],
+                        [
+                            b.position.x().to_bits(),
+                            b.position.y().to_bits(),
+                            b.position.z().to_bits()
+                        ]
                     );
                 }
                 assert_eq!(old.triangles.len(), new.triangles.len());
@@ -271,12 +294,22 @@ mod parity {
                     let old = super::a_star(&m, s, t);
                     let new = a_star(&m, s, t);
                     let d = dijkstra(&m, s);
-                    assert_eq!(old.is_some(), new.is_some(), "seed {seed}: reachability differs");
+                    assert_eq!(
+                        old.is_some(),
+                        new.is_some(),
+                        "seed {seed}: reachability differs"
+                    );
                     assert_eq!(new.is_some(), d[t].is_finite());
                     if let (Some(old), Some(new)) = (old, new) {
                         // the shared search is shortest in f64; the previous one was within f32 of it
-                        assert!((cost(&m, &new) - d[t]).abs() <= 1e-9 * d[t].max(1.0), "seed {seed}");
-                        assert!((cost(&m, &old) - d[t]).abs() <= 1e-5 * d[t].max(1.0), "seed {seed}");
+                        assert!(
+                            (cost(&m, &new) - d[t]).abs() <= 1e-9 * d[t].max(1.0),
+                            "seed {seed}"
+                        );
+                        assert!(
+                            (cost(&m, &old) - d[t]).abs() <= 1e-5 * d[t].max(1.0),
+                            "seed {seed}"
+                        );
                         if unique_shortest(&m, &d, s, t) {
                             assert_eq!(old, new, "seed {seed}: a unique shortest path differs");
                             unique += 1;
@@ -287,6 +320,9 @@ mod parity {
             }
         }
         eprintln!("[navmesh parity] compared {compared}, unique shortest {unique}");
-        assert!(compared > 0 && unique > 0, "compared {compared}, unique {unique}");
+        assert!(
+            compared > 0 && unique > 0,
+            "compared {compared}, unique {unique}"
+        );
     }
 }

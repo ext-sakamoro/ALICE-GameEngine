@@ -368,7 +368,11 @@ pub fn navmesh_from_grid(grid: &[bool], width: usize, height: usize, cell_size: 
         1.0,
         alice_navigation::core_types::Vec2::new(0.0, 0.0),
     );
-    assert_eq!(shared.triangles.len(), triangles.len(), "the two builders disagree on the layout");
+    assert_eq!(
+        shared.triangles.len(),
+        triangles.len(),
+        "the two builders disagree on the layout"
+    );
     for (t, s) in triangles.iter_mut().zip(&shared.triangles) {
         for (slot, n) in t.neighbors.iter_mut().zip(s.neighbors) {
             *slot = n.map_or(u32::MAX, |n| n as u32);
