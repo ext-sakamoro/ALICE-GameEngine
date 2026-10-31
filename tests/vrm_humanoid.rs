@@ -3,7 +3,7 @@
 //! oracle: the two lists below are the VRMC_vrm 1.0 humanoid bone names (55, fingers included)
 //! and expression preset names (18), copied from the specification, not from this crate.
 
-use alice_game_engine::humanoid::{ExpressionChannel, ExpressionSet, HumanoidBone};
+use alice_game_engine::humanoid::{ExpressionChannel, ExpressionSet, Humanoid, HumanoidBone};
 use alice_game_engine::vrm::read_vrm;
 use alice_game_engine::vrm_pose::VrmPose;
 
@@ -170,4 +170,32 @@ fn an_expression_set_iterates_in_a_fixed_order() {
     let ka: Vec<_> = a.iter().map(|(c, _)| c.clone()).collect();
     let kb: Vec<_> = b.iter().map(|(c, _)| c.clone()).collect();
     assert_eq!(ka, kb);
+}
+
+/// The bone map is ordered by the bone: two maps with the same bindings, bound in opposite
+/// orders, print the same, and the print lists the bones in the enum's (specification) order.
+/// A hashed map would differ between two instances (each draws its own hash keys)
+#[test]
+fn the_bone_map_is_ordered_by_the_bone() {
+    let all = HumanoidBone::all();
+    let mut forward = Humanoid::new();
+    let mut reverse = Humanoid::new();
+    for (i, b) in all.iter().enumerate() {
+        forward.bind(*b, u32::try_from(i).unwrap());
+    }
+    for (i, b) in all.iter().enumerate().rev() {
+        reverse.bind(*b, u32::try_from(i).unwrap());
+    }
+    let (f, r) = (format!("{forward:?}"), format!("{reverse:?}"));
+    assert_eq!(f, r);
+    let at = |b: HumanoidBone| {
+        f.find(&format!("{b:?}:"))
+            .unwrap_or_else(|| panic!("{b:?} missing in {f}"))
+    };
+    let positions: Vec<usize> = all.iter().map(|b| at(*b)).collect();
+    assert_eq!(all.len(), 55, "compared all 55 bones");
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "not in the bone order: {f}"
+    );
 }
