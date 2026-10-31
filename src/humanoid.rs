@@ -17,7 +17,7 @@
 //! from the specification's names (`vrm_name` / `from_vrm_name`), and a
 //! channel accepts arbitrary user keys.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -279,9 +279,11 @@ impl HumanoidBone {
 
 /// Maps every [`HumanoidBone`] to a renderer-side bone index (= an
 /// index into `Skeleton::bones`). Unmapped bones evaluate to `None`.
+/// The map is ordered by the bone (the enum's order), so it iterates and prints the same
+/// for the same bindings.
 #[derive(Debug, Default, Clone)]
 pub struct Humanoid {
-    map: HashMap<HumanoidBone, u32>,
+    map: BTreeMap<HumanoidBone, u32>,
 }
 
 impl Humanoid {

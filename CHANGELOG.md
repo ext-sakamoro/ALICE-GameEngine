@@ -9,6 +9,7 @@
 - `humanoid::HumanoidBone` を VRM 1.0 の 55 骨 (指 30 本を含む) に、`ExpressionChannel` を VRM 1.0 の 18 preset (`Relaxed` / `Blink` / `LookUp` / `LookDown` / `LookLeft` / `LookRight` を追加) にした 網羅的な `match` は新しい variant の arm が要る 骨と表情は仕様の名前と相互に変換できる (`vrm_name` / `from_vrm_name`、`ExpressionChannel::presets`)、仕様に無い表情の名前は `Custom`
 - `vrm_render::ToonPart` に `surface: Option<Surface>` が増えた struct literal は `surface: None` を足す (以前と同じ描画) `ToonTexture` は `key` を持つ
 - `ExpressionSet::iter` は channel の順 (preset は enum の順、custom は名前の順) に並ぶ (以前は HashMap の順で決まっていなかった)
+- `humanoid::Humanoid` の骨の対応表は骨の順 (enum の順) に並ぶ 同じ対応なら `Debug` の表示も反復の順も同じになる (以前は HashMap の順で、同じ対応でも instance ごとに違った)
 
 ### Added
 - `vrm_render::ToonTerms` と `ToonRenderer::draw_parts_terms(parts, terms, clear)` / `draw_parts_terms_into(parts, terms, clear, view)`: 部品ごとの項 (`terms` は部品と同じ数、空なら既定) `cull_back` (裏面を描かない) / `rim` (`Rim`: 色、fresnel の冪、境界・ぼかし、antialias、影での弱め、基本色との混ぜ、裏面を除く、mask 画像) / `outline_times_base` (輪郭線の色に基本色を掛ける) / `base_level_only` (mip を使わず原寸で読む、色の帯のような data の画像) / `alpha_mask` (`AlphaMask`: 別の画像の赤で alpha を置換 / 乗算 / 加算 / 減算 = `AlphaMaskMode`、倍率と値、sRGB 復号の有無、cutout と blend は mask 後の alpha) / `linear_light` (色と texture を sRGB 復号して toon の混ぜと rim を線形光で行い最後に 1 回符号化) / `receive` (頂点ごとの受ける光 0..=1 を half-Lambert に掛けてから ramp、1 なら項なしと bit 一致) 値の範囲外と長さの不一致は `RenderError::BadTerms` (`check_terms`)
