@@ -87,16 +87,6 @@ step "ci.yml / physics: Test (physics)"
   cargo test --features physics 2>&1 | python3 scripts/min_passed.py lib=1044 physics_hub_analytic=23 physics_hub_degenerate=10 vrm_reader=10 vrm0_reader=8 vrm_node_matrix=6 vrm_occlusion=3 vrm_occlusion_reach=1
 )
 
-step "ci.yml / lol-measure: Clippy (lol-measure)"
-( export CARGO_TERM_COLOR="always"; cargo clippy --features lol-measure --all-targets -- -W clippy::all )
-
-step "ci.yml / lol-measure: Test (lol-measure)"
-(
-  export CARGO_TERM_COLOR="always"
-  set -o pipefail
-  cargo test --features lol-measure --test vrm_measure 2>&1 | python3 scripts/min_passed.py vrm_measure=4
-)
-
 step "ci.yml / test: Doc-tests"
 ( export CARGO_TERM_COLOR="always"; cargo test --doc --features full )
 

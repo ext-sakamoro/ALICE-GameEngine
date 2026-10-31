@@ -4,6 +4,7 @@
 
 ### 破壊的変更
 
+- feature `lol-measure` と `vrm_measure` (VRM のモデルを形式に依らない rig にする読み手) と依存 alice-lol-humanoid を外した (CI の job と preflight の段も) VRM の読み込み・姿勢・描画は変わらない
 - `vrm::VrmDocument::meta` は `vrm::Licence` (`Vrm1(VrmMeta)` / `Vrm0(vrm0::Vrm0Meta)`) になった 0.x の利用条件の項目は 1.0 の項目に移せないので、どちらも他方から作らず書かれたまま持つ 名前と最初の作者は `Licence::title` / `Licence::author` `VrmError::Vrm0` は無くなった (0.x は読む)
 - `vrm_render::ToonParams` の `threshold` を MToon の `shading_shift` と `shading_toony` に替えた (以前の `threshold: x` は `shading_shift: -x, shading_toony: 1.0` と同じ描画)
 - `humanoid::HumanoidBone` を VRM 1.0 の 55 骨 (指 30 本を含む) に、`ExpressionChannel` を VRM 1.0 の 18 preset (`Relaxed` / `Blink` / `LookUp` / `LookDown` / `LookLeft` / `LookRight` を追加) にした 網羅的な `match` は新しい variant の arm が要る 骨と表情は仕様の名前と相互に変換できる (`vrm_name` / `from_vrm_name`、`ExpressionChannel::presets`)、仕様に無い表情の名前は `Custom`
@@ -40,7 +41,7 @@
 ### Changed — dependencies
 
 - 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `19efcf7`、7.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更
-- 依存: `alice-physics` の git 依存を rev `b672ff2e` (4.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更 既定の feature と `physics` / `full` で alice-det-math は 1 版 (`lol-measure` は alice-lol-humanoid が古い世代を引くので 2 版)
+- 依存: `alice-physics` の git 依存を rev `b672ff2e` (4.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更 どの feature の組でも alice-det-math は 1 版
 - CI: `physics` feature の clippy と test を ubuntu で実行する job を追加 (test は binary ごとの最小件数 lib 1044 / physics_hub_analytic 23 / physics_hub_degenerate 10 を `scripts/min_passed.py` で検査)、preflight にも同じ step を追加
 
 ### Fixed

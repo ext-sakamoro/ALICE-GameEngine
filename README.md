@@ -124,9 +124,7 @@ Feature flags pick what you compile:
   joints / weights / indices / morph target deltas, skins, nodes; a broken file is an
   error, not a panic). VRM 0.x files read into the same model, turned to face +Z, with
   their own licence fields kept as written (`vrm::Licence::Vrm0`) and MToon 0.x converted
-  to the 1.0 parameters. Feature `lol-measure` (`vrm_measure::rig`) turns a model into
-  the format-neutral rig of `alice-lol-humanoid`, so a VRM body can be measured in the units
-  of the proportion laws. + FBX binary header + USD ASCII recognisers
+  to the 1.0 parameters. + FBX binary header + USD ASCII recognisers
 - **VRM pose (CPU)** — `vrm_pose::VrmPose`: expression weights → morph target
   weights → morph targets → node transforms → linear blend skinning
   (`cargo run --example vrm_pose_demo`)
