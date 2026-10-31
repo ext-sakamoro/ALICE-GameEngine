@@ -38,8 +38,8 @@
 
 ### Changed — dependencies
 
-- 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `3c7367f`、7.0.0) に変更
-- 依存: `alice-physics` の git 依存を rev `391971e6` (4.0.0) に変更
+- 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `19efcf7`、7.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更
+- 依存: `alice-physics` の git 依存を rev `b672ff2e` (4.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更 既定の feature と `physics` / `full` で alice-det-math は 1 版 (`lol-measure` は alice-lol-humanoid が古い世代を引くので 2 版)
 - CI: `physics` feature の clippy と test を ubuntu で実行する job を追加 (test は binary ごとの最小件数 lib 1044 / physics_hub_analytic 23 / physics_hub_degenerate 10 を `scripts/min_passed.py` で検査)、preflight にも同じ step を追加
 
 ### Fixed
