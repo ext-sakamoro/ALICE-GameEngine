@@ -38,6 +38,7 @@
 
 ### Changed — dependencies
 
+- 依存: `alice-sdf` の git rev を `19efcf7` から `5c8a364` (7.0.0、Catmull–Clark の `mesh::subdiv` を含む) に変更
 - 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `19efcf7`、7.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更
 - 依存: `alice-physics` の git 依存を rev `b672ff2e` (4.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更 どの feature の組でも alice-det-math は 1 版
 - CI: `physics` feature の clippy と test を ubuntu で実行する job を追加 (test は binary ごとの最小件数 lib 1044 / physics_hub_analytic 23 / physics_hub_degenerate 10 を `scripts/min_passed.py` で検査)、preflight にも同じ step を追加
