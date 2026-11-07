@@ -55,6 +55,9 @@ step "ci.yml / gpu-oracle: GPU tests (--include-ignored, this machine's adapter)
   cargo test --features gpu --test vrm_render --test vrm_mtoon --test vrm_render_parts --test vrm_face_paint --test vrm_outline --test vrm_surface --test vrm_render_target --test vrm_render_persistent --test vrm_terms --test vrm_alpha_mask --test vrm_linear_light --test vrm_receive --test vrm_terms_teeth -- --include-ignored 2>&1 | python3 scripts/min_passed.py --no-ignored vrm_render=4 vrm_mtoon=5 vrm_render_parts=3 vrm_face_paint=5 vrm_outline=8 vrm_surface=13 vrm_render_target=4 vrm_render_persistent=4 vrm_terms=6 vrm_alpha_mask=3 vrm_linear_light=3 vrm_receive=3 vrm_terms_teeth=6
 )
 
+step "ci.yml / wasm2d: wasm32 check and sprite rows"
+( export CARGO_TERM_COLOR="always"; cargo check --lib --target wasm32-unknown-unknown --features wasm; cargo test --lib sprite_anim )
+
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
 rustup target list --installed | grep -q '^aarch64-apple-ios$' || rustup target add aarch64-apple-ios
 ( export CARGO_TERM_COLOR="always"; cargo check --target aarch64-apple-ios --no-default-features )

@@ -126,6 +126,7 @@ pub mod simd_eval;
 pub mod skeleton;
 pub mod sky;
 pub mod soft_body;
+pub mod sprite_anim;
 #[cfg(feature = "gpu")]
 pub mod sprite_render;
 pub mod text;
@@ -139,6 +140,8 @@ pub mod vrm;
 pub mod vrm0;
 pub mod vrm_pose;
 pub mod vrm_render;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+pub mod wasm2d;
 // Light occlusion of a posed mesh by its own shape, ray casts in fixed point
 #[cfg(feature = "physics")]
 pub mod vrm_occlusion;

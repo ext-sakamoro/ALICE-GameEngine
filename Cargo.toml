@@ -35,6 +35,8 @@ full = ["window", "sdf", "audio", "ui", "particles", "navmesh"]
 # Rigid-body physics delegated to ALICE-Physics (physics3d / collision / joint).
 # Kept out of `full`.
 physics = ["dep:alice-physics"]
+# Browser entry for 2D: WebGL2 sprite drawing and frame-row playback.
+wasm = ["dep:wasm-bindgen", "dep:web-sys", "dep:js-sys"]
 
 [dependencies]
 glam = { version = "0.29", features = ["serde"] }
@@ -48,6 +50,11 @@ serde_json = "1.0"
 log = "0.4"
 rayon = "1.10"
 wide = "0.7"
+
+# Browser entry (optional, see the `wasm` feature)
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["HtmlCanvasElement", "HtmlImageElement", "WebGl2RenderingContext", "WebGlBuffer", "WebGlProgram", "WebGlShader", "WebGlTexture", "WebGlUniformLocation"] }
 
 # GPU renderer (optional)
 wgpu = { version = "25", optional = true }

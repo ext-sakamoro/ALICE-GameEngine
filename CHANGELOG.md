@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### 追加
+
+- `sprite_anim`: 2D のコマの列の再生 `SpriteRow` (フレーム番号と表示 ms、同じ番号の繰り返しで保持) と `SpriteAnimator` 整数 ms で進むので同じ入力は同じコマになる
+- feature `wasm` と `wasm2d`: ブラウザから使う入口 `Renderer2D` (WebGL2、nearest、呼んだ順に描く) と `SpriteAnimator`
+
 ### 破壊的変更
 
 - `vrm::VrmDocument::meta` は `vrm::Licence` (`Vrm1(VrmMeta)` / `Vrm0(vrm0::Vrm0Meta)`) になった 0.x の利用条件の項目は 1.0 の項目に移せないので、どちらも他方から作らず書かれたまま持つ 名前と最初の作者は `Licence::title` / `Licence::author` `VrmError::Vrm0` は無くなった (0.x は読む)
