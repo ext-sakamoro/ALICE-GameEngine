@@ -1,7 +1,7 @@
 //! Browser entry for 2D: WebGL2 sprite drawing and frame-row playback.
 //! Quads are drawn in call order with nearest sampling.
 
-use crate::sprite_anim::{RowEvent, RowMode, SpriteAnimator, SpriteRow};
+use crate::sprite_anim::{Facing, RowEvent, RowMode, SpriteAnimator, SpriteRow};
 use wasm_bindgen::prelude::*;
 use web_sys::{
     HtmlCanvasElement, HtmlImageElement, WebGl2RenderingContext as Gl, WebGlBuffer, WebGlProgram,
@@ -293,6 +293,17 @@ impl WasmSpriteAnimator {
     /// Returns true on the call that finishes a non-looping row.
     pub fn advance(&mut self, ms: u32) -> bool {
         self.inner.advance(ms) == Some(RowEvent::Finished)
+    }
+
+    /// Chooses the frame from the position in whole units, so a planted foot
+    /// stays put. Returns the position to draw the figure at.
+    #[wasm_bindgen(js_name = seekByDistance)]
+    pub fn seek_by_distance(&mut self, x: i32, step: u32, left: bool) -> Result<f64, JsError> {
+        let facing = if left { Facing::Left } else { Facing::Right };
+        self.inner
+            .seek_by_distance(i64::from(x), step, facing)
+            .map(|snapped| snapped as f64)
+            .map_err(|e| JsError::new(&format!("{e:?}")))
     }
 
     /// The frame number to draw, or undefined before the first play.

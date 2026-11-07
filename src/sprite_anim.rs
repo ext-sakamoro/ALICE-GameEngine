@@ -29,6 +29,16 @@ pub enum SpriteAnimError {
     LengthMismatch { order: usize, ms: usize },
     ZeroDuration { index: usize },
     UnknownRow(String),
+    ZeroStep,
+    NothingPlaying,
+}
+
+/// Which way the figure faces when frames follow distance. Frames always run
+/// forward along the facing, whichever sign the position has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facing {
+    Right,
+    Left,
 }
 
 /// Reported by [`SpriteAnimator::advance`].
@@ -128,6 +138,42 @@ impl SpriteAnimator {
                 return Some(RowEvent::Finished);
             }
         }
+    }
+
+    /// Chooses the shown frame from the distance walked instead of from time,
+    /// so a planted foot stays on its ground point at any speed. `x` is the
+    /// position in whole units and `step` the units one frame moves the planted
+    /// foot back. Returns the position to draw the figure at: `x` rounded down
+    /// to a whole number of steps. Draw there, not at `x`.
+    ///
+    /// # Errors
+    /// Refuses a zero step, or a call before the first [`Self::play`].
+    pub fn seek_by_distance(
+        &mut self,
+        x: i64,
+        step: u32,
+        facing: Facing,
+    ) -> Result<i64, SpriteAnimError> {
+        if step == 0 {
+            return Err(SpriteAnimError::ZeroStep);
+        }
+        let row = self
+            .current
+            .as_deref()
+            .and_then(|name| self.rows.get(name))
+            .ok_or(SpriteAnimError::NothingPlaying)?;
+        let step = i64::from(step);
+        let n = x.div_euclid(step);
+        let along = match facing {
+            Facing::Right => i128::from(n),
+            Facing::Left => -i128::from(n),
+        };
+        // rem_euclid is below the row length, which came from a Vec.
+        self.index = along.rem_euclid(row.order.len() as i128) as usize;
+        self.elapsed = 0;
+        self.finished = false;
+        // Rounding down can step past i64::MIN only when x is within one step of it.
+        Ok(n.checked_mul(step).unwrap_or(x))
     }
 
     /// The frame number to draw, or `None` before the first [`Self::play`].
@@ -286,6 +332,139 @@ mod tests {
         assert_eq!(a.frame(), Some(9));
         a.advance(1);
         assert_eq!(a.frame(), Some(9));
+    }
+
+    // Oracle for distance frames: a foot table that moves back `step` per frame
+    // (stance is a straight line by construction, written out here, not read from
+    // the code) must keep one world point while that foot is planted.
+    fn stance_foot(position: usize, step: i64) -> i64 {
+        -(position as i64) * step
+    }
+
+    fn walk() -> SpriteAnimator {
+        anim(row(&[0, 1, 2, 3, 4, 5, 6, 7], &[50; 8], RowMode::Loop))
+    }
+
+    #[test]
+    fn planted_foot_keeps_its_world_point_walking_right() {
+        let (mut a, step) = (walk(), 6);
+        // Stance is positions 0..=4 of each cycle. Start one whole cycle's walk from x = 0.
+        let mut points = Vec::new();
+        for x in 0..(4 * 6) {
+            let snapped = a.seek_by_distance(x, 6, Facing::Right).unwrap();
+            points.push(snapped + stance_foot(a.position(), step));
+        }
+        assert!(points.iter().all(|&p| p == 0), "{points:?}");
+    }
+
+    #[test]
+    fn planted_foot_keeps_its_world_point_walking_left() {
+        let (mut a, step) = (walk(), 6);
+        // Mirrored figure: the foot's offset changes sign, and the walk goes down in x.
+        // x = 0 is the first unit of a new step, so the walk starts from the step below.
+        let mut points = Vec::new();
+        for x in (-(4 * 6)..0).rev() {
+            let snapped = a.seek_by_distance(x, 6, Facing::Left).unwrap();
+            points.push(snapped - stance_foot(a.position(), step));
+        }
+        assert!(points.windows(2).all(|w| w[0] == w[1]), "{points:?}");
+    }
+
+    #[test]
+    fn frames_follow_distance_and_wrap() {
+        let mut a = walk();
+        for (x, position, snapped) in [(0, 0, 0), (5, 0, 0), (6, 1, 6), (47, 7, 42), (48, 0, 48)] {
+            assert_eq!(
+                a.seek_by_distance(x, 6, Facing::Right),
+                Ok(snapped),
+                "x {x}"
+            );
+            assert_eq!(a.position(), position, "x {x}");
+        }
+    }
+
+    #[test]
+    fn negative_positions_round_down_not_toward_zero() {
+        let mut a = walk();
+        assert_eq!(a.seek_by_distance(-1, 6, Facing::Right), Ok(-6));
+        assert_eq!(a.position(), 7);
+        assert_eq!(a.seek_by_distance(-1, 6, Facing::Left), Ok(-6));
+        assert_eq!(a.position(), 1);
+    }
+
+    #[test]
+    fn standing_still_keeps_the_frame() {
+        let mut a = walk();
+        let first = a.seek_by_distance(100, 6, Facing::Right).unwrap();
+        let position = a.position();
+        assert_eq!(a.seek_by_distance(100, 6, Facing::Right), Ok(first));
+        assert_eq!(a.position(), position);
+    }
+
+    #[test]
+    fn distance_refuses_a_zero_step_and_a_missing_row() {
+        let mut a = walk();
+        a.seek_by_distance(30, 6, Facing::Right).unwrap();
+        let position = a.position();
+        assert_eq!(
+            a.seek_by_distance(30, 0, Facing::Right),
+            Err(SpriteAnimError::ZeroStep)
+        );
+        assert_eq!(a.position(), position, "a refused call changes nothing");
+        assert_eq!(
+            SpriteAnimator::new().seek_by_distance(0, 1, Facing::Right),
+            Err(SpriteAnimError::NothingPlaying)
+        );
+    }
+
+    // Extremes: the position stays in range and the result is the documented value,
+    // not merely free of a panic. i64::MIN with step 1 is the one negation that overflows i64.
+    #[test]
+    fn distance_at_the_ends_of_the_range() {
+        let mut a = walk();
+        assert_eq!(a.seek_by_distance(i64::MIN, 1, Facing::Left), Ok(i64::MIN));
+        // 2^63 is a multiple of 8, so Left and Right both land on position 0.
+        assert_eq!(a.position(), 0);
+        assert_eq!(a.seek_by_distance(i64::MAX, 1, Facing::Right), Ok(i64::MAX));
+        assert_eq!(a.position(), 7);
+        // Rounding down would leave the range: the position itself is returned.
+        assert_eq!(a.seek_by_distance(i64::MIN, 6, Facing::Right), Ok(i64::MIN));
+        assert!(a.position() < 8);
+    }
+
+    // 2^63 mod 3 = 2 (2^odd mod 3 = 2), so a negation that wraps in i64 lands elsewhere.
+    #[test]
+    fn left_at_i64_min_uses_the_true_negation() {
+        let mut a = anim(row(&[0, 1, 2], &[50; 3], RowMode::Loop));
+        assert_eq!(a.seek_by_distance(i64::MIN, 1, Facing::Left), Ok(i64::MIN));
+        assert_eq!(a.position(), 2);
+    }
+
+    #[test]
+    fn seeking_drops_the_time_already_spent() {
+        let mut a = walk();
+        a.advance(30);
+        a.seek_by_distance(0, 6, Facing::Right).unwrap();
+        a.advance(30);
+        assert_eq!(a.position(), 0, "30 + 30 would cross the 50 ms frame");
+    }
+
+    #[test]
+    fn seeking_reopens_a_finished_row() {
+        let mut a = anim(row(&[0, 1], &[50, 50], RowMode::Once));
+        assert_eq!(a.advance(100), Some(RowEvent::Finished));
+        a.seek_by_distance(0, 6, Facing::Right).unwrap();
+        assert_eq!(a.advance(50), None);
+        assert_eq!(a.position(), 1);
+    }
+
+    #[test]
+    fn time_after_distance_starts_from_the_sought_frame() {
+        let mut a = walk();
+        a.seek_by_distance(12, 6, Facing::Right).unwrap();
+        assert_eq!(a.position(), 2);
+        a.advance(50);
+        assert_eq!(a.position(), 3);
     }
 
     #[test]
