@@ -33,6 +33,16 @@ pub enum SpriteAnimError {
     NothingPlaying,
 }
 
+/// Time left to walk once whole cycles are taken off, starting at a frame shown for
+/// `here` ms in a row of `total` ms.
+const fn skip_whole_cycles(elapsed: u64, here: u64, total: u64) -> u64 {
+    if elapsed >= here + total {
+        here + (elapsed - here) % total
+    } else {
+        elapsed
+    }
+}
+
 /// Which way the figure faces when frames follow distance. Frames always run
 /// forward along the facing, whichever sign the position has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,9 +128,7 @@ impl SpriteAnimator {
             // Whole cycles change nothing, so a long pause costs no extra steps.
             let total: u64 = row.ms.iter().map(|&m| u64::from(m)).sum();
             let here = u64::from(row.ms[self.index]);
-            if self.elapsed >= here + total {
-                self.elapsed = here + (self.elapsed - here) % total;
-            }
+            self.elapsed = skip_whole_cycles(self.elapsed, here, total);
         }
         loop {
             let here = u64::from(row.ms[self.index]);
@@ -495,16 +503,17 @@ mod tests {
         assert_eq!(a.advance(160), Some(RowEvent::Finished));
     }
 
-    // 2000 pauses of 2^32 - 1 ms over 1 ms frames: about 8.6e12 frames if walked.
-    // Without the cycle skip this runs past any test timeout.
+    // Worked by hand: 1000 - 50 = 950 = 5 * 180 + 50, so 50 + 50 is left.
     #[test]
-    fn long_pauses_do_not_walk_every_frame() {
-        let mut a = anim(row(&[0, 1], &[1, 1], RowMode::Loop));
-        for _ in 0..2000 {
-            a.advance(u32::MAX);
+    fn whole_cycles_are_taken_off_a_long_pause() {
+        for (elapsed, here, total, left) in [
+            (229, 50, 180, 229),
+            (230, 50, 180, 50),
+            (1000, 50, 180, 100),
+            (u64::from(u32::MAX), 1, 2, 1),
+        ] {
+            assert_eq!(skip_whole_cycles(elapsed, here, total), left, "{elapsed}");
         }
-        // 2000 * (2^32 - 1) is even, so the row is back on its first frame.
-        assert_eq!(a.position(), 0);
     }
 
     #[test]

@@ -321,6 +321,9 @@ impl WasmSpriteAnimator {
     /// Chooses the frame from the position in whole units, so a planted foot
     /// stays put. Returns the position to draw the figure at.
     ///
+    /// From JavaScript, numbers are converted first: past 2^31 `x` wraps, a fraction
+    /// is cut off, and a negative `step` becomes a large one instead of being refused.
+    ///
     /// # Errors
     /// Refuses a zero step, or a call before the first play.
     #[wasm_bindgen(js_name = seekByDistance)]
