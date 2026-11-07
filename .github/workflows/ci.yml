@@ -21,7 +21,7 @@ jobs:
       - run: cargo check --lib --target wasm32-unknown-unknown --features wasm
       - run: cargo clippy --lib --target wasm32-unknown-unknown --features wasm -- -W clippy::all
       - run: cargo test --lib sprite_anim
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.cache/wasm-bindgen
           key: wasm-bindgen-${{ hashFiles('Cargo.toml') }}
