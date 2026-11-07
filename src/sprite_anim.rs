@@ -467,6 +467,46 @@ mod tests {
         assert_eq!(a.position(), 3);
     }
 
+    // Oracle for a long pause: frames walked one call at a time, 1 ms each.
+    fn walked_position(ms: &[u32], total_ms: u32) -> usize {
+        let order: Vec<u16> = (0..ms.len() as u16).collect();
+        let mut a = anim(row(&order, ms, RowMode::Loop));
+        for _ in 0..total_ms {
+            a.advance(1);
+        }
+        a.position()
+    }
+
+    #[test]
+    fn long_pause_lands_where_small_steps_land() {
+        let ms = [50, 60, 70];
+        for pause in [230, 1000, 1007, 5000] {
+            let mut a = anim(row(&[0, 1, 2], &ms, RowMode::Loop));
+            a.advance(pause);
+            assert_eq!(a.position(), walked_position(&ms, pause), "pause {pause}");
+        }
+    }
+
+    // A row that plays once has no cycles to skip: 160 ms covers 50 + 60, though
+    // 160 is a whole number of cycles past the first frame.
+    #[test]
+    fn long_pause_finishes_a_row_that_plays_once() {
+        let mut a = anim(row(&[0, 1], &[50, 60], RowMode::Once));
+        assert_eq!(a.advance(160), Some(RowEvent::Finished));
+    }
+
+    // 2000 pauses of 2^32 - 1 ms over 1 ms frames: about 8.6e12 frames if walked.
+    // Without the cycle skip this runs past any test timeout.
+    #[test]
+    fn long_pauses_do_not_walk_every_frame() {
+        let mut a = anim(row(&[0, 1], &[1, 1], RowMode::Loop));
+        for _ in 0..2000 {
+            a.advance(u32::MAX);
+        }
+        // 2000 * (2^32 - 1) is even, so the row is back on its first frame.
+        assert_eq!(a.position(), 0);
+    }
+
     #[test]
     fn before_play_there_is_no_frame_and_advance_is_inert() {
         let mut a = SpriteAnimator::new();
