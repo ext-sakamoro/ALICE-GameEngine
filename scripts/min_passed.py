@@ -13,7 +13,9 @@ import re
 import sys
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+)")
+# cargo's line names the source and then the binary in brackets; a test runner may print its own
+# "Running ..." line after it, as the browser runner of wasm-bindgen does
+RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+) \(")
 RESULT = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
 
 

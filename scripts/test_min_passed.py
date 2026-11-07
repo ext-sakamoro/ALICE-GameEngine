@@ -39,6 +39,9 @@ CASES = [
     ("no binary named", out(("a", 5, 0, 0)), ["--no-ignored"], 2),
     # Windows prints the paths with backslashes
     ("a Windows path", out(("a", 5, 0, 0), sep="\\"), ["a=5"], 0),
+    # the browser runner prints a Running line of its own between cargo's and the result
+    ("a browser runner", "     Running tests/w.rs (w.wasm)\nRunning headless tests in Chrome on `http://127.0.0.1:1/`\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 filtered out\n", ["w=6"], 0),
+    ("a browser runner below the floor", "     Running tests/w.rs (w.wasm)\nRunning headless tests in Chrome on `http://127.0.0.1:1/`\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 filtered out\n", ["w=6"], 1),
     ("a Windows library", "     Running unittests src\\lib.rs (x.exe)\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n", ["lib=3"], 0),
 ]
 
