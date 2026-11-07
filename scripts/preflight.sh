@@ -58,7 +58,12 @@ step "ci.yml / gpu-oracle: GPU tests (--include-ignored, this machine's adapter)
 step "ci.yml / wasm2d: wasm32 check and sprite rows"
 grep -q '^wasm32-unknown-unknown$' <<<"$(rustup target list --installed)" || rustup target add wasm32-unknown-unknown
 ( export CARGO_TERM_COLOR="always"; cargo check --lib --target wasm32-unknown-unknown --features wasm; cargo clippy --lib --target wasm32-unknown-unknown --features wasm -- -W clippy::all; cargo test --lib sprite_anim )
-( export CARGO_TERM_COLOR="always"; wasm2d_env="$(scripts/wasm2d_browser_env.sh)"; export ${wasm2d_env?}; cargo test --target wasm32-unknown-unknown --features wasm --test wasm2d 2>&1 | python3 scripts/min_passed.py wasm2d=6 )
+# headless Chrome with WebGL2 runs on Linux only
+if [[ "$(uname -s)" == Linux ]]; then
+  ( export CARGO_TERM_COLOR="always"; while IFS= read -r kv; do export "$kv"; done < <(scripts/wasm2d_browser_env.sh); cargo test --target wasm32-unknown-unknown --features wasm --test wasm2d 2>&1 | python3 scripts/min_passed.py wasm2d=6 )
+else
+  echo "PREFLIGHT-SKIP: wasm2d browser test: runs in CI's wasm2d job or on a Linux machine, never on $(uname -s)"
+fi
 
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
 grep -q '^aarch64-apple-ios$' <<<"$(rustup target list --installed)" || rustup target add aarch64-apple-ios
