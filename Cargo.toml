@@ -79,6 +79,12 @@ sha2 = "0.10"
 approx = "0.5"
 naga = { version = "25", default-features = false, features = ["wgsl-in"] }
 
+# tests/wasm2d.rs, in a browser
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["CanvasRenderingContext2d", "Document", "Element", "HtmlElement", "ImageData", "Window"] }
+
 [[bin]]
 name = "mcp_server"
 path = "src/bin/mcp_server.rs"
