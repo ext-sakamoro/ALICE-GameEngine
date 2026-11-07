@@ -56,15 +56,15 @@ step "ci.yml / gpu-oracle: GPU tests (--include-ignored, this machine's adapter)
 )
 
 step "ci.yml / wasm2d: wasm32 check and sprite rows"
-rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+grep -q '^wasm32-unknown-unknown$' <<<"$(rustup target list --installed)" || rustup target add wasm32-unknown-unknown
 ( export CARGO_TERM_COLOR="always"; cargo check --lib --target wasm32-unknown-unknown --features wasm; cargo clippy --lib --target wasm32-unknown-unknown --features wasm -- -W clippy::all; cargo test --lib sprite_anim )
 
 step "ci.yml / mobile-build: cargo check (iOS aarch64)"
-rustup target list --installed | grep -q '^aarch64-apple-ios$' || rustup target add aarch64-apple-ios
+grep -q '^aarch64-apple-ios$' <<<"$(rustup target list --installed)" || rustup target add aarch64-apple-ios
 ( export CARGO_TERM_COLOR="always"; cargo check --target aarch64-apple-ios --no-default-features )
 
 step "ci.yml / mobile-build: cargo check (Android aarch64)"
-rustup target list --installed | grep -q '^aarch64-linux-android$' || rustup target add aarch64-linux-android
+grep -q '^aarch64-linux-android$' <<<"$(rustup target list --installed)" || rustup target add aarch64-linux-android
 ( export CARGO_TERM_COLOR="always"; cargo check --target aarch64-linux-android --no-default-features )
 
 step "ci.yml / actionlint: actionlint"
