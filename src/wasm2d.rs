@@ -1,6 +1,15 @@
 //! Browser entry for 2D: WebGL2 sprite drawing and frame-row playback.
 //! Quads are drawn in call order with nearest sampling.
 
+#![deny(clippy::all, clippy::pedantic, clippy::nursery)]
+// The deny above resets the crate's choices for these, so they are restated.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names
+)]
+
 use crate::sprite_anim::{Facing, RowEvent, RowMode, SpriteAnimator, SpriteRow};
 use wasm_bindgen::prelude::*;
 use web_sys::{
@@ -40,7 +49,10 @@ pub struct Renderer2D {
 
 #[wasm_bindgen]
 impl Renderer2D {
-    /// Takes over `canvas`. Fails if WebGL2 is unavailable.
+    /// Takes over `canvas`.
+    ///
+    /// # Errors
+    /// Fails if WebGL2 is unavailable or the shaders do not build.
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: &HtmlCanvasElement) -> Result<Self, JsError> {
         let opts = js_sys_opts();
@@ -101,7 +113,7 @@ impl Renderer2D {
             (Gl::TEXTURE_WRAP_S, Gl::CLAMP_TO_EDGE),
             (Gl::TEXTURE_WRAP_T, Gl::CLAMP_TO_EDGE),
         ] {
-            g.tex_parameteri(Gl::TEXTURE_2D, k, v as i32);
+            g.tex_parameteri(Gl::TEXTURE_2D, k, v.cast_signed());
         }
     }
 
@@ -115,7 +127,7 @@ impl Renderer2D {
             .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
                 Gl::TEXTURE_2D,
                 0,
-                Gl::RGBA as i32,
+                Gl::RGBA.cast_signed(),
                 1,
                 1,
                 0,
@@ -130,6 +142,9 @@ impl Renderer2D {
     }
 
     /// Uploads an image and returns its id for [`Self::sprite`].
+    ///
+    /// # Errors
+    /// Fails if the texture cannot be created or the image cannot be uploaded.
     pub fn texture(&mut self, image: &HtmlImageElement) -> Result<u32, JsError> {
         self.flush();
         let t = self
@@ -141,7 +156,7 @@ impl Renderer2D {
             .tex_image_2d_with_u32_and_u32_and_html_image_element(
                 Gl::TEXTURE_2D,
                 0,
-                Gl::RGBA as i32,
+                Gl::RGBA.cast_signed(),
                 Gl::RGBA,
                 Gl::UNSIGNED_BYTE,
                 image,
@@ -222,6 +237,8 @@ impl Renderer2D {
             let view = js_sys::Float32Array::view(&self.verts);
             g.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &view, Gl::DYNAMIC_DRAW);
         }
+        // 4 GiB of wasm memory holds under 2^28 vertices, so the count fits.
+        #[allow(clippy::cast_possible_wrap)]
         g.draw_arrays(Gl::TRIANGLES, 0, (self.verts.len() / 8) as i32);
         self.verts.clear();
     }
@@ -265,6 +282,9 @@ impl WasmSpriteAnimator {
     }
 
     /// Adds a row. `order[i]` is shown for `ms[i]`.
+    ///
+    /// # Errors
+    /// Refuses a row the animator refuses: see [`SpriteAnimator::add_row`].
     #[wasm_bindgen(js_name = addRow)]
     pub fn add_row(
         &mut self,
@@ -284,6 +304,9 @@ impl WasmSpriteAnimator {
     }
 
     /// Starts a row. The current row keeps its place.
+    ///
+    /// # Errors
+    /// Refuses a name that was not added.
     pub fn play(&mut self, name: &str) -> Result<(), JsError> {
         self.inner
             .play(name)
@@ -297,6 +320,9 @@ impl WasmSpriteAnimator {
 
     /// Chooses the frame from the position in whole units, so a planted foot
     /// stays put. Returns the position to draw the figure at.
+    ///
+    /// # Errors
+    /// Refuses a zero step, or a call before the first play.
     #[wasm_bindgen(js_name = seekByDistance)]
     pub fn seek_by_distance(&mut self, x: i32, step: u32, left: bool) -> Result<f64, JsError> {
         let facing = if left { Facing::Left } else { Facing::Right };
@@ -313,6 +339,8 @@ impl WasmSpriteAnimator {
     }
 
     /// The position within the row's shown frames.
+    // wasm_bindgen does not take a const fn.
+    #[allow(clippy::missing_const_for_fn)]
     #[must_use]
     pub fn position(&self) -> u32 {
         self.inner.position() as u32
