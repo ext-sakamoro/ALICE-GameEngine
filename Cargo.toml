@@ -77,7 +77,7 @@ axum = { version = "0.7", features = ["ws"], optional = true }
 # digests of the call_fx results compared with scripts/call_fx_reference.py
 sha2 = "0.10"
 approx = "0.5"
-naga = { version = "25", default-features = false, features = ["wgsl-in"] }
+naga = { version = "30", default-features = false, features = ["wgsl-in"] }
 
 # tests/wasm2d.rs, in a browser
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
