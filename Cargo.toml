@@ -39,7 +39,7 @@ physics = ["dep:alice-physics"]
 wasm = ["dep:wasm-bindgen", "dep:web-sys", "dep:js-sys"]
 
 [dependencies]
-glam = { version = "0.29", features = ["serde"] }
+glam = { version = "0.34", features = ["serde"] }
 # SDF law の単一 source (primitive / smooth op の距離関数を委譲、独自コピーを持たない)
 alice-sdf = { git = "https://github.com/ext-sakamoro/ALICE-SDF", rev = "5c8a364297b75bd76bf867aa0ca8fcc85afb5c94", version = "7.0.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
