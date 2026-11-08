@@ -49,6 +49,7 @@
 - 依存: `alice-sdf` を registry の 1.9.2 から git 依存 (rev `19efcf7`、7.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更
 - 依存: `alice-physics` の git 依存を rev `b672ff2e` (4.0.0、alice-det-math 0.5.2 git `2d01c63`) に変更 どの feature の組でも alice-det-math は 1 版
 - CI: `physics` feature の clippy と test を ubuntu で実行する job を追加 (test は binary ごとの最小件数 lib 1044 / physics_hub_analytic 23 / physics_hub_degenerate 10 を `scripts/min_passed.py` で検査)、preflight にも同じ step を追加
+- CI: 公開する文面の検査 (`Public text` workflow、`scripts/public_text.sh`) を追加 ALICE-Law の `scripts/public_text_check.py` を `.github/public-text-pin` の revision で取得し、SHA-256 が一致した時だけ使って、HEAD の全 tracked file (path と本文) と送った commit (message・追加行・追加 path) を読む 何も比較できなければ失敗する preflight でも走る
 
 ### Fixed
 - `vrm_render::ToonRenderer` は GPU の object を画像ごとに作らない 以前は描くたびに部品ごとの vertex / index / parameter buffer と bind group、key の無い texture (1 x 1 の白を含む)、depth と multisample の target、readback の target と buffer を作っていた wgpu の web backend は drop で GPU の memory を解放せず JS の garbage collector に任せるので、browser で描き続けると 1 秒に約 1 GiB の object が溜まった 今は部品の位置ごとに保持して `write_buffer` で書き換え、入らない時だけ作り直し (古い方は `destroy`)、bind group は入力 (parameter buffer と 4 つの texture、sampler) が変わった時だけ、target は大きさか sample 数が変わった時だけ作る key の無い texture は bytes が前と同じなら upload しない 画像は作り直す renderer と byte 単位で同じ
