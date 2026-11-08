@@ -874,7 +874,7 @@ mod tests {
         let mut n = MockNat {
             local: vec![IceCandidate {
                 kind: "host".into(),
-                address: "192.168.0.5".into(),
+                address: "192.0.2.5".into(),
                 port: 41234,
                 priority: 100,
             }],
