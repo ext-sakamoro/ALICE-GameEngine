@@ -56,6 +56,10 @@ jobs:
         run: cargo test
       - name: Test (full features)
         run: cargo test --features full
+      - name: Test (fixtures feature)
+        run: cargo test --features fixtures --test vrm_fixture_const 2>&1 | python3 scripts/min_passed.py vrm_fixture_const=2
+      - name: Clippy (fixtures feature)
+        run: cargo clippy --features fixtures --all-targets -- -W clippy::all
       - name: Doc check (RUSTDOCFLAGS=-Dwarnings)
         run: cargo doc --no-deps --features full
         env:

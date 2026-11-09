@@ -684,6 +684,18 @@ step "ci.yml / test: Test (full features)"
 ( export CARGO_TERM_COLOR="always"; cargo test --features full )
 )
 
+step "ci.yml / test: Test (fixtures feature)"
+(
+  gh_step ci.yml.test
+( export CARGO_TERM_COLOR="always"; set -o pipefail; cargo test --features fixtures --test vrm_fixture_const 2>&1 | python3 scripts/min_passed.py vrm_fixture_const=2 )
+)
+
+step "ci.yml / test: Clippy (fixtures feature)"
+(
+  gh_step ci.yml.test
+( export CARGO_TERM_COLOR="always"; cargo clippy --features fixtures --all-targets -- -W clippy::all )
+)
+
 step "ci.yml / test: Doc-tests"
 (
   gh_step ci.yml.test

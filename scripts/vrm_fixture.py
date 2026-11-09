@@ -10,6 +10,7 @@ humanoid bones and expressions (presets with several morph target binds, a custo
 
     python3 scripts/vrm_fixture.py            write tests/data/vrm/tiny.vrm and expected.txt
     python3 scripts/vrm_fixture.py --check    fail when the files are not what this writes
+    python3 scripts/vrm_fixture.py --stdout   the VRM bytes on standard output (for the const test)
 """
 import json
 import struct
@@ -200,6 +201,9 @@ def expected():
 
 def main(argv):
     glb, exp = build(), expected()
+    if argv[1:] == ["--stdout"]:
+        sys.stdout.buffer.write(glb)
+        return 0
     if argv[1:] == ["--check"]:
         ok = (OUT / "tiny.vrm").read_bytes() == glb and (OUT / "expected.txt").read_text(encoding="utf-8") == exp
         print("vrm_fixture: " + ("files are what this writes" if ok else "files differ from what this writes"))

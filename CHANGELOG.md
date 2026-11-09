@@ -4,6 +4,7 @@
 
 ### 追加
 
+- feature `fixtures`: `vrm::fixture::TINY_VRM` (`scripts/vrm_fixture.py` が仕様から手で並べた小さな VRM 1.0 の bytes) を他の crate の試験に出す 試験 `tests/vrm_fixture_const.rs` が script をその場で走らせた出力 (`--stdout`) と bytes で比べ、VRM として読めることを確かめる CI と preflight で feature の試験と clippy を走らせる
 - `sprite_anim`: 2D のコマの列の再生 `SpriteRow` (フレーム番号と表示 ms、同じ番号の繰り返しで保持) と `SpriteAnimator` 整数 ms で進むので同じ入力は同じコマになる
 - `SpriteAnimator::seek_by_distance`: コマを時間でなく進んだ距離で選ぶ 接地した足が地面の 1 点に留まる 返り値の位置に描く
 - `tests/wasm2d.rs`: 生成した絵を実ブラウザの WebGL2 で描いて読み戻し 全画素を比べる 外部の画像に依存しない CI と preflight で `cargo test` と `min_passed.py` が実行し 件数を見る 準備は `scripts/wasm2d_browser_env.sh`

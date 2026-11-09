@@ -1255,3 +1255,14 @@ fn node_trs(n: &Value, path: &str) -> Result<([f32; 3], [f32; 4], [f32; 3]), Vrm
     let q = q.map(|v| if q[3] < 0.0 { -v / len } else { v / len });
     Ok(([m[12], m[13], m[14]], q, scale))
 }
+
+/// Test data for other crates (feature `fixtures`).
+#[cfg(feature = "fixtures")]
+pub mod fixture {
+    /// The tiny VRM 1.0 file that `scripts/vrm_fixture.py` lays out by hand from the glTF 2.0 and
+    /// VRMC_vrm 1.0 specifications (one skinned triangle with two morph targets, humanoid bones,
+    /// expressions, look-at and an MToon material); the values a reader must recover are in
+    /// `tests/data/vrm/expected.txt`. The test `vrm_fixture_const` checks it equals the script's
+    /// output.
+    pub const TINY_VRM: &[u8] = include_bytes!("../tests/data/vrm/tiny.vrm");
+}
