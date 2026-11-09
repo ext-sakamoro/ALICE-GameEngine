@@ -205,6 +205,9 @@ impl Renderer2D {
     }
 
     /// A textured quad. Swap `u0` and `u1` to mirror.
+    ///
+    /// # Errors
+    /// Fails, drawing nothing, when `tex` is not an id [`Self::texture`] returned.
     #[allow(clippy::too_many_arguments)]
     pub fn sprite(
         &mut self,
@@ -218,9 +221,16 @@ impl Renderer2D {
         u1: f32,
         v1: f32,
         a: f32,
-    ) {
+    ) -> Result<(), JsError> {
+        if tex as usize >= self.textures.len() {
+            return Err(JsError::new(&format!(
+                "sprite: texture id {tex} was not returned by texture() ({} known)",
+                self.textures.len()
+            )));
+        }
         self.select(tex);
         self.push(x, y, w, h, [u0, v0, u1, v1], [1.0, 1.0, 1.0, a]);
+        Ok(())
     }
 
     /// Sends what is queued. Call at the end of each frame.

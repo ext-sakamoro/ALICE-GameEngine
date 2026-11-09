@@ -154,7 +154,9 @@ async fn sprite_draws_every_cell_at_a_whole_scale() {
         1.0,
         1.0,
         1.0,
-    );
+    )
+    .map_err(|_| "sprite")
+    .unwrap();
     r.flush();
     check(&read(&c), clear_colour, |x, y| (x, y));
 }
@@ -176,9 +178,13 @@ async fn sprite_with_an_unknown_texture_id_draws_nothing() {
         1.0,
         1.0,
         1.0,
-    );
+    )
+    .map_err(|_| "sprite")
+    .unwrap();
     // outside the art's rectangle: with the old behaviour these 36 pixels showed the art
-    let _ = r.sprite(t + 1, 30.0, 22.0, 6.0, 6.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+    assert!(r
+        .sprite(t + 1, 30.0, 22.0, 6.0, 6.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        .is_err());
     r.flush();
     check(&read(&c), clear_colour, |x, y| (x, y));
 }
@@ -199,7 +205,9 @@ async fn swapped_u_mirrors() {
         0.0,
         1.0,
         1.0,
-    );
+    )
+    .map_err(|_| "sprite")
+    .unwrap();
     r.flush();
     check(&read(&c), clear_colour, |x, y| (ART_W - 1 - x, y));
 }
@@ -212,7 +220,9 @@ async fn part_of_the_atlas_is_drawn_alone() {
     // Cells 1..3 of row 1, each as 2 pixels.
     let (u0, u1) = (1.0 / ART_W as f32, 3.0 / ART_W as f32);
     let (v0, v1) = (1.0 / ART_H as f32, 2.0 / ART_H as f32);
-    r.sprite(t, 10.0, 10.0, 4.0, 2.0, u0, v0, u1, v1, 1.0);
+    r.sprite(t, 10.0, 10.0, 4.0, 2.0, u0, v0, u1, v1, 1.0)
+        .map_err(|_| "sprite")
+        .unwrap();
     r.flush();
     let got = read(&c);
     for y in 0..CANVAS_H {
@@ -246,7 +256,9 @@ async fn later_calls_draw_over_earlier_ones_across_textures() {
         1.0,
         1.0,
         1.0,
-    );
+    )
+    .map_err(|_| "sprite")
+    .unwrap();
     r.rect(
         AT_X as f32,
         AT_Y as f32,

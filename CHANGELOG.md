@@ -11,6 +11,7 @@
 
 ### 破壊的変更
 
+- `wasm2d` `Renderer2D::sprite`: `texture()` が返していない id を受けると何も描かずに `JsError` を返す (前は最後に bind した texture で黙って描いていた) JS からは例外になる 戻り値は `Result<(), JsError>`
 - `vrm::VrmDocument::meta` は `vrm::Licence` (`Vrm1(VrmMeta)` / `Vrm0(vrm0::Vrm0Meta)`) になった 0.x の利用条件の項目は 1.0 の項目に移せないので、どちらも他方から作らず書かれたまま持つ 名前と最初の作者は `Licence::title` / `Licence::author` `VrmError::Vrm0` は無くなった (0.x は読む)
 - `vrm_render::ToonParams` の `threshold` を MToon の `shading_shift` と `shading_toony` に替えた (以前の `threshold: x` は `shading_shift: -x, shading_toony: 1.0` と同じ描画)
 - `humanoid::HumanoidBone` を VRM 1.0 の 55 骨 (指 30 本を含む) に、`ExpressionChannel` を VRM 1.0 の 18 preset (`Relaxed` / `Blink` / `LookUp` / `LookDown` / `LookLeft` / `LookRight` を追加) にした 網羅的な `match` は新しい variant の arm が要る 骨と表情は仕様の名前と相互に変換できる (`vrm_name` / `from_vrm_name`、`ExpressionChannel::presets`)、仕様に無い表情の名前は `Custom`
