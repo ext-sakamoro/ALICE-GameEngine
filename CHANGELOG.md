@@ -11,6 +11,7 @@
 
 ### 修正
 
+- CI: `actions/cache` を v6 に (v5 は廃止予定の node20 で動き、actionlint が error にする)
 - `wasm2d`: `Renderer2D::sprite` が拒む texture id の文を正した destroy の後は破棄済みと、texture が 1 つも無ければ未読み込みと、他は実在する id の範囲 (1 〜 読み込んだ数) を書く (以前は `ids 1..0` や空の範囲を出していた) 判定と文は全 target で compile する `texture_ids` にあり native の試験で確かめる
 
 ### 破壊的変更
