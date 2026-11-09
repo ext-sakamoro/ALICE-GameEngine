@@ -207,6 +207,21 @@ impl ParticleEmitter {
         }
     }
 
+    /// Emits up to `n` particles at once at the emitter's position (an impact spark), as many as
+    /// there are free slots, and returns how many it emitted. The rate-based emission of
+    /// [`ParticleEmitter::update`] is not changed.
+    pub fn burst(&mut self, n: u32) -> u32 {
+        let before = self.alive_count;
+        for _ in 0..n {
+            let had = self.alive_count;
+            self.emit_one();
+            if self.alive_count == had {
+                break;
+            }
+        }
+        self.alive_count - before
+    }
+
     /// Returns the number of alive particles.
     #[must_use]
     pub const fn alive_count(&self) -> u32 {
@@ -364,6 +379,43 @@ impl TrailEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn quiet(max: u32) -> ParticleEmitter {
+        let mut e = ParticleEmitter::new(EmitterConfig {
+            max_particles: max,
+            emit_rate: 0.0,
+            ..EmitterConfig::default()
+        });
+        e.position = Vec3::new(1.0, 2.0, 3.0);
+        e
+    }
+
+    #[test]
+    fn burst_emits_into_free_slots_at_the_emitter() {
+        let mut e = quiet(8);
+        assert_eq!(e.burst(5), 5);
+        assert_eq!(e.alive_count(), 5);
+        let alive: Vec<_> = e.particles.iter().filter(|p| p.alive).collect();
+        assert_eq!(alive.len(), 5);
+        assert!(alive
+            .iter()
+            .all(|p| p.position == Vec3::new(1.0, 2.0, 3.0) && p.lifetime == 0.0));
+        // only the free slots: 3 more fit, then nothing
+        assert_eq!(e.burst(10), 3);
+        assert_eq!(e.burst(1), 0);
+        assert_eq!(e.alive_count(), 8);
+    }
+
+    #[test]
+    fn burst_of_zero_and_rate_untouched() {
+        let mut e = quiet(4);
+        assert_eq!(e.burst(0), 0);
+        assert_eq!(e.alive_count(), 0);
+        // a burst does not emit later: with rate 0, update only ages what is alive
+        assert_eq!(e.burst(2), 2);
+        e.update(0.01);
+        assert_eq!(e.alive_count(), 2);
+    }
 
     #[test]
     fn particle_dead() {
