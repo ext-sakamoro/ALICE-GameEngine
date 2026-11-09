@@ -33,6 +33,13 @@ pub enum SpriteAnimError {
     NothingPlaying,
 }
 
+// The steps of the frame walk in `advance`, counted in tests: the skip of whole cycles changes no
+// result, only how many steps a long pause takes, so a test can see it only by counting them.
+#[cfg(test)]
+thread_local! {
+    static WALK_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Time left to walk once whole cycles are taken off, starting at a frame shown for
 /// `here` ms in a row of `total` ms.
 const fn skip_whole_cycles(elapsed: u64, here: u64, total: u64) -> u64 {
@@ -131,6 +138,8 @@ impl SpriteAnimator {
             self.elapsed = skip_whole_cycles(self.elapsed, here, total);
         }
         loop {
+            #[cfg(test)]
+            WALK_STEPS.with(|n| n.set(n.get() + 1));
             let here = u64::from(row.ms[self.index]);
             if self.elapsed < here {
                 return None;
@@ -446,6 +455,24 @@ mod tests {
         let mut a = anim(row(&[0, 1, 2], &[50; 3], RowMode::Loop));
         assert_eq!(a.seek_by_distance(i64::MIN, 1, Facing::Left), Ok(i64::MIN));
         assert_eq!(a.position(), 2);
+    }
+
+    // An hour's pause on a 400 ms loop: with whole cycles skipped the walk takes at most one pass
+    // over the row (+1 for the stop); walking it would take 9000 cycles x 8 frames.
+    #[test]
+    fn a_long_pause_walks_at_most_one_cycle() {
+        let mut a = walk();
+        a.advance(70);
+        WALK_STEPS.with(|n| n.set(0));
+        a.advance(3_600_000);
+        let steps = WALK_STEPS.with(std::cell::Cell::get);
+        assert!(steps <= 8 + 1, "{steps} steps");
+        let mut b = walk();
+        b.advance(70);
+        for _ in 0..3600 {
+            b.advance(1000);
+        }
+        assert_eq!(a.position(), b.position(), "the skip changes no frame");
     }
 
     #[test]
