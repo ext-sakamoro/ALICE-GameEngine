@@ -669,7 +669,7 @@ step "ci.yml / wasm2d: run"
 (
   gh_step ci.yml.wasm2d
 grep -q '^wasm32-unknown-unknown$' <<<"$(rustup target list --installed)" || rustup target add wasm32-unknown-unknown
-( export CARGO_TERM_COLOR="always"; cargo test --target wasm32-unknown-unknown --features wasm --test wasm2d 2>&1 | python3 scripts/min_passed.py wasm2d=6 )
+( export CARGO_TERM_COLOR="always"; cargo test --target wasm32-unknown-unknown --features wasm --test wasm2d 2>&1 | python3 scripts/min_passed.py wasm2d=7 )
 )
 
 step "ci.yml / test: Test (default features)"

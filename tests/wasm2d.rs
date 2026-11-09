@@ -159,6 +159,30 @@ async fn sprite_draws_every_cell_at_a_whole_scale() {
     check(&read(&c), clear_colour, |x, y| (x, y));
 }
 
+// An id that no texture() returned draws nothing (it used to draw silently with the texture bound last).
+#[wasm_bindgen_test]
+async fn sprite_with_an_unknown_texture_id_draws_nothing() {
+    let image = art_image().await;
+    let (c, mut r) = begin();
+    let t = r.texture(&image).map_err(|_| "texture").unwrap();
+    r.sprite(
+        t,
+        AT_X as f32,
+        AT_Y as f32,
+        (ART_W * SCALE) as f32,
+        (ART_H * SCALE) as f32,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+    );
+    // outside the art's rectangle: with the old behaviour these 36 pixels showed the art
+    let _ = r.sprite(t + 1, 30.0, 22.0, 6.0, 6.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+    r.flush();
+    check(&read(&c), clear_colour, |x, y| (x, y));
+}
+
 #[wasm_bindgen_test]
 async fn swapped_u_mirrors() {
     let image = art_image().await;
