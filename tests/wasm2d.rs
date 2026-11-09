@@ -185,6 +185,10 @@ async fn sprite_with_an_unknown_texture_id_draws_nothing() {
     assert!(r
         .sprite(t + 1, 30.0, 22.0, 6.0, 6.0, 0.0, 0.0, 1.0, 1.0, 1.0)
         .is_err());
+    // id 0 is the renderer's own white texture (rect() uses it); texture() never returns it
+    assert!(r
+        .sprite(0, 30.0, 22.0, 6.0, 6.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        .is_err());
     r.flush();
     check(&read(&c), clear_colour, |x, y| (x, y));
 }
