@@ -222,9 +222,10 @@ impl Renderer2D {
         v1: f32,
         a: f32,
     ) -> Result<(), JsError> {
-        if tex as usize >= self.textures.len() {
+        // id 0 is the renderer's own white texture (rect() draws with it); texture() returns 1..
+        if tex == 0 || tex as usize >= self.textures.len() {
             return Err(JsError::new(&format!(
-                "sprite: texture id {tex} was not returned by texture() ({} known)",
+                "sprite: texture id {tex} was not returned by texture() (ids 1..{})",
                 self.textures.len()
             )));
         }
