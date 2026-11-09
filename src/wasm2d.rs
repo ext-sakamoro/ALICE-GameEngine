@@ -223,10 +223,10 @@ impl Renderer2D {
         a: f32,
     ) -> Result<(), JsError> {
         // id 0 is the renderer's own white texture (rect() draws with it); texture() returns 1..
-        if tex == 0 || tex as usize >= self.textures.len() {
-            return Err(JsError::new(&format!(
-                "sprite: texture id {tex} was not returned by texture() (ids 1..{})",
-                self.textures.len()
+        if !crate::texture_ids::is_loaded(tex, self.textures.len()) {
+            return Err(JsError::new(&crate::texture_ids::unknown_texture_message(
+                tex,
+                self.textures.len(),
             )));
         }
         self.select(tex);

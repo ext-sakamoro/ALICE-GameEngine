@@ -140,6 +140,8 @@ pub mod vrm;
 pub mod vrm0;
 pub mod vrm_pose;
 pub mod vrm_render;
+// Texture ids of the 2D renderer and the wording of a refused id (tested natively)
+pub mod texture_ids;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub mod wasm2d;
 // Light occlusion of a posed mesh by its own shape, ray casts in fixed point

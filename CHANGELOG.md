@@ -9,6 +9,10 @@
 - `tests/wasm2d.rs`: 生成した絵を実ブラウザの WebGL2 で描いて読み戻し 全画素を比べる 外部の画像に依存しない CI と preflight で `cargo test` と `min_passed.py` が実行し 件数を見る 準備は `scripts/wasm2d_browser_env.sh`
 - feature `wasm` と `wasm2d`: ブラウザから使う入口 `Renderer2D` (WebGL2、nearest、呼んだ順に描く) と `SpriteAnimator`
 
+### 修正
+
+- `wasm2d`: `Renderer2D::sprite` が拒む texture id の文を正した destroy の後は破棄済みと、texture が 1 つも無ければ未読み込みと、他は実在する id の範囲 (1 〜 読み込んだ数) を書く (以前は `ids 1..0` や空の範囲を出していた) 判定と文は全 target で compile する `texture_ids` にあり native の試験で確かめる
+
 ### 破壊的変更
 
 - `wasm2d` `Renderer2D::sprite`: `texture()` が返していない id を受けると何も描かずに `JsError` を返す (前は最後に bind した texture で黙って描いていた) id 0 (内部の白の texture、`rect()` が使う) も受けない JS からは例外になる 戻り値は `Result<(), JsError>`
