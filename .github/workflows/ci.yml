@@ -98,7 +98,9 @@ jobs:
 
   gpu-oracle:
     name: GPU oracles on a software adapter (lavapipe)
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moved to 26.04, whose Mesa 26.0 lavapipe ends the GPU tests in SIGSEGV under
+    # wgpu 25 (the same commit is green on 24.04); qualify 26.04 before moving this lane
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
