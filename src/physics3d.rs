@@ -21,8 +21,9 @@
 //!   over). Results therefore do not depend on the frame rate.
 //! - **Defaults**: gravity `(0, -9.81, 0)`; a body's `linear_damping` /
 //!   `angular_damping` is the fraction of velocity lost per second
-//!   (`0` = none), converted to the inner per-step retention factor; the
-//!   inner world-wide damping is set to none.
+//!   (`0` = none), converted to the inner per-body rate `-ln(1 - lost)` in
+//!   1/s (all lost: the body stops within a step); the inner world-wide rate
+//!   is left at none.
 //! - **Collision**: every body added with a positive `radius` collides
 //!   (sphere of that radius); `radius = 0` adds a body that does not collide.
 //! - **Contacts**: [`PhysicsWorld::contacts`] lists the contacts of the last
@@ -251,14 +252,24 @@ fn quat_from_fix(q: QuatFix) -> Quat {
     Quat::from_xyzw(q.x.to_f32(), q.y.to_f32(), q.z.to_f32(), q.w.to_f32())
 }
 
-/// Per-step velocity retention for a body losing `lost_per_second` of its
-/// velocity per second: `(1 - lost)^dt`, so `1 / dt` steps retain `1 - lost`.
-fn retention_per_step(lost_per_second: f32, fixed_dt: f32) -> Fix128 {
+/// A rate in 1/s so large that one step's factor `exp(-rate * dt)` is 0 in
+/// [`Fix128`] at any step size the engine uses: a body that loses all of its
+/// velocity per second stops within its first step
+const ALL_LOST_RATE: f64 = 1_048_576.0;
+
+/// The inner per-body damping rate (1/s) for a body losing `lost_per_second`
+/// of its velocity per second: `-ln(1 - lost)`, so that the inner world's
+/// `exp(-rate * dt)` per step leaves `1 - lost` after a second at every step
+/// size (`ln` is `Fix128`'s own, no platform math)
+fn damping_rate(lost_per_second: f32) -> Fix128 {
     if lost_per_second.is_nan() || lost_per_second <= 0.0 {
-        return Fix128::ONE;
+        return Fix128::ZERO;
     }
-    let kept = 1.0 - f64::from(lost_per_second.min(1.0));
-    Fix128::from_f64(kept.powf(f64::from(fixed_dt)))
+    if lost_per_second >= 1.0 {
+        return Fix128::from_f64(ALL_LOST_RATE);
+    }
+    let kept = Fix128::ONE - Fix128::from_f64(f64::from(lost_per_second));
+    Fix128::ZERO - kept.ln()
 }
 
 /// An engine joint description converted to the inner world.
@@ -440,8 +451,8 @@ impl PhysicsWorld {
         let solver = alice_physics::PhysicsConfig {
             substeps: config.substeps as usize,
             gravity: to_fix(config.gravity),
-            // Per-body damping carries the engine's per-second loss (contract).
-            damping: Fix128::ONE,
+            // Per-body damping rates carry the engine's per-second loss (contract);
+            // the inner world-wide rate stays at its default, none.
             ..alice_physics::PhysicsConfig::default()
         };
         Self {
@@ -507,8 +518,8 @@ impl PhysicsWorld {
         }
         body.restitution = fx(desc.restitution);
         body.friction = fx(desc.friction);
-        body.linear_damping = retention_per_step(desc.linear_damping, self.config.fixed_dt);
-        body.angular_damping = retention_per_step(desc.angular_damping, self.config.fixed_dt);
+        body.linear_damping_rate = damping_rate(desc.linear_damping);
+        body.angular_damping_rate = damping_rate(desc.angular_damping);
         if desc.kind == BodyKind::Dynamic && desc.radius > 0.0 {
             // Solid-sphere inertia from alice_physics at unit density, scaled
             // to the body's mass (inertia is linear in the mass).
@@ -1245,7 +1256,8 @@ mod tests {
         assert_eq!(c.max_steps_per_update, 8);
         assert_eq!(c.broadphase, Broadphase::DynamicTree);
         let w = PhysicsWorld::default();
-        assert_eq!(w.inner().config.damping, Fix128::ONE);
+        // the inner world-wide damping is none: per-body rates carry the contract
+        assert_eq!(w.inner().config.damping_rate, Fix128::ZERO);
         assert_eq!(w.inner().config.substeps, 4);
         assert_eq!(
             w.inner().broadphase(),
@@ -1277,6 +1289,44 @@ mod tests {
         assert!((f64::from(p.y) - x).abs() < 1e-4, "y {} vs {x}", p.y);
         assert!((f64::from(v.y) + g).abs() < 1e-4, "vy {}", v.y);
         assert!(p.x.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn damping_decays_as_the_closed_form_over_n_steps() {
+        // lost fraction f per second is the rate c = -ln(1 - f): after N steps of dt the speed is
+        // v0 * exp(-c * N * dt) = v0 * (1 - f)^(N dt), here over 1.5 s (not a whole second)
+        for fixed_dt in [1.0_f32 / 60.0, 1.0 / 120.0] {
+            let mut w = quiet(fixed_dt);
+            let mut d = ball(Vec3::ZERO);
+            d.velocity = Vec3::new(2.0, 0.0, 0.0);
+            d.linear_damping = 0.3;
+            let b = w.add_body(d);
+            let n = (1.5 / fixed_dt).round() as u32;
+            for _ in 0..n {
+                w.step_fixed();
+            }
+            let want = 2.0 * 0.7_f64.powf(f64::from(n) * f64::from(fixed_dt));
+            let got = f64::from(w.velocity(b).unwrap().x);
+            assert!(
+                (got - want).abs() < 1e-5,
+                "dt {fixed_dt}: vx {got}, closed form {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn losing_everything_stops_the_body_in_one_step() {
+        let mut w = quiet(1.0 / 60.0);
+        let mut d = ball(Vec3::ZERO);
+        d.velocity = Vec3::new(2.0, 0.0, 0.0);
+        d.linear_damping = 1.0;
+        let b = w.add_body(d);
+        w.step_fixed();
+        assert!(
+            w.velocity(b).unwrap().x.abs() < 1e-6,
+            "{}",
+            w.velocity(b).unwrap().x
+        );
     }
 
     #[test]

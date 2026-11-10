@@ -13,6 +13,7 @@
 
 ### 修正
 
+- 依存: alice-sdf / alice-physics を git の branch = main + version で引く (alice-det-math 0.6 の世代、rev の固定をやめる) alice-physics main の減衰は物体ごとの 1 秒あたりの率 (`linear_damping_rate` / `angular_damping_rate`) なので、`linear_damping` / `angular_damping` (1 秒あたりに失う割合 f) を率 `-ln(1 - f)` に変換して渡す (`Fix128::ln`、platform の `powf` を使わない) f = 1 は 1 step で止まる (従来どおり) 試験: N step の減衰が閉形式 `exp(-c·N·dt)` と一致、物体の率を外す変異と符号を反転する変異は red 書き出しの golden で動いたものは無い
 - CI: `actions/cache` を v6 に (v5 は廃止予定の node20 で動き、actionlint が error にする)
 - `wasm2d`: `Renderer2D::sprite` が拒む texture id の文を正した destroy の後は破棄済みと、texture が 1 つも無ければ未読み込みと、他は実在する id の範囲 (1 〜 読み込んだ数) を書く (以前は `ids 1..0` や空の範囲を出していた) 判定と文は全 target で compile する `texture_ids` にあり native の試験で確かめる
 
