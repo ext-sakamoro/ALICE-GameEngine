@@ -105,6 +105,14 @@ CASES = [
     ("an any() gate listed as unread", {"x": ANY, "p": PHYS}, {"ci": RUN}, None, CONF_RUN + '[unread]\nx = "any(): run by the full job"\n', 0),
     ("a stale unread entry (now readable)", {"p": PHYS, "g": GPU}, {"ci": RUN}, None, CONF_RUN + '[unread]\np = "was any()"\n', '[unread] p: its gate is readable now (stale), remove the entry'),
     ("an unread entry for a file that does not exist", {"p": PHYS, "g": GPU}, {"ci": RUN}, None, CONF_RUN + '[unread]\nnope = "gone"\n', '[unread] nope: no such file tests/nope.rs (stale)'),
+    # run elsewhere: a readable gate whose tests run outside any cargo test command (a built binary under faketime)
+    ("a gated file run elsewhere, with its reason", {"p": PHYS, "g": GPU}, {"ci": "cargo test --features physics\n"}, None, CONF_RUN + '[run_elsewhere]\ng = "the built binary runs under faketime with --include-ignored"\n', 0),
+    ("a run-elsewhere entry with an empty reason", {"p": PHYS, "g": GPU}, {"ci": "cargo test --features physics\n"}, None, CONF_RUN + '[run_elsewhere]\ng = ""\n', "[run_elsewhere] g: the reason is empty"),
+    ("a run-elsewhere entry for an unreadable gate", {"x": ANY, "p": PHYS}, {"ci": RUN}, None, CONF_RUN + '[run_elsewhere]\nx = "elsewhere"\n', "tests/x.rs: gate with any()/not() this script cannot read; list it in [unread] with the reason"),
+    ("a run-elsewhere entry for a file that is not gated", {"plain": PLAIN, "p": PHYS}, {"ci": RUN}, None, CONF_RUN + '[run_elsewhere]\nplain = "elsewhere"\n', "[run_elsewhere] plain: not a feature-gated test file (stale)"),
+    ("a run-elsewhere entry for a file that does not exist", {"p": PHYS}, {"ci": RUN}, None, CONF_RUN + '[run_elsewhere]\nnope = "gone"\n', "[run_elsewhere] nope: no such file tests/nope.rs (stale)"),
+    ("a run-elsewhere file is still counted as gated (not as a gap)", {"g": GPU}, {"ci": "cargo build\ncargo test\n"}, None, CONF_RUN + '[run_elsewhere]\ng = "elsewhere"\n', 0),
+    ("an unknown configuration key", {"p": PHYS}, {"ci": RUN}, None, CONF_RUN + '[run_somewhere]\np = "x"\n', "unknown configuration key run_somewhere (known: cover, ignored, mode, run_elsewhere, unread)"),
     ("a YAML folded block is one command", {"p": PHYS}, {"ci": "      - run: >-\n          cargo test\n          --features physics\n      - run: cargo build\n"}, None, CONF_RUN, 0),
     ("a YAML literal block keeps its lines", {"p": PHYS}, {"ci": "      - run: |\n          cargo test\n          echo --features physics\n"}, None, CONF_RUN, "ci: tests/p.rs (features ['physics'], 1 tests): features ['physics'] not enabled"),
     # shell variables set in the same file
