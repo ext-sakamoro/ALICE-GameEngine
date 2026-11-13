@@ -17,6 +17,8 @@ scripts/gated_tests.toml:
     globs = ["scripts/preflight.sh"]
     [unread]                  # gated files whose gate this script cannot read, with the reason
     some_file = "any(): run by the full-features job"
+    [run_elsewhere]           # gated files (readable gate) whose tests run outside any cargo test
+    other_file = "built with --no-run and run under faketime with --include-ignored (kat.yml)"
 
 A test file is gated when it holds `cfg(...)` naming a feature (the file, or an item in it). Its
 tests run only in a `cargo test` command whose features enable the gate, so a file that no
@@ -43,7 +45,10 @@ enables nothing. A `NAME=value` word inside a command (`echo A=b`, `A=b cargo te
 Fails when: there is no configuration, the mode or the ignored policy is unknown or there is no
 cover; a cover's globs match no file or the files hold no `cargo test` command; no gated file is
 compared; a gate holds `any(` or `not(` and the file is not listed in [unread]; an [unread] entry
-names a file that does not exist or whose gate is readable (a stale exemption).
+names a file that does not exist or whose gate is readable (a stale exemption); a [run_elsewhere] entry has
+an empty reason, names a file that does not exist, that is not gated, or whose gate is unreadable (that
+file belongs in [unread]); the configuration has a key other than mode, ignored, cover, unread and
+run_elsewhere. A [run_elsewhere] file is not compared with the covers: its reason says what runs it.
 
 Known limits (not read, so not checked): `cargo hack` and `cargo nextest` (they run no `cargo test`
 command here); `-p` / `--package` and workspace members (the root Cargo.toml's features are used);
@@ -241,7 +246,12 @@ def check(root: Path):
     policy = conf.get("ignored", "run")
     if policy not in ("run", "skip"):
         return [f"ignored {policy!r}: must be \"run\" (ignored tests must run) or \"skip\""], 0
+    known = {"mode", "ignored", "cover", "unread", "run_elsewhere"}
+    unknown_keys = sorted(set(conf) - known)
+    if unknown_keys:
+        return [f"unknown configuration key {k} (known: {', '.join(sorted(known))})" for k in unknown_keys], 0
     unread = conf.get("unread", {})
+    elsewhere = conf.get("run_elsewhere", {})
     graph, default, always, required = features_table(root)
 
     problems, files = [], {}
@@ -256,18 +266,26 @@ def check(root: Path):
         if g == "unread":
             if f.stem not in unread:
                 problems.append(f"tests/{f.stem}.rs: gate with any()/not() this script cannot read; list it in [unread] with the reason")
-        elif g is not None:
+        elif g is not None and f.stem not in elsewhere:
             files[f.stem] = (g, text.count("#[test]") + text.count("#[wasm_bindgen_test]"), policy == "run" and "#[ignore" in text)
     for name in unread:
         if name not in gates:
             problems.append(f"[unread] {name}: no such file tests/{name}.rs (stale)")
         elif gates.get(name) != "unread":
             problems.append(f"[unread] {name}: its gate is readable now (stale), remove the entry")
+    for name, reason in elsewhere.items():
+        if name not in gates:
+            problems.append(f"[run_elsewhere] {name}: no such file tests/{name}.rs (stale)")
+        elif gates[name] is None:
+            problems.append(f"[run_elsewhere] {name}: not a feature-gated test file (stale)")
+        elif not (isinstance(reason, str) and reason.strip()):
+            problems.append(f"[run_elsewhere] {name}: the reason is empty")
+    run_elsewhere = [n for n in elsewhere if gates.get(n) not in (None, "unread")]
     for name, (sets, _, _) in files.items():
         unknown = set().union(*sets) - set(graph)
         if unknown:
             problems.append(f"tests/{name}.rs: features {sorted(unknown)} are not in Cargo.toml [features]")
-    if not files:
+    if not files and not run_elsewhere:
         problems.append("no readable feature-gated test file found under tests/")
 
     compared = 0
