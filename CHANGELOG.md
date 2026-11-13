@@ -4,6 +4,8 @@
 
 ### 追加
 
+- `scripts/gated_tests.py` (共有の bytes): `[run_elsewhere]` = gate が読める試験 file で、cargo test 以外 (作った binary を faketime の下で走らせる等) で走るものを理由つきで比較から外す 理由が空・gate の無い file・読めない gate (それは `[unread]`)・無い file は拒否 設定の未知の key も拒否 試験 7 件追加 (68 件)
+
 - feature `fixtures`: `vrm::fixture::TINY_VRM` (`scripts/vrm_fixture.py` が仕様から手で並べた小さな VRM 1.0 の bytes) を他の crate の試験に出す 試験 `tests/vrm_fixture_const.rs` が script をその場で走らせた出力 (`--stdout`) と bytes で比べ、VRM として読めることを確かめる CI と preflight で feature の試験と clippy を走らせる
 - `ParticleEmitter::burst(n)`: emitter の位置に最大 n 個を一度に出す (命中の火花など、空いている枠の数まで、出した数を返す) 毎秒の放出 (`update`) は変えない
 - `sprite_anim`: 2D のコマの列の再生 `SpriteRow` (フレーム番号と表示 ms、同じ番号の繰り返しで保持) と `SpriteAnimator` 整数 ms で進むので同じ入力は同じコマになる
